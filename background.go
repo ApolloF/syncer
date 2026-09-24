@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
@@ -122,6 +123,9 @@ func ensureBackgroundTask() {
 		return
 	}
 	exe, _ = filepath.EvalSymlinks(exe)
+	if strings.HasSuffix(strings.ToLower(exe), "-dev.exe") {
+		return // `wails dev` binary: never point the real task at it
+	}
 	s := store.LoadSettings()
 	err = tasks.Register(tasks.Spec{
 		Name:        tasks.BackupTask,
