@@ -32,6 +32,9 @@ Unicode true
 ####
 ## Include the wails tools
 ####
+# Per-user install: no admin prompt, installs to %LOCALAPPDATA%\Programs\Syncer.
+!define REQUEST_EXECUTION_LEVEL "user"
+!define WAILS_INSTALL_SCOPE "user"
 !include "wails_tools.nsh"
 
 # The version information for this two must consist of 4 parts
@@ -53,6 +56,8 @@ ManifestDPIAware true
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
 # !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Open Syncer"
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
@@ -92,6 +97,10 @@ Section
 
     !insertmacro wails.webview2runtime
 
+    # Replace a running copy (e.g. when updating).
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}" /F'
+    Sleep 500
+
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
@@ -107,6 +116,10 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    # Remove Syncer's scheduled task. Syncthing, synced saves and backups are kept.
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}" /F'
+    ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" --uninstall'
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 

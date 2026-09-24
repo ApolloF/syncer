@@ -25,22 +25,30 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+      - name: Install Wails + NSIS
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+          choco install nsis -y --no-progress
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Test
         run: go test ./...
 
       - name: Build
-        run: wails build -clean -trimpath -ldflags "-s -w"
+        run: wails build -clean -nsis -trimpath -ldflags "-s -w"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Syncer
-          path: build/bin/Syncer.exe
+          path: |
+            build/bin/Syncer.exe
+            build/bin/Syncer-amd64-installer.exe
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/bin/Syncer.exe
+          generate_release_notes: true
+          files: |
+            build/bin/Syncer-amd64-installer.exe
+            build/bin/Syncer.exe

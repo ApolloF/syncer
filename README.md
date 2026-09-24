@@ -23,8 +23,8 @@ Syncer is a small desktop app built on two tools that already work well:
 
 ## Install
 
-1. Download `Syncer.exe` from [Releases](https://github.com/ApolloF/syncer/releases) and put it somewhere permanent, e.g. `%LOCALAPPDATA%\Programs\Syncer\`.
-2. Open it. If Syncthing isn't installed yet, the Overview has a one-click install (via `winget`).
+1. Download **`Syncer-amd64-installer.exe`** from [Releases](https://github.com/ApolloF/syncer/releases) and run it. It installs just for your user (no admin prompt) into `%LOCALAPPDATA%\Programs\Syncer` and adds Start menu and desktop shortcuts. Prefer no installer? `Syncer.exe` from the same release is portable. Keep it in a permanent folder, since the background task points at it.
+2. Open Syncer. If Syncthing isn't installed yet, the Overview has a one-click install (via `winget`).
 3. Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in. Syncer finds it on its own.
 4. Go to **Games → Found on this PC** and click **Sync** on the games you want.
 
@@ -68,3 +68,7 @@ wails build        # build/bin/Syncer.exe
 ```
 
 The backend lives in `internal/`: `syncthing` (REST client), `meta` (cross-PC folder sharing), `discover` (manifest + scan), `backup` (mirror/versions/restore), `tasks` (Task Scheduler) and `paths` (portable paths). The Svelte 5 frontend is in `frontend/src`.
+
+## Uninstall
+
+Use *Settings → Apps → Syncer → Uninstall*. This removes the app and its scheduled task. Syncthing, your synced saves and your Drive backups are left untouched.
