@@ -14,7 +14,7 @@ type Matcher struct {
 	res []*regexp.Regexp
 }
 
-var builtin = []string{".stfolder", ".stversions", ".stignore", "~syncthing~*", ".syncthing.*.tmp", "*.syncer-tmp"}
+var builtin = []string{".stfolder", ".stversions", ".stignore", "~syncthing~*", ".syncthing.*.tmp", "*.syncer-tmp", "desktop.ini", "Thumbs.db"}
 
 // LoadMatcher reads <dir>/.stignore if present.
 func LoadMatcher(dir string) *Matcher {
