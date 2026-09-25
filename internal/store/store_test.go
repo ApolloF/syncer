@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefaultsSurviveOlderFiles(t *testing.T) {
@@ -12,8 +13,17 @@ func TestDefaultsSurviveOlderFiles(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"theme":"dark","keepDays":7}`), &s); err != nil {
 		t.Fatal(err)
 	}
-	if !s.PauseWhileGaming || s.Theme != "dark" || s.KeepDays != 7 || s.BackupOnly == nil {
+	if !s.PauseWhileGaming || !s.Notify || s.NoUpdateCheck || s.Paused() || s.Theme != "dark" || s.KeepDays != 7 || s.BackupOnly == nil {
 		t.Errorf("got %+v", s)
+	}
+}
+
+func TestPaused(t *testing.T) {
+	if !(Settings{PausedUntil: time.Now().Add(time.Hour)}).Paused() {
+		t.Error("pause in the future should be active")
+	}
+	if (Settings{PausedUntil: time.Now().Add(-time.Second)}).Paused() {
+		t.Error("expired pause should be over")
 	}
 }
 

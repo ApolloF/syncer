@@ -26,6 +26,10 @@ export function CancelBackup() {
   return window['go']['main']['App']['CancelBackup']();
 }
 
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
 export function Conflicts(arg1) {
   return window['go']['main']['App']['Conflicts'](arg1);
 }
@@ -70,12 +74,20 @@ export function OpenSyncthingGUI() {
   return window['go']['main']['App']['OpenSyncthingGUI']();
 }
 
+export function OpenUpdate() {
+  return window['go']['main']['App']['OpenUpdate']();
+}
+
 export function Overview() {
   return window['go']['main']['App']['Overview']();
 }
 
 export function PasteText() {
   return window['go']['main']['App']['PasteText']();
+}
+
+export function Pause(arg1) {
+  return window['go']['main']['App']['Pause'](arg1);
 }
 
 export function PickBackupFolder() {
@@ -108,6 +120,10 @@ export function Restore(arg1, arg2) {
 
 export function RestorePoints(arg1) {
   return window['go']['main']['App']['RestorePoints'](arg1);
+}
+
+export function Resume() {
+  return window['go']['main']['App']['Resume']();
 }
 
 export function SaveSettings(arg1) {

@@ -16,6 +16,8 @@ export function BackupNow():Promise<void>;
 
 export function CancelBackup():Promise<void>;
 
+export function CheckForUpdate():Promise<main.UpdateInfo>;
+
 export function Conflicts(arg1:string):Promise<Array<conflict.Conflict>>;
 
 export function CopyText(arg1:string):Promise<void>;
@@ -38,9 +40,13 @@ export function OpenPath(arg1:string):Promise<void>;
 
 export function OpenSyncthingGUI():Promise<void>;
 
+export function OpenUpdate():Promise<void>;
+
 export function Overview():Promise<main.Overview>;
 
 export function PasteText():Promise<string>;
+
+export function Pause(arg1:number):Promise<void>;
 
 export function PickBackupFolder():Promise<string>;
 
@@ -57,6 +63,8 @@ export function ResolveConflict(arg1:string,arg2:string,arg3:boolean):Promise<vo
 export function Restore(arg1:string,arg2:number):Promise<number>;
 
 export function RestorePoints(arg1:string):Promise<Array<number>>;
+
+export function Resume():Promise<void>;
 
 export function SaveSettings(arg1:store.Settings):Promise<store.Settings>;
 

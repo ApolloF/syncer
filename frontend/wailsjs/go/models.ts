@@ -289,6 +289,8 @@ export namespace main {
 	    path: string;
 	    steamCloud: boolean;
 	    steamCloudUnverified: boolean;
+	    steamCloudReason: string;
+	    emulator: string;
 	    known: boolean;
 	    size: number;
 	    files: number;
@@ -306,6 +308,8 @@ export namespace main {
 	        this.path = source["path"];
 	        this.steamCloud = source["steamCloud"];
 	        this.steamCloudUnverified = source["steamCloudUnverified"];
+	        this.steamCloudReason = source["steamCloudReason"];
+	        this.emulator = source["emulator"];
 	        this.known = source["known"];
 	        this.size = source["size"];
 	        this.files = source["files"];
@@ -330,6 +334,20 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class UpdateInfo {
+	    latest: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.latest = source["latest"];
+	        this.url = source["url"];
+	    }
 	}
 	export class SyncthingInfo {
 	    installed: boolean;
@@ -365,7 +383,10 @@ export namespace main {
 	    lastBackup?: store.BackupRun;
 	    backingUp: boolean;
 	    gaming: boolean;
+	    paused: boolean;
 	    settings: store.Settings;
+	    version: string;
+	    update?: UpdateInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new Overview(source);
@@ -386,7 +407,10 @@ export namespace main {
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);
 	        this.backingUp = source["backingUp"];
 	        this.gaming = source["gaming"];
+	        this.paused = source["paused"];
 	        this.settings = this.convertValues(source["settings"], store.Settings);
+	        this.version = source["version"];
+	        this.update = this.convertValues(source["update"], UpdateInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -536,6 +560,10 @@ export namespace store {
 	    installedOnly: boolean;
 	    syncDisabled: boolean;
 	    backupOnly: Record<string, LocalFolder>;
+	    // Go type: time
+	    pausedUntil?: any;
+	    notify: boolean;
+	    noUpdateCheck: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -562,6 +590,9 @@ export namespace store {
 	        this.installedOnly = source["installedOnly"];
 	        this.syncDisabled = source["syncDisabled"];
 	        this.backupOnly = this.convertValues(source["backupOnly"], LocalFolder, true);
+	        this.pausedUntil = this.convertValues(source["pausedUntil"], null);
+	        this.notify = source["notify"];
+	        this.noUpdateCheck = source["noUpdateCheck"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

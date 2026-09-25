@@ -3,11 +3,39 @@
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
-  import { SaveSettings, OpenSyncthingGUI, Log, UndoAll } from '../../wailsjs/go/main/App'
+  import { SaveSettings, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, OpenUpdate } from '../../wailsjs/go/main/App'
   import type { store, main } from '../../wailsjs/go/models'
+  import { pausedUntil, tomorrowMorning } from '../lib/fmt'
 
   const o = $derived(ui.overview)
   let log = $state<string[] | null>(null)
+
+  const pauses = [
+    { label: '1 hour', until: () => Date.now() + 3600e3 },
+    { label: '4 hours', until: () => Date.now() + 4 * 3600e3 },
+    { label: 'Until tomorrow', until: () => tomorrowMorning().getTime() },
+  ]
+
+  async function pause(until: number) {
+    await attempt(() => Pause(Math.round(until / 1000)), 'Syncing and backups paused')
+    refresh()
+  }
+
+  async function resume() {
+    await attempt(() => Resume(), 'Syncing and backups resumed')
+    refresh()
+  }
+
+  let checking = $state(false)
+  async function checkUpdate() {
+    checking = true
+    try {
+      const u = await CheckForUpdate()
+      toast(u ? `Syncer ${u.latest} is available` : 'You have the newest version', 'ok')
+      refresh()
+    } catch (e) { fail(e) }
+    checking = false
+  }
 
   async function save(patch: Partial<store.Settings>) {
     if (!o) return
@@ -64,6 +92,22 @@
 
 <div class="card flush list">
   <div class="item">
+    <div class="grow">
+      <div class="name">Pause syncing and backups</div>
+      <div class="faint small">
+        {#if o?.paused}Paused until {pausedUntil(o.settings.pausedUntil)}. It picks up again on its own; “Back up now” still works.
+        {:else}Stop syncing and automatic backups on this PC for a while, e.g. while you play offline. It resumes on its own.{/if}
+      </div>
+    </div>
+    {#if o?.paused}
+      <button class="btn sm" onclick={resume}><Icon name="play" size={14} /> Resume now</button>
+    {:else}
+      <div class="seg">
+        {#each pauses as p}<button onclick={() => pause(p.until())}>{p.label}</button>{/each}
+      </div>
+    {/if}
+  </div>
+  <div class="item">
     <div class="grow"><div class="name">Appearance</div></div>
     <div class="seg">
       {#each themes as t}
@@ -99,6 +143,27 @@
     <Toggle checked={o?.settings.installedOnly} label="Only sync installed games" onchange={(v) => save({ installedOnly: v })} />
   </div>
   <div class="item">
+    <div class="grow"><div class="name">Notify me about problems</div><div class="faint small">A Windows notification when a backup fails, no backup has worked for 3 days, a save has two versions, or a new Syncer is out.</div></div>
+    <Toggle checked={o?.settings.notify} label="Notify me about problems" onchange={(v) => save({ notify: v })} />
+  </div>
+  <div class="item">
+    <div class="grow">
+      <div class="name">Check for updates</div>
+      <div class="faint small">
+        {#if o?.update}Syncer {o.update.latest} is available (you have {o.version}).
+        {:else}Look for new Syncer releases on GitHub once a day. This is {o?.version === 'dev' ? 'a development build' : `version ${o?.version ?? ''}`}.{/if}
+      </div>
+    </div>
+    {#if o?.update}
+      <button class="btn sm primary" onclick={() => OpenUpdate()}><Icon name="external" size={14} /> Download</button>
+    {:else}
+      <button class="btn sm" disabled={checking || o?.settings.noUpdateCheck || o?.version === 'dev'} onclick={checkUpdate}>
+        {#if checking}<Icon name="refresh" size={14} class="spin" />{/if} Check now
+      </button>
+    {/if}
+    <Toggle checked={!o?.settings.noUpdateCheck} label="Check for updates" onchange={(v) => save({ noUpdateCheck: !v })} />
+  </div>
+  <div class="item">
     <div class="grow"><div class="name">Advanced sync settings</div><div class="faint small">Syncthing's own interface, for fine-tuning.</div></div>
     <button class="btn sm" disabled={!o?.syncthing.running} onclick={() => OpenSyncthingGUI()}><Icon name="external" size={14} /> Open</button>
   </div>
@@ -117,6 +182,7 @@
 <p class="faint small about">
   Syncer keeps saves in sync with <b>Syncthing</b> (peer-to-peer, nothing goes through a server) and backs them up into
   <b>Google Drive for desktop</b>. Game locations come from the Ludusavi manifest (PCGamingWiki).
+  {#if o?.version}Syncer {o.version}.{/if}
 </p>
 
 <div class="card flush list">

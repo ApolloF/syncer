@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -57,7 +55,9 @@ func LoadInstalled() *Installed {
 }
 
 // Has reports whether label identifies an installed game or uninstall name.
+// An emulator save folder ("Game (RUNE saves)") counts as its game.
 func (i *Installed) Has(label string) bool {
+	label = strings.TrimSpace(emuSuffix.ReplaceAllString(label, ""))
 	if i == nil || len(normalize(label)) < 3 {
 		return false
 	}
@@ -159,28 +159,7 @@ func (i *Installed) add(name, dir string) {
 
 // steamLibraries returns Steam's own folder plus every library folder listed
 // in its libraryfolders.vdf.
-func steamLibraries(root string) []string {
-	if !filepath.IsAbs(root) {
-		return nil
-	}
-	libs := []string{filepath.Clean(root)}
-	f, err := os.Open(filepath.Join(root, "steamapps", "libraryfolders.vdf"))
-	if err != nil {
-		return libs
-	}
-	defer f.Close()
-	seen := map[string]bool{strings.ToLower(libs[0]): true}
-	var extra []string
-	for _, lib := range steam.ParseVDF(f).Get("libraryfolders").Kids() {
-		dir := filepath.Clean(lib.Value("path"))
-		if key := strings.ToLower(dir); filepath.IsAbs(dir) && !seen[key] {
-			extra = append(extra, dir)
-			seen[key] = true
-		}
-	}
-	sort.Strings(extra)
-	return append(libs, extra...)
-}
+func steamLibraries(root string) []string { return steam.Libraries(root) }
 
 func (i *Installed) loadSteam() {
 	for _, lib := range steamLibraries(steam.Dir()) {
@@ -189,24 +168,9 @@ func (i *Installed) loadSteam() {
 }
 
 func (i *Installed) loadSteamLibrary(lib string) {
-	files, _ := filepath.Glob(filepath.Join(lib, "steamapps", "appmanifest_*.acf"))
-	for _, file := range files {
-		f, err := os.Open(file)
-		if err != nil {
-			continue
-		}
-		app := steam.ParseVDF(f).Get("AppState")
-		f.Close()
-		if id, err := strconv.Atoi(app.Value("appid")); err == nil && id > 0 {
-			i.steamIDs[id] = true
-		}
-		common := filepath.Join(lib, "steamapps", "common")
-		installDir := app.Value("installdir")
-		dir := filepath.Join(common, installDir)
-		if !filepath.IsLocal(installDir) || strings.EqualFold(dir, common) || !paths.Within(common, dir) {
-			dir = ""
-		}
-		i.add(app.Value("name"), dir)
+	for _, app := range steam.LibraryApps(lib) {
+		i.steamIDs[app.ID] = true
+		i.add(app.Name, app.Dir)
 	}
 }
 

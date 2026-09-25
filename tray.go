@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/energye/systray"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -37,10 +38,76 @@ func (a *App) startTray() {
 					logx.Printf("tray backup: %v", err)
 				}
 			})
+			pause := systray.AddMenuItem("Pause syncing and backups", "")
+			for _, p := range []struct {
+				title string
+				until func(time.Time) time.Time
+			}{
+				{"For 1 hour", func(t time.Time) time.Time { return t.Add(time.Hour) }},
+				{"For 4 hours", func(t time.Time) time.Time { return t.Add(4 * time.Hour) }},
+				{"Until tomorrow", tomorrowMorning},
+			} {
+				pause.AddSubMenuItem(p.title, "").Click(func() {
+					if err := a.Pause(p.until(time.Now()).Unix()); err != nil {
+						logx.Printf("tray pause: %v", err)
+					}
+				})
+			}
+			resume := systray.AddMenuItem("Resume syncing and backups", "")
+			resume.Click(func() {
+				if err := a.Resume(); err != nil {
+					logx.Printf("tray resume: %v", err)
+				}
+			})
+			upd := systray.AddMenuItem("Download the new Syncer", "")
+			upd.Click(a.OpenUpdate)
 			systray.AddSeparator()
 			systray.AddMenuItem("Quit Syncer", "").Click(a.quit)
+			a.mu.Lock()
+			a.tray = trayItems{pause: pause, resume: resume, update: upd}
+			a.mu.Unlock()
+			a.refreshTray()
 		}, nil)
 	}()
+}
+
+type trayItems struct{ pause, resume, update *systray.MenuItem }
+
+// refreshTray shows the menu items that fit the current state: pause or
+// resume, and a download link when a new version is out.
+func (a *App) refreshTray() {
+	a.mu.Lock()
+	t := a.tray
+	a.mu.Unlock()
+	if t.pause == nil {
+		return
+	}
+	if s := store.LoadSettings(); s.Paused() {
+		until := s.PausedUntil.Format("15:04")
+		if s.PausedUntil.YearDay() != time.Now().YearDay() {
+			until = s.PausedUntil.Format("Mon 15:04")
+		}
+		t.pause.Hide()
+		t.resume.SetTitle("Resume (paused until " + until + ")")
+		t.resume.Show()
+		systray.SetTooltip("Syncer: paused until " + until)
+	} else {
+		t.resume.Hide()
+		t.pause.Show()
+		systray.SetTooltip("Syncer")
+	}
+	if u := availableUpdate(); u != nil {
+		t.update.SetTitle("Download Syncer " + u.Latest)
+		t.update.Show()
+	} else {
+		t.update.Hide()
+	}
+}
+
+// tomorrowMorning is 06:00 on the day after t.
+func tomorrowMorning(t time.Time) time.Time {
+	y, m, d := t.AddDate(0, 0, 1).Date()
+	return time.Date(y, m, d, 6, 0, 0, 0, t.Location())
 }
 
 func (a *App) showWindow() {

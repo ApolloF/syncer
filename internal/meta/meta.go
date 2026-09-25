@@ -55,8 +55,8 @@ type Report struct {
 func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	var rep Report
 	settings := store.LoadSettings()
-	if settings.SyncDisabled {
-		return rep, nil // "Undo everything" was used: leave Syncthing alone
+	if settings.SyncDisabled || settings.Paused() {
+		return rep, nil // "Undo everything" was used, or paused: leave Syncthing alone
 	}
 	st, err := c.Status(ctx)
 	if err != nil {

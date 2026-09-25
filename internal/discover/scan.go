@@ -20,14 +20,17 @@ type Found struct {
 	Path string `json:"path"`
 	// SteamCloud: Steam Cloud really keeps this save for the Steam account on
 	// this PC. SteamCloudUnverified: the game supports Steam Cloud, but that
-	// couldn't be confirmed here (installed outside Steam, owned by another
-	// account, cloud switched off, or Steam not found), so Syncer covers it.
-	SteamCloud           bool      `json:"steamCloud"`
-	SteamCloudUnverified bool      `json:"steamCloudUnverified"`
-	Known                bool      `json:"known"` // false = heuristic, not in the database
-	Size                 int64     `json:"size"`
-	Files                int       `json:"files"`
-	Modified             time.Time `json:"modified"`
+	// couldn't be confirmed here, so Syncer covers it; SteamCloudReason says
+	// why (a steam.Reason*, or "emulator:<group>" for a cracked copy).
+	SteamCloud           bool   `json:"steamCloud"`
+	SteamCloudUnverified bool   `json:"steamCloudUnverified"`
+	SteamCloudReason     string `json:"steamCloudReason"`
+	// Emulator names the Steam emulator (e.g. "RUNE") whose save folder this is.
+	Emulator string    `json:"emulator"`
+	Known    bool      `json:"known"` // false = heuristic, not in the database
+	Size     int64     `json:"size"`
+	Files    int       `json:"files"`
+	Modified time.Time `json:"modified"`
 }
 
 var placeholders = map[string]string{
@@ -68,12 +71,25 @@ func Scan(entries []Entry) []Found {
 	broad := tooBroad()
 	ex := newExistCache()
 	sc := steam.Detect()
+	emuDirs := emulatorDirs()
+	for _, d := range emuDirs {
+		broad[strings.ToLower(d.path)] = true
+		broad[strings.ToLower(filepath.Dir(d.path))] = true
+	}
+	emuSaves := emulatorSaves(emuDirs)
+	emuByApp := map[int]string{}
+	for _, s := range emuSaves {
+		if emuByApp[s.appID] == "" {
+			emuByApp[s.appID] = s.group
+		}
+	}
 
 	type hit struct {
 		name     string
 		dir      string
-		cloud    bool // confirmed Steam Cloud
-		unverify bool // supports Steam Cloud, not confirmed
+		cloud    bool   // confirmed Steam Cloud
+		unverify bool   // supports Steam Cloud, not confirmed
+		reason   string // why not confirmed
 	}
 	var mu sync.Mutex
 	var hits []hit
@@ -89,9 +105,16 @@ func Scan(entries []Entry) []Found {
 						if broad[strings.ToLower(d)] {
 							continue
 						}
+						h := hit{name: e.Name, dir: d}
+						if e.SteamCloud {
+							v := sc.Check(e.SteamID, d)
+							h.cloud, h.unverify, h.reason = v.Covered, !v.Covered, v.Reason
+							if g := emuByApp[e.SteamID]; !v.Covered && g != "" {
+								h.reason = "emulator:" + g
+							}
+						}
 						mu.Lock()
-						covered := e.SteamCloud && sc.Covers(e.SteamID)
-						hits = append(hits, hit{e.Name, d, covered, e.SteamCloud && !covered})
+						hits = append(hits, h)
 						mu.Unlock()
 					}
 				}
@@ -133,7 +156,16 @@ func Scan(entries []Entry) []Found {
 		for _, g := range byParent {
 			parent := filepath.Dir(g[0].dir)
 			if len(g) > 1 && !broad[strings.ToLower(parent)] {
-				kept = append(kept, hit{g[0].name, parent, g[0].cloud, g[0].unverify})
+				merged := hit{name: g[0].name, dir: parent, cloud: true}
+				for _, k := range g {
+					// The parent is only in Steam Cloud if every slot is.
+					merged.cloud = merged.cloud && k.cloud
+					merged.unverify = merged.unverify || k.unverify
+					if merged.reason == "" {
+						merged.reason = k.reason
+					}
+				}
+				kept = append(kept, merged)
 			} else {
 				kept = append(kept, g...)
 			}
@@ -144,8 +176,26 @@ func Scan(entries []Entry) []Found {
 				continue
 			}
 			seenDir[key] = true
-			out = append(out, Found{Name: name, Path: k.dir, SteamCloud: k.cloud, SteamCloudUnverified: k.unverify, Known: true})
+			out = append(out, Found{Name: name, Path: k.dir, SteamCloud: k.cloud, SteamCloudUnverified: k.unverify,
+				SteamCloudReason: k.reason, Known: true})
 		}
+	}
+
+	// Saves a Steam emulator keeps for a cracked copy: "Game (RUNE saves)".
+	names := map[int]string{}
+	for _, e := range entries {
+		if _, ok := names[e.SteamID]; !ok && e.SteamID > 0 {
+			names[e.SteamID] = e.Name
+		}
+	}
+	for _, s := range emuSaves {
+		name, ok := names[s.appID]
+		key := strings.ToLower(s.dir)
+		if !ok || seenDir[key] {
+			continue
+		}
+		seenDir[key] = true
+		out = append(out, Found{Name: name + " (" + s.group + " saves)", Path: s.dir, Emulator: s.group, Known: true})
 	}
 
 	// Heuristic: anything else in the classic save containers.

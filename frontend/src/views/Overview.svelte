@@ -1,8 +1,8 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte'
   import { ui, attempt, refresh } from '../lib/state.svelte'
-  import { ago } from '../lib/fmt'
-  import { InstallSyncthing, StartSyncthing, BackupNow } from '../../wailsjs/go/main/App'
+  import { ago, pausedUntil } from '../lib/fmt'
+  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, OpenUpdate } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
   const o = $derived(ui.overview)
@@ -18,6 +18,10 @@
   const steps = $derived.by(() => {
     if (!o) return []
     const s: { key: string; title: string; text: string; action?: string; icon: string }[] = []
+    if (o.paused)
+      s.push({ key: 'paused', icon: 'pause', title: `Paused until ${pausedUntil(o.settings.pausedUntil)}`, text: 'Syncing and automatic backups are paused on this PC. They pick up again on their own.', action: 'Resume now' })
+    if (o.update)
+      s.push({ key: 'update', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}. Download the new version from GitHub and run the installer.`, action: 'Download' })
     if (!o.syncthing.installed)
       s.push({ key: 'install', icon: 'sync', title: 'Install the sync engine', text: 'Syncer uses Syncthing to move saves between your PCs directly. One click, no account.', action: 'Install' })
     else if (o.syncthing.error)
@@ -43,6 +47,8 @@
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
     else if (key === 'link' || key === 'pending') ui.view = 'devices'
     else if (key === 'conflicts') ui.view = 'games'
+    else if (key === 'paused') run(key, Resume, 'Syncing and backups resumed')
+    else if (key === 'update') OpenUpdate()
   }
 
   const lb = $derived(o?.lastBackup)
@@ -50,6 +56,7 @@
     if (!o) return { kind: '', text: '' }
     if (o.backingUp) return { kind: 'accent', text: 'Running' }
     if (!o.settings.backupEnabled) return { kind: '', text: 'Off' }
+    if (o.paused) return { kind: '', text: 'Paused' }
     if (!lb) return { kind: 'warn', text: 'Not yet' }
     if (!lb.ok) return { kind: 'err', text: 'Issues' }
     if (!lb.folders) return { kind: 'warn', text: 'Nothing to back up' }
@@ -88,6 +95,7 @@
     <div class="big">{o?.folders ?? '–'}</div>
     <div class="row">
       {#if !o?.syncthing.running}<span class="pill err">Sync off</span>
+      {:else if o.paused}<span class="pill">Paused</span>
       {:else if o.errors}<span class="pill warn">{o.errors} need attention</span>
       {:else if o.syncing}<span class="pill accent">{o.syncing} syncing</span>
       {:else}<span class="pill ok">Up to date</span>{/if}

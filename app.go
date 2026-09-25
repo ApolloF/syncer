@@ -32,6 +32,7 @@ type App struct {
 	lastScan  []discover.Found
 	conflicts *conflictCache
 	quitting  bool // quit from the tray: really exit
+	tray      trayItems
 }
 
 func NewApp() *App { return &App{} }
@@ -50,6 +51,9 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 		go a.autoAddLoop(ctx)
+		go a.pauseLoop(ctx)
+		go a.updateLoop(ctx)
+		go a.notifyLoop(ctx)
 		a.watch(ctx)
 	}()
 }
@@ -140,12 +144,16 @@ type Overview struct {
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
 	Gaming     bool             `json:"gaming"` // automatic backups are holding off right now
+	Paused     bool             `json:"paused"` // syncing and automatic backups are paused (until settings.pausedUntil)
 	Settings   store.Settings   `json:"settings"`
+	Version    string           `json:"version"`
+	Update     *UpdateInfo      `json:"update"` // a newer release, if one is out
 }
 
 func (a *App) Overview() Overview {
 	s := store.LoadSettings()
-	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup}
+	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup,
+		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
@@ -512,6 +520,7 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
 		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
 		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
+		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}
@@ -529,6 +538,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	ensureBackgroundTask()
 	if s.StartAtLogin != old.StartAtLogin {
 		ensureAutostart(s.StartAtLogin)
+	}
+	if s.NoUpdateCheck != old.NoUpdateCheck {
+		a.refreshTray()
 	}
 	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) {
 		go a.runAutoAdd()
