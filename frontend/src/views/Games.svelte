@@ -6,7 +6,7 @@
     found: null as main.GameView[] | null,
     available: null as main.AvailableView[] | null,
     others: null as backup.Orphan[] | null,
-    tab: 'synced' as 'synced' | 'backup' | 'found' | 'other',
+    tab: 'games' as 'games' | 'found' | 'other',
   })
 </script>
 
@@ -125,8 +125,7 @@
     const tab = cache.tab
     untrack(() => {
       load()
-      if (tab === 'other') loadAvailable()
-      if (tab === 'backup') loadOthers()
+      if (tab === 'other') { loadAvailable(); loadOthers() }
     })
   })
   $effect(() => { if (cache.tab === 'found' && cache.found === null && !scanning) scan() })
@@ -138,12 +137,11 @@
   const matches = (...s: string[]) => { const q = query.trim().toLowerCase(); return !q || s.some(x => x.toLowerCase().includes(q)) }
   const found = $derived((cache.found ?? []).filter(g => !g.syncedBy && (showCloud || !g.steamCloud) && matches(g.name, g.path)))
   const hiddenCloud = $derived((cache.found ?? []).filter(g => !g.syncedBy && g.steamCloud).length)
-  const syncedAll = $derived(cache.folders.filter(f => f.sync))
-  const backupAll = $derived(cache.folders.filter(f => !f.sync))
-  const synced = $derived(syncedAll.filter(f => matches(f.label, f.path)))
-  const backedUp = $derived(backupAll.filter(f => matches(f.label, f.path)))
+  const games = $derived(cache.folders.filter(f => matches(f.label, f.path)))
+  const available = $derived((cache.available ?? []).filter(a => matches(a.label, a.path)))
   const others = $derived((cache.others ?? []).filter(b => matches(b.label, b.path)))
-  const uninstalledCount = $derived(syncedAll.filter(f => !f.installed).length)
+  const elsewhereCount = $derived(cache.available && cache.others ? cache.available.length + cache.others.length : null)
+  const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
   const notInstalled = $derived((cache.found ?? []).filter(g => !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
   const bulkCount = $derived(notInstalled.filter(g => bulkPick[g.path]).length)
 
@@ -279,7 +277,7 @@
     deleting = true
     try {
       await DeleteSaves(f.id, deleteTyped, deleteAck)
-      toast(`Moved the saves of ${f.label} to the Recycle Bin. It's under Backup now.`, 'ok')
+      toast(`Moved the saves of ${f.label} to the Recycle Bin. It stays in your list, backed up only.`, 'ok')
       deleteFor = null
       cache.found = null
     } catch (e) { fail(e) }
@@ -330,6 +328,10 @@
       load(); refresh()
     } catch (e) { fail(e) }
     stoppingUninstalled = false
+  }
+
+  async function showCloudGames() {
+    if (o && await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: true } as store.Settings))) refresh()
   }
 
   async function syncHere(a: main.AvailableView) {
@@ -456,24 +458,21 @@
 <header class="row">
   <div class="grow">
     <h1>Games</h1>
-    <p class="muted">Saves that sync between your PCs and back up to Google Drive.</p>
+    <p class="muted">Sync shares a game's saves with your other PCs. Backup copies them to Google Drive.</p>
   </div>
   <button class="btn" onclick={pickCustom}><Icon name="folder" size={16} /> Add folder</button>
 </header>
 
 <div class="bar row">
   <div class="tabs">
-    <button class:active={cache.tab === 'synced'} onclick={() => (cache.tab = 'synced')}>
-      Synced <span class="count">{syncedAll.length}</span>
-    </button>
-    <button class:active={cache.tab === 'backup'} onclick={() => (cache.tab = 'backup')}>
-      Backup <span class="count">{backupAll.length}</span>
+    <button class:active={cache.tab === 'games'} onclick={() => (cache.tab = 'games')}>
+      Your games <span class="count">{cache.folders.length}</span>
     </button>
     <button class:active={cache.tab === 'found'} onclick={() => (cache.tab = 'found')}>
       Found on this PC {#if cache.found}<span class="count">{found.length}</span>{/if}
     </button>
     <button class:active={cache.tab === 'other'} onclick={() => (cache.tab = 'other')}>
-      On other PCs {#if cache.available}<span class="count">{cache.available.length}</span>{/if}
+      Elsewhere {#if elsewhereCount !== null}<span class="count">{elsewhereCount}</span>{/if}
     </button>
   </div>
   <div class="search grow">
@@ -484,85 +483,38 @@
     <button class="btn icon" title="Rescan (and update game database)" disabled={scanning} onclick={() => scan(true)}>
       <Icon name="refresh" size={16} class={scanning ? 'spin' : ''} />
     </button>
-  {:else if cache.tab === 'backup'}
-    <button class="btn icon" title="Look for other backups in Google Drive again" disabled={loadingOthers} onclick={() => loadOthers(true)}>
-      <Icon name="refresh" size={16} class={loadingOthers ? 'spin' : ''} />
+  {:else if cache.tab === 'other'}
+    <button class="btn icon" title="Check your other PCs and Google Drive again" disabled={loadingOthers || loadingAvailable}
+      onclick={() => { loadAvailable(); loadOthers(true) }}>
+      <Icon name="refresh" size={16} class={loadingOthers || loadingAvailable ? 'spin' : ''} />
     </button>
   {/if}
 </div>
 
-{#if cache.tab === 'synced'}
-  {#if !o?.syncthing.running && syncedAll.length === 0}
-    <div class="card empty">
-      <Icon name="alert" size={22} />
-      <p>{o?.settings.syncDisabled ? 'Syncing is off on this PC.' : "Sync isn't running. Start it from the Overview."}</p>
-      {#if backupAll.length}<button class="btn" onclick={() => (cache.tab = 'backup')}>See backed-up games</button>{/if}
+{#if cache.tab === 'games'}
+  {#if !o?.syncthing.running && !o?.settings.syncDisabled}
+    <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">Sync isn't running. Start it from the Overview.</span></div>
+  {/if}
+  {#if o?.settings.installedOnly && uninstalledCount > 0}
+    <div class="card notice row">
+      <span class="grow">{plural(uninstalledCount, 'synced game')} {uninstalledCount === 1 ? "isn't" : "aren't"} installed on this PC.</span>
+      <button class="btn sm" disabled={stoppingUninstalled} onclick={stopUninstalled}
+        title="They start syncing again once the game is installed here">
+        {#if stoppingUninstalled}<Icon name="refresh" size={14} class="spin" />{/if} Stop syncing them
+      </button>
     </div>
-  {:else if synced.length === 0 && !loading}
+  {/if}
+  {#if games.length === 0 && !loading}
     <div class="card empty">
       <Icon name="games" size={22} />
-      <p>{query ? 'Nothing matches.' : 'No games synced yet.'}</p>
+      <p>{query ? 'Nothing matches.' : 'No games yet.'}</p>
       {#if !query}<button class="btn primary" onclick={() => (cache.tab = 'found')}>Find games on this PC</button>{/if}
     </div>
   {:else}
-    {#if !o?.syncthing.running && !o?.settings.syncDisabled}
-      <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">Sync isn't running. Start it from the Overview.</span></div>
-    {/if}
-    {#if o?.settings.installedOnly && uninstalledCount > 0}
-      <div class="card notice row">
-        <span class="grow">{plural(uninstalledCount, 'synced game')} {uninstalledCount === 1 ? "isn't" : "aren't"} installed on this PC.</span>
-        <button class="btn sm" disabled={stoppingUninstalled} onclick={stopUninstalled}
-          title="They start syncing again once the game is installed here">
-          {#if stoppingUninstalled}<Icon name="refresh" size={14} class="spin" />{/if} Stop syncing them
-        </button>
-      </div>
-    {/if}
     <div class="card flush list">
-      {#each synced as f (f.id)}{@render folderRow(f)}{/each}
+      <div class="cols faint"><span>Sync</span><span>Backup</span></div>
+      {#each games as f (f.id)}{@render folderRow(f)}{/each}
     </div>
-    <p class="faint hint">Sync = share with your other PCs. Backup = copy to Google Drive. Games you only back up are under Backup.</p>
-  {/if}
-{:else if cache.tab === 'backup'}
-  {#if backedUp.length === 0 && !loading}
-    <div class="card empty">
-      <Icon name="cloud" size={22} />
-      <p>{query ? 'Nothing matches.' : 'No games are backed up without syncing.'}</p>
-      {#if !query}<p class="faint small">Pick “Back up only” for a game found on this PC, or turn off Sync for a synced game.</p>{/if}
-    </div>
-  {:else}
-    <div class="card flush list">
-      {#each backedUp as f (f.id)}{@render folderRow(f)}{/each}
-    </div>
-    <p class="faint hint">Backed up from this PC, not shared with your other PCs. Turn on Sync to share one; turn both off to keep it listed but leave it alone.</p>
-  {/if}
-
-  <div class="section row">
-    <h2 class="grow">Other backups in Google Drive</h2>
-    {#if loadingOthers}<Icon name="refresh" size={14} class="spin faint" />{/if}
-  </div>
-  {#if othersErr}
-    <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">{othersErr}</span></div>
-  {:else if !cache.others}
-    <p class="faint hint">Looking…</p>
-  {:else if others.length === 0}
-    <p class="faint hint">{query ? 'Nothing matches.' : 'None: every backup in Google Drive belongs to a game here.'}</p>
-  {:else}
-    <div class="card flush list">
-      {#each others as b (b.id)}
-        <div class="item" transition:slide={{ duration: 150 }}>
-          <div class="grow">
-            <div class="name ellipsis">{b.label}</div>
-            <div class="path faint ellipsis" title={b.path || b.id}>{otherLine(b)}</div>
-          </div>
-          <span class="meta faint">{bytes(b.bytes)}</span>
-          <div class="acts">
-            <button class="btn ghost icon sm danger" title="Delete this backup" onclick={() => openDrop(b)}><Icon name="trash" size={16} /></button>
-          </div>
-          <button class="btn sm" onclick={() => openAdopt(b)}><Icon name="plus" size={14} /> Add to Syncer</button>
-        </div>
-      {/each}
-    </div>
-    <p class="faint hint">Backups of games removed from this PC, or that your other PCs back up. Add one to back it up from here again or to restore its saves.</p>
   {/if}
 {:else if cache.tab === 'found'}
   {#if scanning && !cache.found}
@@ -598,24 +550,23 @@
           </button>
         </div>
       {:else}
-        <div class="empty inner"><p class="muted">{query ? 'Nothing matches.' : 'Everything found is already synced or backed up.'}</p></div>
+        <div class="empty inner"><p class="muted">{query ? 'Nothing matches.' : 'Everything found is already in your games.'}</p></div>
       {/each}
     </div>
-    <div class="row hint">
-      <Toggle checked={showCloud} label="Include Steam Cloud games"
-        onchange={async (v) => { if (o) { await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: v } as store.Settings)); refresh() } }} />
-      <span class="faint">Also sync games Steam Cloud already covers{hiddenCloud && !showCloud ? ` (${hiddenCloud} hidden)` : ''}</span>
-    </div>
-    <p class="faint hint">{autoOn ? `New games are synced automatically${o?.settings.installedOnly ? ' once installed' : ''}; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Automatic syncing of new games is off (Settings).'}</p>
+    <p class="faint hint">
+      {autoOn ? `New games are added automatically${o?.settings.installedOnly ? ' once installed' : ''}; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Adding new games automatically is off.'}
+      {#if hiddenCloud && !showCloud}{plural(hiddenCloud, 'Steam Cloud game')} hidden. <button class="linkbtn" onclick={showCloudGames}>Show them</button>{/if}
+    </p>
   {/if}
 {:else}
+  <h2 class="section">On your other PCs</h2>
   {#if loadingAvailable && !cache.available}
-    <div class="card empty"><Icon name="refresh" size={22} class="spin" /><p>Checking your other PCs…</p></div>
-  {:else if (cache.available ?? []).length === 0}
-    <div class="card empty"><Icon name="devices" size={22} /><p>Nothing else on your other PCs.</p></div>
+    <p class="faint hint">Checking your other PCs…</p>
+  {:else if available.length === 0}
+    <p class="faint hint">{query ? 'Nothing matches.' : 'Nothing: every game your other PCs sync is here too.'}</p>
   {:else}
     <div class="card flush list">
-      {#each cache.available ?? [] as a (a.id)}
+      {#each available as a (a.id)}
         <div class="item" transition:slide={{ duration: 150 }}>
           <div class="grow">
             <div class="name ellipsis">{a.label}</div>
@@ -630,6 +581,32 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  <h2 class="section">In Google Drive</h2>
+  {#if othersErr}
+    <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">{othersErr}</span></div>
+  {:else if !cache.others}
+    <p class="faint hint">Looking…</p>
+  {:else if others.length === 0}
+    <p class="faint hint">{query ? 'Nothing matches.' : 'Nothing: every backup in Google Drive belongs to one of your games.'}</p>
+  {:else}
+    <div class="card flush list">
+      {#each others as b (b.id)}
+        <div class="item" transition:slide={{ duration: 150 }}>
+          <div class="grow">
+            <div class="name ellipsis">{b.label}</div>
+            <div class="path faint ellipsis" title={b.path || b.id}>{otherLine(b)}</div>
+          </div>
+          <span class="meta faint">{bytes(b.bytes)}</span>
+          <div class="acts">
+            <button class="btn ghost icon sm danger" title="Delete this backup" onclick={() => openDrop(b)}><Icon name="trash" size={16} /></button>
+          </div>
+          <button class="btn sm" onclick={() => openAdopt(b)}><Icon name="plus" size={14} /> Add to Syncer</button>
+        </div>
+      {/each}
+    </div>
+    <p class="faint hint">Backups of games removed from this PC, or that your other PCs back up. Add one to back it up from here again or to restore its saves.</p>
   {/if}
 {/if}
 
@@ -708,7 +685,7 @@
     <ul class="steps">
       {#if f.sync}<li>It stops syncing here first, so your other PCs keep their copy.</li>{/if}
       {#if !deleteUnbacked}<li>It's backed up one last time. If that fails, nothing is deleted.</li>{/if}
-      <li>{f.label} stays listed under Backup{deleteUnbacked ? '' : ', so you can restore these saves later'}.</li>
+      <li>{f.label} stays in your games as backup only{deleteUnbacked ? '' : ', so you can restore these saves later'}.</li>
     </ul>
     {#if deleteUnbacked}
       <p class="err small">{f.label} isn't backed up. Once the Recycle Bin is emptied, these saves are gone for good.</p>
@@ -750,7 +727,7 @@
 
 {#if bulkOpen}
   <Modal title="Back up games that aren't installed" onclose={() => { if (!bulkBusy) bulkOpen = false }}>
-    <p>Their saves are backed up to Google Drive from this PC, without syncing them to your other PCs. They show up under Backup.</p>
+    <p>Their saves are backed up to Google Drive from this PC, without syncing them to your other PCs.</p>
     <div class="picklist">
       {#each notInstalled as g (g.path)}
         <label class="chk pick" title={g.path}>
@@ -835,6 +812,8 @@
   }
   .tabs button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   .count { font-size: 12px; color: var(--faint); }
+  .cols { display: flex; justify-content: flex-end; gap: 12px; padding: 8px 14px 6px; font-size: 11.5px; }
+  .cols span { width: 38px; text-align: center; }
   .search { position: relative; max-width: 320px; margin-left: auto; }
   .search :global(svg) { position: absolute; left: 10px; top: 9px; color: var(--faint); }
   .search input { width: 100%; padding-left: 32px; }
@@ -849,13 +828,14 @@
   .empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px; color: var(--muted); text-align: center; }
   .empty.inner { padding: 28px; }
   .hint { font-size: 12.5px; gap: 10px; padding: 0 4px; }
-  .section { margin-top: 10px; padding: 0 4px; }
+  .section { padding: 0 4px; }
+  .section ~ .section { margin-top: 10px; }
   .points { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
   .pt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; color: var(--text); cursor: pointer; }
   .pt:hover { background: var(--hover); }
   .pt input { accent-color: var(--accent); }
   .linkish { border: 0; cursor: pointer; font: inherit; font-size: 12px; }
-  .linkbtn { border: 0; padding: 0; background: none; font: inherit; cursor: pointer; text-decoration: underline; }
+  .linkbtn { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
   .linkbtn.danger { color: var(--err); }
   .conflicts { display: flex; flex-direction: column; gap: 12px; max-height: 340px; overflow-y: auto; }
   .conf { display: flex; flex-direction: column; gap: 8px; }
