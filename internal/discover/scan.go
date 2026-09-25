@@ -11,17 +11,23 @@ import (
 	"time"
 
 	"github.com/ApolloF/syncer/internal/paths"
+	"github.com/ApolloF/syncer/internal/steam"
 )
 
 // Found is a game whose save folder exists on this PC.
 type Found struct {
-	Name       string    `json:"name"`
-	Path       string    `json:"path"`
-	SteamCloud bool      `json:"steamCloud"`
-	Known      bool      `json:"known"` // false = heuristic, not in the database
-	Size       int64     `json:"size"`
-	Files      int       `json:"files"`
-	Modified   time.Time `json:"modified"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	// SteamCloud: Steam Cloud really keeps this save for the Steam account on
+	// this PC. SteamCloudUnverified: the game supports Steam Cloud, but that
+	// couldn't be confirmed here (installed outside Steam, owned by another
+	// account, cloud switched off, or Steam not found), so Syncer covers it.
+	SteamCloud           bool      `json:"steamCloud"`
+	SteamCloudUnverified bool      `json:"steamCloudUnverified"`
+	Known                bool      `json:"known"` // false = heuristic, not in the database
+	Size                 int64     `json:"size"`
+	Files                int       `json:"files"`
+	Modified             time.Time `json:"modified"`
 }
 
 var placeholders = map[string]string{
@@ -61,11 +67,13 @@ func Scan(entries []Entry) []Found {
 	}
 	broad := tooBroad()
 	ex := newExistCache()
+	sc := steam.Detect()
 
 	type hit struct {
-		name  string
-		dir   string
-		cloud bool
+		name     string
+		dir      string
+		cloud    bool // confirmed Steam Cloud
+		unverify bool // supports Steam Cloud, not confirmed
 	}
 	var mu sync.Mutex
 	var hits []hit
@@ -82,7 +90,8 @@ func Scan(entries []Entry) []Found {
 							continue
 						}
 						mu.Lock()
-						hits = append(hits, hit{e.Name, d, e.SteamCloud})
+						covered := e.SteamCloud && sc.Covers(e.SteamID)
+						hits = append(hits, hit{e.Name, d, covered, e.SteamCloud && !covered})
 						mu.Unlock()
 					}
 				}
@@ -124,7 +133,7 @@ func Scan(entries []Entry) []Found {
 		for _, g := range byParent {
 			parent := filepath.Dir(g[0].dir)
 			if len(g) > 1 && !broad[strings.ToLower(parent)] {
-				kept = append(kept, hit{g[0].name, parent, g[0].cloud})
+				kept = append(kept, hit{g[0].name, parent, g[0].cloud, g[0].unverify})
 			} else {
 				kept = append(kept, g...)
 			}
@@ -135,7 +144,7 @@ func Scan(entries []Entry) []Found {
 				continue
 			}
 			seenDir[key] = true
-			out = append(out, Found{Name: name, Path: k.dir, SteamCloud: k.cloud, Known: true})
+			out = append(out, Found{Name: name, Path: k.dir, SteamCloud: k.cloud, SteamCloudUnverified: k.unverify, Known: true})
 		}
 	}
 

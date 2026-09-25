@@ -12,6 +12,7 @@ export const ui = $state({
   overview: null as main.Overview | null,
   toasts: [] as Toast[],
   tick: 0, // bumps on every backend "changed" event so views can refetch
+  gamesAdded: 0, // bumps when games were added automatically
 })
 
 let seq = 0
@@ -54,5 +55,6 @@ export function init() {
     pending = setTimeout(() => { pending = null; ui.tick++; refresh() }, 400)
   })
   EventsOn('toast', (t: string) => toast(t, 'ok'))
+  EventsOn('games:added', () => { ui.gamesAdded++ })
   setInterval(refresh, 15000)
 }

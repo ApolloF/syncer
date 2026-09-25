@@ -36,6 +36,9 @@ func runBackground() {
 		} else if len(rep.Added) > 0 {
 			logx.Printf("reconcile: added %v", rep.Added)
 		}
+		if _, err := autoAdd(ctx, c); err != nil {
+			logx.Printf("auto-add: %v", err)
+		}
 	}
 	if !store.LoadSettings().BackupEnabled {
 		logx.Printf("backup disabled, done")
@@ -49,7 +52,7 @@ func runBackground() {
 // runBackup backs up every enabled folder and records the result.
 func runBackup(ctx context.Context, onProg func(backup.Progress)) (*store.BackupRun, error) {
 	s := store.LoadSettings()
-	target, ok := backup.Target(s.BackupRoot)
+	target, ok := backupTarget(s)
 	if !ok {
 		err := errors.New("Google Drive for desktop not found — install it and sign in, or choose a backup folder")
 		record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Errors: []string{err.Error()}})
@@ -83,6 +86,10 @@ func runBackup(ctx context.Context, onProg func(backup.Progress)) (*store.Backup
 	}
 	return res, nil
 }
+
+// backupTarget is where backups go: a custom folder, or the chosen Google
+// account's My Drive.
+func backupTarget(s store.Settings) (string, bool) { return backup.Target(s.BackupRoot, s.DriveRoot) }
 
 func record(r *store.BackupRun) {
 	st := store.LoadState()

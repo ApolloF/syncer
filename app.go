@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +46,7 @@ func (a *App) startup(ctx context.Context) {
 				runtime.EventsEmit(ctx, "changed")
 			}
 		}
+		go a.autoAddLoop(ctx)
 		a.watch(ctx)
 	}()
 }
@@ -92,6 +92,14 @@ func (a *App) watch(ctx context.Context) {
 	}
 }
 
+// autoAddLoop picks up newly installed games while the window is open.
+func (a *App) autoAddLoop(ctx context.Context) {
+	for ctx.Err() == nil {
+		a.runAutoAdd()
+		sleep(ctx, time.Hour)
+	}
+}
+
 func sleep(ctx context.Context, d time.Duration) {
 	select {
 	case <-ctx.Done():
@@ -132,8 +140,8 @@ type Overview struct {
 
 func (a *App) Overview() Overview {
 	s := store.LoadSettings()
-	o := Overview{Settings: s, Drive: backup.DetectDrive(), LastBackup: store.LoadState().LastBackup}
-	o.Target, _ = backup.Target(s.BackupRoot)
+	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup}
+	o.Target, _ = backupTarget(s)
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -482,52 +490,21 @@ func (a *App) ManifestUpdated() int64 {
 
 // AddFolder starts syncing (and backing up) a save folder.
 func (a *App) AddFolder(label, path string) error {
-	path = filepath.Clean(path)
-	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
-		return errors.New("folder not found: " + path)
-	}
-	if _, _, ok := paths.Portable(path); !ok {
-		return errors.New("only folders inside your user profile, Documents, AppData or Saved Games can be synced between PCs")
-	}
 	c, err := a.client()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := a.callCtx()
 	defer cancel()
-	st, err := c.Status(ctx)
+	id, err := addFolder(ctx, c, label, path)
 	if err != nil {
 		return err
 	}
-	fs, err := c.Folders(ctx)
-	if err != nil {
-		return err
-	}
-	taken := map[string]bool{}
-	for _, f := range fs {
-		taken[f.ID] = true
-		if paths.Within(f.Path, path) {
-			return errors.New("already synced as part of \"" + f.Label + "\"")
-		}
-		if paths.Within(path, f.Path) && f.ID != meta.FolderID {
-			return errors.New("this folder contains \"" + f.Label + "\", which is already synced — remove that first")
-		}
-	}
-	ds, _ := c.Devices(ctx)
-	var others []string
-	for _, d := range ds {
-		if d.DeviceID != st.MyID {
-			others = append(others, d.DeviceID)
-		}
-	}
-	if label == "" {
-		label = filepath.Base(path)
-	}
-	id := meta.NewID(label, taken)
-	if err := meta.AddFolder(ctx, c, id, label, path, st.MyID, others); err != nil {
-		return err
-	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) { delete(s.Ignored, id); delete(s.NoBackup, id) })
+	_, _ = store.UpdateSettings(func(s *store.Settings) {
+		delete(s.Ignored, id)
+		delete(s.NoBackup, id)
+		delete(s.Dismissed, dismissKey(path))
+	})
 	_, _ = meta.Reconcile(ctx, c)
 	logx.Printf("added folder %s (%s)", label, path)
 	runtime.EventsEmit(a.ctx, "changed")
@@ -548,10 +525,23 @@ func (a *App) RemoveFolder(id string) error {
 	}
 	ctx, cancel := a.callCtx()
 	defer cancel()
+	var path string
+	if fs, err := c.Folders(ctx); err == nil {
+		for _, f := range fs {
+			if f.ID == id {
+				path = f.Path
+			}
+		}
+	}
 	if err := c.RemoveFolder(ctx, id); err != nil {
 		return err
 	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) { s.Ignored[id] = true })
+	_, _ = store.UpdateSettings(func(s *store.Settings) {
+		s.Ignored[id] = true
+		if path != "" {
+			s.Dismissed[dismissKey(path)] = true
+		}
+	})
 	_, _ = meta.Reconcile(ctx, c)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
@@ -617,7 +607,7 @@ func (a *App) CancelBackup() {
 }
 
 func (a *App) RestorePoints(id string) []int64 {
-	t, ok := backup.Target(store.LoadSettings().BackupRoot)
+	t, ok := backupTarget(store.LoadSettings())
 	if !ok {
 		return nil
 	}
@@ -630,7 +620,7 @@ func (a *App) RestorePoints(id string) []int64 {
 
 // Restore copies a backup back into place. point 0 = latest backup.
 func (a *App) Restore(id string, point int64) (int, error) {
-	t, ok := backup.Target(store.LoadSettings().BackupRoot)
+	t, ok := backupTarget(store.LoadSettings())
 	if !ok {
 		return 0, errors.New("Google Drive folder not found")
 	}
@@ -655,7 +645,7 @@ func (a *App) Restore(id string, point int64) (int, error) {
 }
 
 func (a *App) OpenBackupFolder() {
-	if t, ok := backup.Target(store.LoadSettings().BackupRoot); ok {
+	if t, ok := backupTarget(store.LoadSettings()); ok {
 		_ = os.MkdirAll(t, 0o755)
 		a.OpenPath(t)
 	}
@@ -675,9 +665,10 @@ func (a *App) Log() []string { return logx.Tail(200) }
 // ---- settings ----------------------------------------------------------------
 
 func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
+	old := store.LoadSettings()
 	s, err := store.UpdateSettings(func(s *store.Settings) {
-		s.Theme, s.BackupEnabled, s.BackupRoot = in.Theme, in.BackupEnabled, in.BackupRoot
-		s.ShowSteamCloud = in.ShowSteamCloud
+		s.Theme, s.BackupEnabled, s.BackupRoot, s.DriveRoot = in.Theme, in.BackupEnabled, in.BackupRoot, in.DriveRoot
+		s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
 		if in.IntervalHours > 0 {
 			s.IntervalHours = in.IntervalHours
 		}
@@ -690,6 +681,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	}
 	a.applyTheme(s.Theme)
 	ensureBackgroundTask()
+	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud) {
+		go a.runAutoAdd()
+	}
 	return s, nil
 }
 

@@ -45,7 +45,7 @@
   const driveLabel = $derived.by(() => {
     if (!o) return ''
     if (o.settings.backupRoot) return 'Custom folder'
-    if (!o.drive.found) return 'Not found'
+    if (!o.drive.found) return o.settings.driveRoot ? 'Chosen drive not found' : 'Not found'
     return o.drive.running ? 'Connected' : 'Installed, not running'
   })
 </script>
@@ -79,6 +79,18 @@
     <h2>Google Drive</h2>
     <div class="line"><span class="muted">Status</span>
       <span class="pill {o?.settings.backupRoot || o?.drive.running ? 'ok' : o?.drive.found ? 'warn' : 'err'}">{driveLabel}</span></div>
+    {#if !o?.settings.backupRoot && ((o?.drive.drives?.length ?? 0) > 1 || o?.settings.driveRoot)}
+      <div class="line"><span class="muted">Account</span>
+        <select value={o?.settings.driveRoot ?? ''} onchange={(e) => save({ driveRoot: e.currentTarget.value })}>
+          <option value="">Automatic ({o?.drive.drives?.[0]?.myDrive ?? 'none'})</option>
+          {#each o?.drive.drives ?? [] as d}
+            <option value={d.myDrive}>{d.myDrive}{d.label ? ` · ${d.label}` : ''}</option>
+          {/each}
+          {#if o?.settings.driveRoot && !o.drive.drives?.some(d => d.myDrive.toLowerCase() === o.settings.driveRoot.toLowerCase())}
+            <option value={o.settings.driveRoot}>{o.settings.driveRoot} (not found)</option>
+          {/if}
+        </select></div>
+    {/if}
     <div class="line"><span class="muted">Folder</span>
       <span class="ellipsis mono path" title={o?.target}>{o?.target || '—'}</span></div>
     <div class="row btns">

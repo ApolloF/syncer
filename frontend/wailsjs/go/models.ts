@@ -1,9 +1,24 @@
 export namespace backup {
 	
+	export class DriveAccount {
+	    myDrive: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DriveAccount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.myDrive = source["myDrive"];
+	        this.label = source["label"];
+	    }
+	}
 	export class DriveInfo {
 	    found: boolean;
 	    running: boolean;
 	    myDrive: string;
+	    drives: DriveAccount[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DriveInfo(source);
@@ -14,7 +29,26 @@ export namespace backup {
 	        this.found = source["found"];
 	        this.running = source["running"];
 	        this.myDrive = source["myDrive"];
+	        this.drives = this.convertValues(source["drives"], DriveAccount);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
@@ -175,6 +209,7 @@ export namespace main {
 	    name: string;
 	    path: string;
 	    steamCloud: boolean;
+	    steamCloudUnverified: boolean;
 	    known: boolean;
 	    size: number;
 	    files: number;
@@ -191,6 +226,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.path = source["path"];
 	        this.steamCloud = source["steamCloud"];
+	        this.steamCloudUnverified = source["steamCloudUnverified"];
 	        this.known = source["known"];
 	        this.size = source["size"];
 	        this.files = source["files"];
@@ -346,11 +382,14 @@ export namespace store {
 	    theme: string;
 	    backupEnabled: boolean;
 	    backupRoot: string;
+	    driveRoot: string;
 	    intervalHours: number;
 	    keepDays: number;
 	    noBackup: Record<string, boolean>;
 	    ignored: Record<string, boolean>;
 	    showSteamCloud: boolean;
+	    autoAdd: boolean;
+	    dismissed: Record<string, boolean>;
 	    migrated: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -362,11 +401,14 @@ export namespace store {
 	        this.theme = source["theme"];
 	        this.backupEnabled = source["backupEnabled"];
 	        this.backupRoot = source["backupRoot"];
+	        this.driveRoot = source["driveRoot"];
 	        this.intervalHours = source["intervalHours"];
 	        this.keepDays = source["keepDays"];
 	        this.noBackup = source["noBackup"];
 	        this.ignored = source["ignored"];
 	        this.showSteamCloud = source["showSteamCloud"];
+	        this.autoAdd = source["autoAdd"];
+	        this.dismissed = source["dismissed"];
 	        this.migrated = source["migrated"];
 	    }
 	}
