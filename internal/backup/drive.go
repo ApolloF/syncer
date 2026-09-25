@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/sys/windows"
 
@@ -30,7 +32,15 @@ type DriveAccount struct {
 // right now the result is not found rather than silently using another
 // account's Drive. With no preference the first one found is used.
 func DetectDrive(preferred string) DriveInfo {
-	info := DriveInfo{Running: driveRunning(), Drives: DetectDrives()}
+	info := locate(preferred)
+	info.Running = driveRunning()
+	return info
+}
+
+// locate is DetectDrive without checking whether Drive runs (that starts
+// tasklist.exe, too slow for every lookup of the backup folder).
+func locate(preferred string) DriveInfo {
+	info := DriveInfo{Drives: detectDrivesCached()}
 	if preferred != "" {
 		info.MyDrive = preferred
 		for _, d := range info.Drives {
@@ -44,6 +54,27 @@ func DetectDrive(preferred string) DriveInfo {
 		info.Found, info.MyDrive = true, info.Drives[0].MyDrive
 	}
 	return info
+}
+
+var drivesCache struct {
+	sync.Mutex
+	at     time.Time
+	drives []DriveAccount
+}
+
+// detectDrivesCached is DetectDrives, reused for a few seconds: the backup
+// folder is looked up on every refresh of the window, and probing every drive
+// letter each time is wasteful (and slow with a sleeping network drive).
+func detectDrivesCached() []DriveAccount {
+	drivesCache.Lock()
+	defer drivesCache.Unlock()
+	if drivesCache.drives == nil || time.Since(drivesCache.at) > 10*time.Second {
+		drivesCache.drives, drivesCache.at = DetectDrives(), time.Now()
+		if drivesCache.drives == nil {
+			drivesCache.drives = []DriveAccount{}
+		}
+	}
+	return drivesCache.drives
 }
 
 // DetectDrives lists "My Drive" for every account, both for the default
@@ -129,7 +160,7 @@ func Target(override, preferredDrive string) (string, bool) {
 	if override != "" {
 		return override, isDir(filepath.Dir(filepath.Clean(override))) || isDir(override)
 	}
-	d := DetectDrive(preferredDrive)
+	d := locate(preferredDrive)
 	if !d.Found {
 		return "", false
 	}

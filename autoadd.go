@@ -22,9 +22,10 @@ import (
 var autoAddMu sync.Mutex
 
 // autoAdd starts syncing every newly detected game: recognised by the game
-// database, not already synced, not one the user stopped syncing, and not
-// already in Steam Cloud (unless IncludeSteamCloud is on). Games that support
-// Steam Cloud but can't be confirmed to use it here are added too.
+// database, not already synced, not one the user stopped syncing, installed
+// here when "only installed games" is on, and not already in Steam Cloud
+// (unless IncludeSteamCloud is on). Games that support Steam Cloud but can't
+// be confirmed to use it here are added too.
 func autoAdd(ctx context.Context, c *syncthing.Client) ([]string, error) {
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
@@ -36,12 +37,16 @@ func autoAdd(ctx context.Context, c *syncthing.Client) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	installed := func(string) bool { return true }
+	if s.InstalledOnly {
+		installed = cachedInstalled().Has
+	}
 	var added []string
 	for _, g := range discover.Scan(es) {
 		if ctx.Err() != nil {
 			break
 		}
-		if !wantAuto(g, s) {
+		if !wantAuto(g, s, installed) {
 			continue
 		}
 		id, err := addFolder(ctx, c, g.Name, g.Path)
@@ -83,7 +88,7 @@ func (a *App) runAutoAdd() {
 	}
 }
 
-func wantAuto(g discover.Found, s store.Settings) bool {
+func wantAuto(g discover.Found, s store.Settings, installed func(string) bool) bool {
 	// Folders over the size limit are left for the user to add by hand: they
 	// are more often a misdetection (mods, caches, a whole install).
 	if !g.Known || g.Files == 0 || (s.AutoAddMaxGB > 0 && g.Size > int64(s.AutoAddMaxGB)<<30) {
@@ -93,6 +98,11 @@ func wantAuto(g discover.Found, s store.Settings) bool {
 		return false
 	}
 	if s.Dismissed[dismissKey(g.Path)] {
+		return false
+	}
+	// Saves left behind by a game that isn't installed (or that a stopped
+	// sync left here) wait until it is: "Stop syncing them" relies on this.
+	if s.InstalledOnly && !installed(g.Name) {
 		return false
 	}
 	// Stopped syncing before "dismissed" existed: the folder id is ignored.

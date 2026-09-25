@@ -27,6 +27,7 @@
     stop: 'M6 6h12v12H6z',
     undo: 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',
     pause: 'M8 5v14M16 5v14',
+    filter: 'M4 5h16l-6 7.5V18l-4 2v-7.5z',
   }
 </script>
 

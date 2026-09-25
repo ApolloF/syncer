@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
@@ -120,21 +121,8 @@ func playing(inst *discover.Installed) bool {
 	return winx.FullScreen() || inst.Running([]string{winx.ForegroundPath()})
 }
 
-var instCache struct {
-	sync.Mutex
-	inst *discover.Installed
-	at   time.Time
-}
-
 // cachedInstalled avoids rescanning stores and the registry on every UI poll.
-func cachedInstalled() *discover.Installed {
-	instCache.Lock()
-	defer instCache.Unlock()
-	if instCache.inst == nil || time.Since(instCache.at) > time.Minute {
-		instCache.inst, instCache.at = discover.LoadInstalled(), time.Now()
-	}
-	return instCache.inst
-}
+func cachedInstalled() *discover.Installed { return discover.CachedInstalled(time.Minute) }
 
 // runBackup backs up every enabled folder and records the result.
 func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(context.Context)) (*store.BackupRun, error) {
@@ -179,17 +167,19 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 	return res, nil
 }
 
-// seedHistory gives a game that stopped syncing its restore points, if copying
-// them when sync was turned off didn't happen (e.g. a backup was running).
+// seedHistory gives a game that stopped syncing (or was added from another
+// backup) its restore points, if copying them at the time didn't happen (e.g.
+// a backup was running).
 func seedHistory(ctx context.Context, s store.Settings, target string) {
 	for _, lf := range s.BackupOnly {
-		if lf.SyncID == "" || !paths.ValidID(lf.ID) || s.NoBackup[lf.ID] {
+		from := cmpOr(lf.SyncID, lf.CopiedFrom)
+		if from == "" || !paths.ValidID(lf.ID) || s.NoBackup[lf.ID] {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(target, lf.ID)); err == nil {
 			continue
 		}
-		if err := backup.CopyHistory(ctx, target, lf.SyncID, lf.ID); err != nil {
+		if err := backup.CopyHistory(ctx, target, from, lf.ID); err != nil {
 			logx.Printf("copy backup history of %s: %v", lf.Label, err)
 		}
 	}
@@ -205,7 +195,23 @@ func record(r *store.BackupRun) {
 		if r.OK {
 			st.LastSuccess = r.Finished
 		}
+		recordFolders(st, r)
 	})
+}
+
+// recordFolders remembers when each folder was last backed up without errors.
+func recordFolders(st *store.State, r *store.BackupRun) {
+	if st.FolderBackups == nil {
+		st.FolderBackups = map[string]time.Time{}
+	}
+	for _, id := range r.Backed {
+		st.FolderBackups[id] = r.Finished
+	}
+	for id, t := range st.FolderBackups {
+		if r.Finished.Sub(t) > 365*24*time.Hour {
+			delete(st.FolderBackups, id)
+		}
+	}
 }
 
 // backupFolders lists what to back up: Syncthing's folders (or the cached list
@@ -219,7 +225,11 @@ func backupFolders() ([]backup.Folder, error) {
 	if !s.SyncDisabled {
 		synced, err = syncedFolders()
 	}
-	return mergeFolders(synced, s.BackupOnly), err
+	fs := mergeFolders(synced, s.BackupOnly)
+	for i := range fs {
+		fs[i].Exclude = s.Exclude[dismissKey(fs[i].Path)]
+	}
+	return fs, err
 }
 
 func syncedFolders() ([]backup.Folder, error) {
@@ -264,8 +274,12 @@ next:
 	return append(out, extra...)
 }
 
+var taskSeen atomic.Bool // the background task was found registered by this process
+
 // ensureBackgroundTask (re)registers the scheduled task so it always points at
 // the current exe and interval, and removes it once it has nothing left to do.
+// An unchanged task is left alone: registering it again restarts its
+// schedule (an extra run a few minutes after every start of Syncer).
 func ensureBackgroundTask() {
 	exe, ok := taskExe()
 	if !ok {
@@ -276,6 +290,15 @@ func ensureBackgroundTask() {
 		if err := tasks.Delete(tasks.BackupTask); err != nil {
 			logx.Printf("remove background task: %v", err)
 		}
+		taskSeen.Store(false)
+		store.UpdateState(func(st *store.State) { st.BackgroundTask = "" })
+		return
+	}
+	sig := fmt.Sprintf("v1|%s|%d", strings.ToLower(exe), s.IntervalHours)
+	// Whether the task still exists (someone may have deleted it) is asked
+	// once per run of Syncer, not on every change of a setting.
+	if store.LoadState().BackgroundTask == sig && (taskSeen.Load() || tasks.Exists(tasks.BackupTask)) {
+		taskSeen.Store(true)
 		return
 	}
 	err := tasks.Register(tasks.Spec{
@@ -290,7 +313,9 @@ func ensureBackgroundTask() {
 	})
 	if err != nil {
 		logx.Printf("register background task: %v", err)
+		return
 	}
+	store.UpdateState(func(st *store.State) { st.BackgroundTask = sig })
 }
 
 func ensureSyncthingTask() error {

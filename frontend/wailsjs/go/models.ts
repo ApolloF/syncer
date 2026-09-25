@@ -50,6 +50,56 @@ export namespace backup {
 		    return a;
 		}
 	}
+	export class Orphan {
+	    id: string;
+	    label: string;
+	    path: string;
+	    host: string;
+	    mine: boolean;
+	    // Go type: time
+	    backedUp: any;
+	    // Go type: time
+	    modified: any;
+	    bytes: number;
+	    files: number;
+	    points: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Orphan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	        this.host = source["host"];
+	        this.mine = source["mine"];
+	        this.backedUp = this.convertValues(source["backedUp"], null);
+	        this.modified = this.convertValues(source["modified"], null);
+	        this.bytes = source["bytes"];
+	        this.files = source["files"];
+	        this.points = source["points"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 
@@ -126,6 +176,20 @@ export namespace main {
 	        this.path = source["path"];
 	        this.from = source["from"];
 	        this.reason = source["reason"];
+	    }
+	}
+	export class BulkResult {
+	    added: string[];
+	    skipped: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BulkResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.added = source["added"];
+	        this.skipped = source["skipped"];
 	    }
 	}
 	export class DeviceView {
@@ -242,6 +306,14 @@ export namespace main {
 	    conflicts: number;
 	    // Go type: time
 	    modified: any;
+	    // Go type: time
+	    backedUp: any;
+	    backupBytes: number;
+	    points: number;
+	    exclude: string[];
+	    newerOn: string;
+	    // Go type: time
+	    newerAt: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderView(source);
@@ -264,6 +336,12 @@ export namespace main {
 	        this.shared = source["shared"];
 	        this.conflicts = source["conflicts"];
 	        this.modified = this.convertValues(source["modified"], null);
+	        this.backedUp = this.convertValues(source["backedUp"], null);
+	        this.backupBytes = source["backupBytes"];
+	        this.points = source["points"];
+	        this.exclude = source["exclude"];
+	        this.newerOn = source["newerOn"];
+	        this.newerAt = this.convertValues(source["newerAt"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -297,6 +375,7 @@ export namespace main {
 	    // Go type: time
 	    modified: any;
 	    syncedBy: string;
+	    installed: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new GameView(source);
@@ -315,6 +394,7 @@ export namespace main {
 	        this.files = source["files"];
 	        this.modified = this.convertValues(source["modified"], null);
 	        this.syncedBy = source["syncedBy"];
+	        this.installed = source["installed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -334,6 +414,20 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class NewFolder {
+	    label: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NewFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.path = source["path"];
+	    }
 	}
 	export class UpdateInfo {
 	    latest: string;
@@ -527,6 +621,7 @@ export namespace store {
 	    label: string;
 	    path: string;
 	    syncID?: string;
+	    copiedFrom?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new LocalFolder(source);
@@ -538,6 +633,7 @@ export namespace store {
 	        this.label = source["label"];
 	        this.path = source["path"];
 	        this.syncID = source["syncID"];
+	        this.copiedFrom = source["copiedFrom"];
 	    }
 	}
 	export class Settings {
@@ -561,9 +657,10 @@ export namespace store {
 	    syncDisabled: boolean;
 	    backupOnly: Record<string, LocalFolder>;
 	    // Go type: time
-	    pausedUntil?: any;
+	    pausedUntil: any;
 	    notify: boolean;
 	    noUpdateCheck: boolean;
+	    exclude?: Record<string, Array<string>>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -593,6 +690,7 @@ export namespace store {
 	        this.pausedUntil = this.convertValues(source["pausedUntil"], null);
 	        this.notify = source["notify"];
 	        this.noUpdateCheck = source["noUpdateCheck"];
+	        this.exclude = source["exclude"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

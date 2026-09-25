@@ -139,7 +139,7 @@
     <Toggle checked={o?.settings.showSteamCloud} label="Include Steam Cloud games" onchange={(v) => save({ showSteamCloud: v })} />
   </div>
   <div class="item">
-    <div class="grow"><div class="name">Only sync installed games</div><div class="faint small">Games from your other PCs are added here only when the game is installed on this PC.</div></div>
+    <div class="grow"><div class="name">Only sync installed games</div><div class="faint small">Games from your other PCs, and new games found here, start syncing only once the game is installed on this PC.</div></div>
     <Toggle checked={o?.settings.installedOnly} label="Only sync installed games" onchange={(v) => save({ installedOnly: v })} />
   </div>
   <div class="item">

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +50,7 @@ func (a *App) notifyProblems() {
 			labels[f.ID] = cmpOr(f.Label, f.ID)
 		}
 	}
-	ps := problems(s, st, conflicts, labels, availableUpdate(), time.Now())
+	ps := problems(s, st, conflicts, labels, a.arrivingElsewhere(), availableUpdate(), time.Now())
 	if len(ps) == 0 && len(st.Notified) == 0 {
 		return
 	}
@@ -82,10 +83,34 @@ func (a *App) notifyProblems() {
 	})
 }
 
+// arrivingElsewhere returns the newer saves on other PCs that aren't on their
+// way here right now (Syncthing isn't downloading anything for that game).
+func (a *App) arrivingElsewhere() map[string]newerSave {
+	a.recheckNewer()
+	newer := a.newerNow()
+	if len(newer) == 0 {
+		return nil
+	}
+	c, err := a.client()
+	if err != nil {
+		return newer
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	out := map[string]newerSave{}
+	for id, n := range newer {
+		if st, err := c.FolderStatus(ctx, id); err == nil && st.NeedBytes > 0 {
+			continue
+		}
+		out[id] = n
+	}
+	return out
+}
+
 // problems lists what's worth a notification right now. Each key identifies
 // the problem, so it's reported once.
 func problems(s store.Settings, st store.State, conflicts map[string]int, labels map[string]string,
-	upd *UpdateInfo, now time.Time) []problem {
+	newer map[string]newerSave, upd *UpdateInfo, now time.Time) []problem {
 	var ps []problem
 	lb := st.LastBackup
 	if s.BackupEnabled && lb != nil && !lb.OK && !lb.Finished.IsZero() && now.Sub(lb.Finished) < 24*time.Hour {
@@ -112,6 +137,15 @@ func problems(s store.Settings, st store.State, conflicts map[string]int, labels
 			ps = append(ps, problem{"conflict:" + id, labels[id] + " has two versions of a save",
 				"Two PCs changed the same save. Open Syncer and pick which one to keep."})
 		}
+	}
+	if s.Paused() || s.SyncDisabled {
+		newer = nil
+	}
+	for id, n := range newer {
+		game := cmpOr(labels[id], id)
+		ps = append(ps, problem{"newer:" + id + ":" + strconv.FormatInt(n.At.Unix(), 10), game + " has a newer save on " + n.Host,
+			n.Host + " saved it on " + n.At.Local().Format("Mon 2 Jan 15:04") + ", but that save hasn't reached this PC yet. Turn " +
+				n.Host + " on and let it sync before you play here."})
 	}
 	if upd != nil {
 		ps = append(ps, problem{"update:" + upd.Latest, "Syncer " + upd.Latest + " is available",

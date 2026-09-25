@@ -367,6 +367,22 @@ func (c *Client) RemoveFolder(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/rest/config/folders/"+url.PathEscape(id), nil, nil)
 }
 
+// Ignores returns the lines of a folder's .stignore, comments included.
+func (c *Client) Ignores(ctx context.Context, id string) ([]string, error) {
+	var r struct {
+		Ignore []string `json:"ignore"`
+	}
+	return r.Ignore, c.get(ctx, "/rest/db/ignores?folder="+url.QueryEscape(id), &r)
+}
+
+// SetIgnores replaces a folder's .stignore with lines.
+func (c *Client) SetIgnores(ctx context.Context, id string, lines []string) error {
+	if lines == nil {
+		lines = []string{}
+	}
+	return c.do(ctx, http.MethodPost, "/rest/db/ignores?folder="+url.QueryEscape(id), map[string]any{"ignore": lines}, nil)
+}
+
 func (c *Client) AddDevice(ctx context.Context, d Device) error {
 	return c.do(ctx, http.MethodPost, "/rest/config/devices", d, nil)
 }
@@ -416,7 +432,7 @@ func (c *Client) Events(ctx context.Context, since int, types string) ([]Event, 
 		return nil, fmt.Errorf("syncthing events: %s", resp.Status)
 	}
 	var ev []Event
-	return ev, json.NewDecoder(resp.Body).Decode(&ev)
+	return ev, json.NewDecoder(io.LimitReader(resp.Body, maxRespBody)).Decode(&ev)
 }
 
 // StaggeredVersioning keeps old copies of files replaced by other devices, so

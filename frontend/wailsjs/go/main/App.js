@@ -6,12 +6,20 @@ export function AddBackupOnly(arg1, arg2) {
   return window['go']['main']['App']['AddBackupOnly'](arg1, arg2);
 }
 
+export function AddBackupOnlyMany(arg1) {
+  return window['go']['main']['App']['AddBackupOnlyMany'](arg1);
+}
+
 export function AddDevice(arg1, arg2) {
   return window['go']['main']['App']['AddDevice'](arg1, arg2);
 }
 
 export function AddFolder(arg1, arg2) {
   return window['go']['main']['App']['AddFolder'](arg1, arg2);
+}
+
+export function AdoptBackup(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['AdoptBackup'](arg1, arg2, arg3, arg4);
 }
 
 export function Available() {
@@ -36,6 +44,14 @@ export function Conflicts(arg1) {
 
 export function CopyText(arg1) {
   return window['go']['main']['App']['CopyText'](arg1);
+}
+
+export function DeleteOtherBackup(arg1, arg2) {
+  return window['go']['main']['App']['DeleteOtherBackup'](arg1, arg2);
+}
+
+export function DeleteSaves(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeleteSaves'](arg1, arg2, arg3);
 }
 
 export function Devices() {
@@ -76,6 +92,10 @@ export function OpenSyncthingGUI() {
 
 export function OpenUpdate() {
   return window['go']['main']['App']['OpenUpdate']();
+}
+
+export function OtherBackups(arg1) {
+  return window['go']['main']['App']['OtherBackups'](arg1);
 }
 
 export function Overview() {
@@ -132,6 +152,10 @@ export function SaveSettings(arg1) {
 
 export function ScanGames(arg1) {
   return window['go']['main']['App']['ScanGames'](arg1);
+}
+
+export function SetExclusions(arg1, arg2) {
+  return window['go']['main']['App']['SetExclusions'](arg1, arg2);
 }
 
 export function SetFolderBackup(arg1, arg2) {

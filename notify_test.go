@@ -26,27 +26,34 @@ func TestProblems(t *testing.T) {
 		s         store.Settings
 		st        store.State
 		conflicts map[string]int
+		newer     map[string]newerSave
 		upd       *UpdateInfo
 		want      string
 	}{
-		{"all good", on, store.State{LastBackup: &store.BackupRun{OK: true, Finished: now.Add(-time.Hour)}}, nil, nil, ""},
-		{"failed backup", on, store.State{LastBackup: failed, LastSuccess: now.Add(-time.Hour * 30)}, nil, nil, "backup-failed"},
-		{"failed long ago", on, store.State{LastBackup: &store.BackupRun{Finished: now.Add(-48 * time.Hour)}}, nil, nil, ""},
-		{"backups off", store.Settings{}, store.State{LastBackup: failed, LastSuccess: now.AddDate(0, 0, -9)}, nil, nil, ""},
-		{"stale", on, store.State{LastBackup: failed, LastSuccess: now.AddDate(0, 0, -4)}, nil, nil, "backup-failed,stale"},
-		{"stale from an old OK run", on, store.State{LastBackup: &store.BackupRun{OK: true, Finished: now.AddDate(0, 0, -5)}}, nil, nil, "stale"},
+		{"all good", on, store.State{LastBackup: &store.BackupRun{OK: true, Finished: now.Add(-time.Hour)}}, nil, nil, nil, ""},
+		{"failed backup", on, store.State{LastBackup: failed, LastSuccess: now.Add(-time.Hour * 30)}, nil, nil, nil, "backup-failed"},
+		{"failed long ago", on, store.State{LastBackup: &store.BackupRun{Finished: now.Add(-48 * time.Hour)}}, nil, nil, nil, ""},
+		{"backups off", store.Settings{}, store.State{LastBackup: failed, LastSuccess: now.AddDate(0, 0, -9)}, nil, nil, nil, ""},
+		{"stale", on, store.State{LastBackup: failed, LastSuccess: now.AddDate(0, 0, -4)}, nil, nil, nil, "backup-failed,stale"},
+		{"stale from an old OK run", on, store.State{LastBackup: &store.BackupRun{OK: true, Finished: now.AddDate(0, 0, -5)}}, nil, nil, nil, "stale"},
 		{"paused", store.Settings{BackupEnabled: true, PausedUntil: time.Now().Add(time.Hour)},
-			store.State{LastSuccess: now.AddDate(0, 0, -5)}, nil, nil, ""},
-		{"never backed up", on, store.State{}, nil, nil, ""},
-		{"conflict and update", on, store.State{}, map[string]int{"a": 1, "b": 0}, &UpdateInfo{Latest: "v9.0.0"}, "conflict,update"},
+			store.State{LastSuccess: now.AddDate(0, 0, -5)}, nil, map[string]newerSave{"a": {Host: "Desk", At: now.Add(-time.Hour)}}, nil, ""},
+		{"never backed up", on, store.State{}, nil, nil, nil, ""},
+		{"conflict and update", on, store.State{}, map[string]int{"a": 1, "b": 0}, nil, &UpdateInfo{Latest: "v9.0.0"}, "conflict,update"},
+		{"newer save elsewhere", on, store.State{}, nil, map[string]newerSave{"a": {Host: "Desk", At: now.Add(-time.Hour)}}, nil, "newer"},
+		{"newer, sync off", store.Settings{SyncDisabled: true}, store.State{}, nil, map[string]newerSave{"a": {Host: "Desk", At: now.Add(-time.Hour)}}, nil, ""},
 	} {
-		if got := keys(problems(tt.s, tt.st, tt.conflicts, map[string]string{"a": "Game A"}, tt.upd, now)); got != tt.want {
+		if got := keys(problems(tt.s, tt.st, tt.conflicts, map[string]string{"a": "Game A"}, tt.newer, tt.upd, now)); got != tt.want {
 			t.Errorf("%s: problems = %q, want %q", tt.name, got, tt.want)
 		}
 	}
-	ps := problems(on, store.State{LastBackup: failed}, nil, nil, nil, now)
+	ps := problems(on, store.State{LastBackup: failed}, nil, nil, nil, nil, now)
 	if len(ps) != 1 || ps[0].body != "Drive not found (and 1 more)" {
 		t.Errorf("failure text: %+v", ps)
+	}
+	ps = problems(on, store.State{}, nil, map[string]string{"a": "Game A"}, map[string]newerSave{"a": {Host: "Desk", At: now}}, nil, now)
+	if len(ps) != 1 || ps[0].title != "Game A has a newer save on Desk" || !strings.HasPrefix(ps[0].key, "newer:a:") {
+		t.Errorf("newer save: %+v", ps)
 	}
 }
 

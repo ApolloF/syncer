@@ -33,9 +33,10 @@ var ErrBusy = errors.New("a backup is already running")
 
 // Folder is one save folder to back up.
 type Folder struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Path  string `json:"path"`
+	ID      string   `json:"id"`
+	Label   string   `json:"label"`
+	Path    string   `json:"path"`
+	Exclude []string `json:"exclude,omitempty"` // the game's exclusions (ignore patterns)
 }
 
 // Progress is reported while a backup runs.
@@ -99,11 +100,15 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 			continue // game not present on this PC
 		}
 		res.Folders++
-		c, v, b, errs := mirror(ctx, f, opts, stamp, &p)
+		c, v, b, newest, errs := mirror(ctx, f, opts, stamp, &p)
 		res.Copied += c
 		res.Versions += v
 		res.Bytes += b
 		res.Errors = append(res.Errors, errs...)
+		if len(errs) == 0 && ctx.Err() == nil {
+			res.Backed = append(res.Backed, f.ID)
+			writeInfo(opts.Target, f, newest)
+		}
 	}
 	if opts.KeepDays > 0 {
 		prune(opts.Target, opts.KeepDays)
@@ -122,12 +127,13 @@ func stopReason(ctx context.Context) string {
 	return "cancelled"
 }
 
-func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progress) (copied, versioned int, bytes int64, errs []string) {
+// mirror backs up one folder. newest is the newest save file's time.
+func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progress) (copied, versioned int, bytes int64, newest time.Time, errs []string) {
 	target, onProg := opts.Target, opts.OnProg
 	lastPause := time.Now()
 	dst := filepath.Join(target, f.ID)
 	verRoot := filepath.Join(target, VersionsDir, f.ID, stamp)
-	m := LoadMatcher(f.Path)
+	m := LoadMatcher(f.Path, f.Exclude...)
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}
 	seen := map[string]bool{}
@@ -167,6 +173,9 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		}
 		key := strings.ToLower(filepath.ToSlash(rel))
 		seen[key] = true
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
 		cur := indexEntry{Size: info.Size(), MTime: info.ModTime().UnixNano()}
 		out := filepath.Join(dst, rel)
 		old, known := idx[key]
@@ -355,6 +364,19 @@ func loadIndex(id string) map[string]indexEntry {
 
 func saveIndex(id string, m map[string]indexEntry) { _ = store.WriteJSON(indexPath(id), m) }
 
+// IndexSize reports how much of a folder is in its backup (as of its last
+// backup, from the local index: no need to read the backup folder).
+func IndexSize(id string) (bytes int64, files int) {
+	if !paths.ValidID(id) {
+		return 0, 0
+	}
+	for _, e := range loadIndex(id) {
+		bytes += e.Size
+		files++
+	}
+	return bytes, files
+}
+
 // ---- lock --------------------------------------------------------------------
 
 // lock takes an exclusive, crash-safe lock: the OS releases it with the process.
@@ -382,9 +404,10 @@ func Running() bool {
 // caller can make several changes that no backup may interleave with.
 func Lock() (unlock func(), err error) { return lock() }
 
-// Forget drops Syncer's local bookkeeping for a folder and, with
-// deleteBackup, its backup copy and version history under target. The
-// caller must hold Lock, so a running backup can't recreate what was deleted.
+// Forget drops Syncer's local bookkeeping for a folder (and this PC's info
+// file next to its backup) and, with deleteBackup, its backup copy, version
+// history and info files under target. The caller must hold Lock, so a
+// running backup can't recreate what was deleted.
 func Forget(target, id string, deleteBackup bool) error {
 	if !paths.ValidID(id) {
 		return fmt.Errorf("unsupported folder id %q", id)
@@ -392,10 +415,14 @@ func Forget(target, id string, deleteBackup bool) error {
 	if err := os.Remove(indexPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if !deleteBackup || target == "" {
+	if target == "" {
 		return nil
 	}
-	for _, d := range []string{filepath.Join(target, id), filepath.Join(target, VersionsDir, id)} {
+	if !deleteBackup {
+		forgetInfo(target, id)
+		return nil
+	}
+	for _, d := range []string{filepath.Join(target, id), filepath.Join(target, VersionsDir, id), filepath.Join(target, InfoDir, id)} {
 		if !strictlyInside(target, d) {
 			return fmt.Errorf("refusing to delete %s", d)
 		}

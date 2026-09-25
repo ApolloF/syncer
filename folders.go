@@ -42,6 +42,13 @@ type FolderView struct {
 	Shared    int       `json:"shared"`
 	Conflicts int       `json:"conflicts"` // two versions of a save exist
 	Modified  time.Time `json:"modified"`
+
+	BackedUp    time.Time `json:"backedUp"`    // last backup without errors on this PC
+	BackupBytes int64     `json:"backupBytes"` // size of its backup
+	Points      int       `json:"points"`      // restore points
+	Exclude     []string  `json:"exclude"`     // file patterns skipped on this PC
+	NewerOn     string    `json:"newerOn"`     // another PC backed up a newer save that isn't here yet
+	NewerAt     time.Time `json:"newerAt"`
 }
 
 // Folders lists synced folders plus this PC's backup-only ones. Backup-only
@@ -89,6 +96,7 @@ func (a *App) Folders() ([]FolderView, error) {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
+	a.addDetails(out, s)
 	return out, nil
 }
 
@@ -125,10 +133,12 @@ func (a *App) ScanGames(refresh bool) ([]GameView, error) {
 
 type GameView struct {
 	discover.Found
-	SyncedBy string `json:"syncedBy"` // label of the synced or backup-only folder covering this path
+	SyncedBy  string `json:"syncedBy"`  // label of the synced or backup-only folder covering this path
+	Installed bool   `json:"installed"` // the game is installed on this PC (as far as Syncer can tell)
 }
 
 func (a *App) annotate(found []discover.Found) []GameView {
+	inst := cachedInstalled()
 	covering := map[string]string{} // path -> label
 	if c, err := a.client(); err == nil {
 		ctx, cancel := a.callCtx()
@@ -145,7 +155,7 @@ func (a *App) annotate(found []discover.Found) []GameView {
 	}
 	out := make([]GameView, 0, len(found))
 	for _, f := range found {
-		g := GameView{Found: f}
+		g := GameView{Found: f, Installed: inst.Has(f.Name)}
 		for p, label := range covering {
 			if paths.Within(p, f.Path) {
 				g.SyncedBy = label
@@ -247,19 +257,34 @@ func joinCtx(parent context.Context) (context.Context, context.CancelFunc) {
 
 // AddBackupOnly backs up a save folder on this PC without syncing it.
 func (a *App) AddBackupOnly(label, path string) error {
-	path = filepath.Clean(path)
-	var synced []backup.Folder
-	if !store.LoadSettings().SyncDisabled {
-		synced, _ = syncedFolders() // falls back to the cached list; none cached = nothing synced yet
-	}
-	taken, backupOnly, err := checkNewFolder(path, synced)
-	if err != nil {
+	if _, err := addBackupOnly(label, path, currentSynced()); err != nil {
 		return err
 	}
-	if backupOnly != "" {
-		return errors.New("already backed up")
+	runtime.EventsEmit(a.ctx, "changed")
+	return nil
+}
+
+// currentSynced lists the synced folders, falling back to the cached list;
+// none cached = nothing synced yet.
+func currentSynced() []backup.Folder {
+	if store.LoadSettings().SyncDisabled {
+		return nil
 	}
-	if label == "" {
+	synced, _ := syncedFolders()
+	return synced
+}
+
+// addBackupOnly records a backup-only folder and returns its id.
+func addBackupOnly(label, path string, synced []backup.Folder) (string, error) {
+	path = filepath.Clean(path)
+	taken, backupOnly, err := checkNewFolder(path, synced)
+	if err != nil {
+		return "", err
+	}
+	if backupOnly != "" {
+		return "", errors.New("already backed up")
+	}
+	if label = strings.TrimSpace(label); label == "" {
 		label = filepath.Base(path)
 	}
 	id := backupOnlyID(label, taken)
@@ -267,28 +292,66 @@ func (a *App) AddBackupOnly(label, path string) error {
 		s.BackupOnly[id] = store.LocalFolder{ID: id, Label: label, Path: path}
 		delete(s.NoBackup, id)
 	}); err != nil {
-		return err
+		return "", err
 	}
 	logx.Printf("backing up %s (%s) without syncing", label, path)
-	runtime.EventsEmit(a.ctx, "changed")
-	return nil
+	return id, nil
+}
+
+// NewFolder is a save folder to add.
+type NewFolder struct {
+	Label string `json:"label"`
+	Path  string `json:"path"`
+}
+
+// BulkResult says which folders were added and which weren't (and why).
+type BulkResult struct {
+	Added   []string `json:"added"`   // their paths
+	Skipped []string `json:"skipped"` // "<game>: <reason>"
+}
+
+// AddBackupOnlyMany backs up several save folders without syncing them, e.g.
+// every game found here that isn't installed.
+func (a *App) AddBackupOnlyMany(items []NewFolder) (BulkResult, error) {
+	var r BulkResult
+	if len(items) > 500 {
+		return r, errors.New("too many folders at once")
+	}
+	synced := currentSynced()
+	for _, it := range items {
+		label := cmpOr(strings.TrimSpace(it.Label), filepath.Base(it.Path))
+		if _, err := addBackupOnly(label, it.Path, synced); err != nil {
+			r.Skipped = append(r.Skipped, label+": "+err.Error())
+			continue
+		}
+		r.Added = append(r.Added, filepath.Clean(it.Path))
+	}
+	if len(r.Added) > 0 {
+		runtime.EventsEmit(a.ctx, "changed")
+	}
+	return r, nil
 }
 
 // backupOnlyID gives a backup-only folder its own id, unique to this PC: other
 // PCs may still sync the same game, and their (different) saves must not land
 // in the same backup folder in Drive.
 func backupOnlyID(label string, taken map[string]bool) string {
-	host, _ := os.Hostname()
-	h := meta.NewID(host, nil)
-	if len(h) > 15 {
-		h = strings.TrimRight(h[:15], "-")
-	}
-	base := meta.NewID(label, nil) + "--" + h
+	base := meta.NewID(label, nil) + "--" + hostSuffix()
 	id := base
 	for i := 2; taken[id]; i++ {
 		id = fmt.Sprintf("%s-%d", base, i)
 	}
 	return id
+}
+
+// hostSuffix names this PC in its backup-only ids.
+func hostSuffix() string {
+	host, _ := os.Hostname()
+	h := meta.NewID(host, nil)
+	if len(h) > 15 {
+		h = strings.TrimRight(h[:15], "-")
+	}
+	return h
 }
 
 // share adds a Syncthing folder shared with every paired PC and turns syncing
@@ -370,32 +433,42 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		return err
 	}
 
-	f, err := findFolder(ctx, c, id)
-	if err != nil {
+	if _, err := a.stopSync(ctx, c, id); err != nil {
 		return err
 	}
+	runtime.EventsEmit(a.ctx, "changed")
+	return nil
+}
+
+// stopSync stops syncing a game on this PC, keeps it as a backup-only folder
+// (with its backup history) and returns its new id. Its files stay as they are.
+func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (string, error) {
+	f, err := findFolder(ctx, c, id)
+	if err != nil {
+		return "", err
+	}
 	if !paths.ValidID(f.ID) {
-		return errors.New("this folder's id can't be used for a backup; remove it instead")
+		return "", errors.New("this folder's id can't be used for a backup; remove it instead")
 	}
 	label := cmpOr(f.Label, f.ID)
 	if err := c.RemoveFolder(ctx, f.ID); err != nil {
-		return err
+		return "", err
 	}
 	cleanMarkers(f.Path)
 	var bid string
 	s, err := store.UpdateSettings(func(s *store.Settings) { bid = toBackupOnly(s, f.ID, label, f.Path) })
 	if err != nil {
-		return err
+		return "", err
 	}
 	keepHistory(a.ctx, s, f.ID, bid)
+	_ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
 	_, _ = meta.Reconcile(ctx, c)
 	if s.NoBackup[bid] {
 		logx.Printf("stopped syncing %s; it isn't backed up either", label)
 	} else {
 		logx.Printf("stopped syncing %s; still backing it up", label)
 	}
-	runtime.EventsEmit(a.ctx, "changed")
-	return nil
+	return bid, nil
 }
 
 // toBackupOnly records a synced folder as backup-only on this PC and returns
@@ -617,7 +690,9 @@ func (a *App) SyncAvailable(id string) error {
 }
 
 // RemoveUninstalled stops syncing games that aren't installed on this PC.
-// They aren't marked as removed, so they come back once the game is installed.
+// They aren't marked as removed, so they come back once the game is installed
+// (auto-add and other PCs' folders both skip games that aren't installed
+// while "only installed games" is on).
 func (a *App) RemoveUninstalled() (int, error) {
 	if !store.LoadSettings().InstalledOnly {
 		return 0, nil
@@ -644,6 +719,9 @@ func (a *App) RemoveUninstalled() (int, error) {
 			return n, err
 		}
 		cleanMarkers(f.Path)
+		if paths.ValidID(f.ID) {
+			_ = forgetBackup(f.ID, false) // its backup stays; this PC's bookkeeping goes
+		}
 		n++
 	}
 	_, _ = meta.Reconcile(ctx, c)

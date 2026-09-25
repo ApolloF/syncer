@@ -174,6 +174,7 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 		if err := tasks.Delete(tasks.BackupTask); err != nil {
 			note("Couldn't remove the background task: %v", err)
 		}
+		taskSeen.Store(false)
 		if locked {
 			forgetBackups(before, synced, o.DeleteBackups, note)
 		}
@@ -240,6 +241,7 @@ func forgetBackups(s store.Settings, synced []backup.Folder, del bool, note func
 	}
 	if del {
 		_ = os.Remove(filepath.Join(target, backup.VersionsDir))
+		_ = os.Remove(filepath.Join(target, backup.InfoDir))
 		_ = os.Remove(target)
 	}
 }
