@@ -83,9 +83,19 @@ func WaitReady(ctx context.Context, timeout time.Duration) error {
 	return ErrNotRunning
 }
 
+// winget returns winget's own app alias under %LOCALAPPDATA%, so a program
+// named winget earlier on PATH isn't run instead; PATH only as a fallback.
+func winget() string {
+	p := filepath.Join(paths.Root(paths.Local), "Microsoft", "WindowsApps", "winget.exe")
+	if _, err := os.Lstat(p); err == nil {
+		return p
+	}
+	return "winget"
+}
+
 // Install installs Syncthing via winget (per-user, silent).
 func Install(ctx context.Context) error {
-	cmd := HiddenContext(ctx, "winget", "install", "--id", "Syncthing.Syncthing", "-e", "--silent",
+	cmd := HiddenContext(ctx, winget(), "install", "--id", "Syncthing.Syncthing", "-e", "--silent",
 		"--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
 	out, err := cmd.CombinedOutput()
 	if err != nil && FindExe() == "" {
@@ -96,7 +106,7 @@ func Install(ctx context.Context) error {
 
 // Uninstall removes Syncthing via winget (per-user, silent).
 func Uninstall(ctx context.Context) error {
-	cmd := HiddenContext(ctx, "winget", "uninstall", "--id", "Syncthing.Syncthing", "-e", "--silent",
+	cmd := HiddenContext(ctx, winget(), "uninstall", "--id", "Syncthing.Syncthing", "-e", "--silent",
 		"--disable-interactivity", "--accept-source-agreements")
 	out, err := cmd.CombinedOutput()
 	if err != nil && FindExe() != "" {

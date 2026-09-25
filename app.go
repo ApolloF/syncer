@@ -31,7 +31,10 @@ type App struct {
 	cancel    context.CancelFunc
 	lastScan  []discover.Found
 	conflicts *conflictCache
-	quitting  bool // quit from the tray: really exit
+	details   map[string]backupDetail // per folder id, see addDetails
+	newer     map[string]newerSave    // synced folder id -> newer save on another PC
+	others    *othersCache            // backups in Drive no game here uses
+	quitting  bool                    // quit from the tray: really exit
 	tray      trayItems
 }
 
@@ -54,6 +57,7 @@ func (a *App) startup(ctx context.Context) {
 		go a.pauseLoop(ctx)
 		go a.updateLoop(ctx)
 		go a.notifyLoop(ctx)
+		go a.newerLoop(ctx)
 		a.watch(ctx)
 	}()
 }
@@ -64,6 +68,7 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) watch(ctx context.Context) {
 	since := 0
 	lastReconcile := time.Time{}
+	up := true // Syncthing answered last time; the UI is told when that changes
 	for ctx.Err() == nil {
 		c, err := syncthing.New()
 		if err != nil {
@@ -73,17 +78,29 @@ func (a *App) watch(ctx context.Context) {
 		evs, err := c.Events(ctx, since,
 			"StateChanged,FolderCompletion,DeviceConnected,DeviceDisconnected,PendingDevicesChanged,PendingFoldersChanged,ConfigSaved,FolderSummary,RemoteIndexUpdated,LocalIndexUpdated")
 		if err != nil {
-			runtime.EventsEmit(ctx, "changed")
+			if up {
+				up = false
+				runtime.EventsEmit(ctx, "changed")
+			}
 			sleep(ctx, 5*time.Second)
 			continue
 		}
-		reconcile := false
+		if !up {
+			up = true
+			runtime.EventsEmit(ctx, "changed")
+		}
+		reconcile, arrived := false, false
 		for _, e := range evs {
 			since = e.ID
 			switch e.Type {
 			case "PendingFoldersChanged", "DeviceConnected", "RemoteIndexUpdated":
 				reconcile = true
+			case "FolderCompletion", "LocalIndexUpdated":
+				arrived = true
 			}
+		}
+		if arrived {
+			a.recheckNewer() // a newer save from another PC may be here now
 		}
 		if reconcile || time.Since(lastReconcile) > time.Minute {
 			if rep, err := meta.Reconcile(ctx, c); err == nil {
@@ -430,6 +447,7 @@ func (a *App) BackupNow() error {
 			a.backingUp, a.cancel = false, nil
 			a.mu.Unlock()
 			cancel()
+			a.forgetDetails()
 		}()
 		last := time.Time{}
 		res, err := runBackup(ctx, func(p backup.Progress) {
@@ -484,6 +502,7 @@ func (a *App) Restore(id string, point int64) (int, error) {
 			if err == nil {
 				logx.Printf("restored %d files into %s", n, f.Label)
 			}
+			a.forgetDetails() // the restore added a restore point
 			return n, err
 		}
 	}

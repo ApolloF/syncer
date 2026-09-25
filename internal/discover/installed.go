@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/ApolloF/syncer/internal/paths"
@@ -52,6 +53,24 @@ func LoadInstalled() *Installed {
 		})
 	}
 	return i
+}
+
+var installedCache struct {
+	sync.Mutex
+	inst *Installed
+	at   time.Time
+}
+
+// CachedInstalled returns a snapshot of installed games at most maxAge old.
+// Loading one reads the registry and every store's files, too much for each
+// refresh of the window or each reconcile of the shared folder list.
+func CachedInstalled(maxAge time.Duration) *Installed {
+	installedCache.Lock()
+	defer installedCache.Unlock()
+	if installedCache.inst == nil || time.Since(installedCache.at) > maxAge {
+		installedCache.inst, installedCache.at = LoadInstalled(), time.Now()
+	}
+	return installedCache.inst
 }
 
 // Has reports whether label identifies an installed game or uninstall name.

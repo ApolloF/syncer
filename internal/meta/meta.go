@@ -183,6 +183,11 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 // An error stops the folder from being added (it is retried later).
 var BeforeJoin func(ctx context.Context, id, label, path string) error
 
+// BeforeAdd, when set, prepares a folder's directory just before Syncthing
+// starts on it (e.g. writes the game's exclusions into .stignore, so the
+// first scan already skips them), whichever way it started syncing.
+var BeforeAdd func(id, path string)
+
 // Reasons a folder published by another PC isn't added here.
 const (
 	SkipUnsafe       = "unsafe"        // bad id, or a path that must never be shared
@@ -217,12 +222,13 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 	return p, ""
 }
 
-// lazyInstalled scans installed games at most once, and only when asked.
+// lazyInstalled looks up installed games only when asked, from a snapshot
+// shared with the rest of the app: reconcile runs every minute.
 func lazyInstalled() func(string) bool {
 	var once sync.Once
 	var inst *discover.Installed
 	return func(label string) bool {
-		once.Do(func() { inst = discover.LoadInstalled() })
+		once.Do(func() { inst = discover.CachedInstalled(2 * time.Minute) })
 		return inst.Has(label)
 	}
 }
@@ -297,6 +303,9 @@ func AddFolder(ctx context.Context, c *syncthing.Client, id, label, path, me str
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
+	}
+	if BeforeAdd != nil {
+		BeforeAdd(id, path)
 	}
 	return c.AddFolder(ctx, map[string]any{
 		"id": id, "label": label, "path": path, "type": "sendreceive",

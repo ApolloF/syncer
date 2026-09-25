@@ -16,17 +16,36 @@ type Matcher struct {
 
 var builtin = []string{".stfolder", ".stversions", ".stignore", "~syncthing~*", ".syncthing.*.tmp", "*.syncer-tmp", "desktop.ini", "Thumbs.db"}
 
-// LoadMatcher reads <dir>/.stignore if present.
-func LoadMatcher(dir string) *Matcher {
+// The lines Syncer writes into a synced folder's .stignore (a game's
+// exclusions) sit between these markers; the user's own lines are kept.
+const (
+	IgnoreBegin = "// Syncer: begin (edit these in Syncer)"
+	IgnoreEnd   = "// Syncer: end"
+)
+
+// LoadMatcher reads <dir>/.stignore if present, plus extra patterns (the
+// game's exclusions). Syncer's own block in .stignore is skipped: extra is
+// the current list, the block may be left over from when it was synced.
+func LoadMatcher(dir string, extra ...string) *Matcher {
 	pats := append([]string(nil), builtin...)
 	if f, err := os.Open(filepath.Join(dir, ".stignore")); err == nil {
 		sc := bufio.NewScanner(f)
+		managed := false
 		for sc.Scan() {
-			pats = append(pats, sc.Text())
+			switch l := sc.Text(); strings.TrimSpace(l) {
+			case IgnoreBegin:
+				managed = true
+			case IgnoreEnd:
+				managed = false
+			default:
+				if !managed {
+					pats = append(pats, l)
+				}
+			}
 		}
 		f.Close()
 	}
-	return NewMatcher(pats)
+	return NewMatcher(append(pats, extra...))
 }
 
 // NewMatcher compiles patterns. Negations and #include lines are skipped

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/ApolloF/syncer/internal/paths"
 )
 
@@ -39,6 +41,11 @@ type Settings struct {
 	PausedUntil   time.Time `json:"pausedUntil,omitzero"` // syncing and automatic backups are paused until then
 	Notify        bool      `json:"notify"`               // Windows notifications about problems
 	NoUpdateCheck bool      `json:"noUpdateCheck"`        // don't look for new Syncer releases
+
+	// Exclude lists, per save folder (keyed like Dismissed, so it survives a
+	// game switching between synced and backup-only), file patterns that are
+	// neither synced nor backed up on this PC.
+	Exclude map[string][]string `json:"exclude,omitempty"`
 }
 
 // Paused reports whether syncing and automatic backups are paused right now.
@@ -52,6 +59,9 @@ type LocalFolder struct {
 	// SyncID is the shared id it had while synced, so syncing it again
 	// rejoins the same folder on the other PCs.
 	SyncID string `json:"syncID,omitempty"`
+	// CopiedFrom is the backup its history was copied from when it was added
+	// from "Other backups", so that backup isn't offered again.
+	CopiedFrom string `json:"copiedFrom,omitempty"`
 }
 
 // BackupRun is the outcome of the last backup.
@@ -65,6 +75,7 @@ type BackupRun struct {
 	Bytes    int64     `json:"bytes"`
 	Errors   []string  `json:"errors"`
 	Target   string    `json:"target"`
+	Backed   []string  `json:"-"` // ids of the folders backed up without errors
 }
 
 // State is machine-written status.
@@ -80,6 +91,11 @@ type State struct {
 	Update        *Update  `json:"update,omitempty"` // newest release seen
 	// Notified remembers which problems were already reported (key -> when).
 	Notified map[string]time.Time `json:"notified,omitempty"`
+	// FolderBackups is when each folder (by id) was last backed up without errors.
+	FolderBackups map[string]time.Time `json:"folderBackups,omitempty"`
+	// BackgroundTask describes the background task as last registered, so it
+	// is only registered again when something about it changed.
+	BackgroundTask string `json:"backgroundTask,omitempty"`
 }
 
 // Update is the newest Syncer release found on GitHub.
@@ -94,7 +110,7 @@ var mu sync.Mutex
 func defaults() Settings {
 	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true, AutoAddMaxGB: 1,
 		PauseWhileGaming: true, Notify: true, NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{},
-		BackupOnly: map[string]LocalFolder{}}
+		BackupOnly: map[string]LocalFolder{}, Exclude: map[string][]string{}}
 }
 
 // LoadSettings reads settings, falling back to defaults.
@@ -112,6 +128,9 @@ func LoadSettings() Settings {
 	}
 	if s.BackupOnly == nil {
 		s.BackupOnly = map[string]LocalFolder{}
+	}
+	if s.Exclude == nil {
+		s.Exclude = map[string][]string{}
 	}
 	if s.IntervalHours <= 0 {
 		s.IntervalHours = 3
@@ -132,6 +151,7 @@ func SaveSettings(s Settings) error { return save("settings.json", s) }
 func UpdateSettings(fn func(*Settings)) (Settings, error) {
 	mu.Lock()
 	defer mu.Unlock()
+	defer fileLock("settings")()
 	s := LoadSettings()
 	fn(&s)
 	return s, save("settings.json", s)
@@ -153,9 +173,34 @@ var stateMu sync.Mutex
 func UpdateState(fn func(*State)) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
+	defer fileLock("state")()
 	st := LoadState()
 	fn(&st)
 	_ = SaveState(st)
+}
+
+// fileLock also keeps the other Syncer process (the window and the background
+// task run separately) from updating the same file at the same time, which
+// would lose one of the two changes. The OS drops the lock if a process dies.
+func fileLock(name string) (unlock func()) {
+	p, err := windows.UTF16PtrFromString(filepath.Join(paths.AppDir(), name+".lock"))
+	if err != nil {
+		return func() {}
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return func() {} // better an unlocked update than none
+	}
+	ol := new(windows.Overlapped)
+	if err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, ol); err != nil {
+		windows.CloseHandle(h)
+		return func() {}
+	}
+	return func() {
+		_ = windows.UnlockFileEx(h, 0, 1, 0, ol)
+		windows.CloseHandle(h)
+	}
 }
 
 func load(name string, v any) {

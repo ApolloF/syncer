@@ -41,7 +41,8 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 	// Big save folders take a while; don't let a short UI timeout cut it off.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 	defer cancel()
-	n, err := backup.Snapshot(ctx, target, backup.Folder{ID: id, Label: label, Path: path})
+	exclude := store.LoadSettings().Exclude[dismissKey(path)]
+	n, err := backup.Snapshot(ctx, target, backup.Folder{ID: id, Label: label, Path: path, Exclude: exclude})
 	if err != nil {
 		return fmt.Errorf("could not save the existing files of %s before syncing, will retry: %w", label, err)
 	}
