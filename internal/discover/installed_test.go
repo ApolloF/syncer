@@ -13,7 +13,7 @@ func TestNormalize(t *testing.T) {
 	for _, tt := range []struct{ input, want string }{
 		{"Hollow Knight™ ® ©", "hollowknight"},
 		{"  Baldur's Gate: 3 - Deluxe_Edition!", "baldursgate3deluxeedition"},
-		{"Été 日本語", "t"},
+		{"Été 日本語", "été日本語"},
 		{"ABCxyz019", "abcxyz019"},
 		{"™®©-", ""},
 		{"", ""},

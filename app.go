@@ -338,7 +338,7 @@ func (a *App) AddDevice(id, name string) error {
 		Introducer: true}); err != nil {
 		return err
 	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) { s.SyncDisabled = false })
+	enableSync()
 	_ = c.DismissPendingDevice(ctx, id)
 	if _, err := meta.Reconcile(ctx, c); err != nil {
 		return err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,6 +65,10 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 	note := func(format string, args ...any) { rep.Notes = append(rep.Notes, fmt.Sprintf(format, args...)) }
 	o.DeleteBackups = o.DeleteBackups && o.StopBackups
 	o.UninstallSyncthing = o.UninstallSyncthing && o.StopSyncthing
+	before := store.LoadSettings()
+	if _, ok := backup.Target(before.BackupRoot); o.DeleteBackups && !ok {
+		return rep, errors.New("the backup folder isn't reachable; start Google Drive or untick \"Delete backups\"")
+	}
 
 	var c *syncthing.Client
 	var me string
@@ -80,8 +85,8 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 
 	// Settings first: this stops the window and the background task from
 	// re-adding anything while the rest is undone.
-	before := store.LoadSettings()
-	if _, err := store.UpdateSettings(func(s *store.Settings) {
+	var converted [][2]string // synced id -> backup-only id, to carry history over
+	s, err := store.UpdateSettings(func(s *store.Settings) {
 		s.SyncDisabled = true
 		s.Ignored = map[string]bool{}
 		if o.StopBackups {
@@ -104,8 +109,10 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 			}
 			id := backupOnlyID(cmpOr(f.Label, f.ID), taken)
 			s.BackupOnly[id] = store.LocalFolder{ID: id, Label: cmpOr(f.Label, f.ID), Path: f.Path, SyncID: f.ID}
+			converted = append(converted, [2]string{f.ID, id})
 		}
-	}); err != nil {
+	})
+	if err != nil {
 		return rep, err
 	}
 
@@ -158,6 +165,11 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 		forgetBackups(before, synced, o.DeleteBackups, note)
 	} else {
 		ensureBackgroundTask()
+	}
+	// Last, since it can be slow on a cloud drive: everything above must not
+	// wait on it.
+	for _, cv := range converted {
+		keepHistory(ctx, s.BackupRoot, cv[0], cv[1])
 	}
 	if err := meta.ForgetCache(); err != nil {
 		note("Couldn't remove the folder cache: %v", err)

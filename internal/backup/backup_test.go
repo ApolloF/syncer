@@ -220,3 +220,37 @@ func TestForget(t *testing.T) {
 		t.Error("unrelated backup deleted")
 	}
 }
+
+func TestCopyHistory(t *testing.T) {
+	target := t.TempDir()
+	write(t, filepath.Join(target, "old", "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, "old", "2026-01-02_030405", "a.sav"), "v0")
+	write(t, filepath.Join(target, "new--pc", "b.sav"), "mine")
+	write(t, filepath.Join(target, "old", "b.sav"), "theirs")
+	if err := CopyHistory(context.Background(), target, "old", "new--pc"); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(target, "new--pc", "a.sav")) != "a" || len(Points(target, "new--pc")) != 1 {
+		t.Fatal("history not copied")
+	}
+	if read(t, filepath.Join(target, "new--pc", "b.sav")) != "mine" {
+		t.Fatal("existing file overwritten")
+	}
+	if read(t, filepath.Join(target, "old", "a.sav")) != "a" {
+		t.Fatal("source changed")
+	}
+	if err := CopyHistory(context.Background(), target, "missing", "x"); err != nil {
+		t.Fatalf("missing source: %v", err)
+	}
+}
+
+func TestForgetWhileRunning(t *testing.T) {
+	u, err := lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u()
+	if err := Forget(t.TempDir(), "busy", true); err != ErrBusy {
+		t.Fatalf("got %v, want ErrBusy", err)
+	}
+}

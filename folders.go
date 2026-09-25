@@ -162,7 +162,7 @@ func (a *App) ManifestUpdated() int64 {
 
 // checkNewFolder validates a folder the user wants to add and returns the ids
 // already in use. A path already backed up only is returned as existing.
-func (a *App) checkNewFolder(ctx context.Context, path string, synced []syncthing.Folder) (taken map[string]bool, backupOnly string, err error) {
+func checkNewFolder(path string, synced []backup.Folder) (taken map[string]bool, backupOnly string, err error) {
 	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
 		return nil, "", errors.New("folder not found: " + path)
 	}
@@ -175,7 +175,7 @@ func (a *App) checkNewFolder(ctx context.Context, path string, synced []syncthin
 		if paths.Within(f.Path, path) {
 			return nil, "", errors.New("already synced as part of \"" + cmpOr(f.Label, f.ID) + "\"")
 		}
-		if paths.Within(path, f.Path) && f.ID != meta.FolderID {
+		if paths.Within(path, f.Path) {
 			return nil, "", errors.New("this folder contains \"" + cmpOr(f.Label, f.ID) + "\", which is already synced — remove that first")
 		}
 	}
@@ -207,10 +207,17 @@ func (a *App) AddFolder(label, path string) error {
 	if err != nil {
 		return err
 	}
-	taken, backupOnly, err := a.checkNewFolder(ctx, path, fs)
+	var synced []backup.Folder
+	for _, f := range fs {
+		if f.ID != meta.FolderID {
+			synced = append(synced, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
+		}
+	}
+	taken, backupOnly, err := checkNewFolder(path, synced)
 	if err != nil {
 		return err
 	}
+	taken[meta.FolderID] = true
 	if backupOnly != "" {
 		return a.SetFolderSync(backupOnly, true)
 	}
@@ -223,13 +230,11 @@ func (a *App) AddFolder(label, path string) error {
 // AddBackupOnly backs up a save folder on this PC without syncing it.
 func (a *App) AddBackupOnly(label, path string) error {
 	path = filepath.Clean(path)
-	var synced []syncthing.Folder
-	if c, err := a.client(); err == nil {
-		ctx, cancel := a.callCtx()
-		synced, _ = c.Folders(ctx)
-		cancel()
+	var synced []backup.Folder
+	if !store.LoadSettings().SyncDisabled {
+		synced, _ = syncedFolders() // falls back to the cached list; none cached = nothing synced yet
 	}
-	taken, backupOnly, err := a.checkNewFolder(a.ctx, path, synced)
+	taken, backupOnly, err := checkNewFolder(path, synced)
 	if err != nil {
 		return err
 	}
@@ -288,8 +293,8 @@ func (a *App) share(ctx context.Context, c *syncthing.Client, id, label, path st
 	_, _ = store.UpdateSettings(func(s *store.Settings) {
 		delete(s.Ignored, id)
 		delete(s.NoBackup, id)
-		s.SyncDisabled = false
 	})
+	enableSync()
 	_, _ = meta.Reconcile(ctx, c)
 	logx.Printf("added folder %s (%s)", label, path)
 	runtime.EventsEmit(a.ctx, "changed")
@@ -346,22 +351,36 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		return err
 	}
 	cleanMarkers(f.Path)
-	if _, err := store.UpdateSettings(func(s *store.Settings) {
+	var bid string
+	s, err := store.UpdateSettings(func(s *store.Settings) {
 		taken := map[string]bool{}
 		for k := range s.BackupOnly {
 			taken[k] = true
 		}
-		bid := backupOnlyID(label, taken)
+		bid = backupOnlyID(label, taken)
 		s.BackupOnly[bid] = store.LocalFolder{ID: bid, Label: label, Path: f.Path, SyncID: f.ID}
 		s.Ignored[f.ID] = true
 		delete(s.NoBackup, f.ID)
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
+	keepHistory(a.ctx, s.BackupRoot, f.ID, bid)
 	_, _ = meta.Reconcile(ctx, c)
 	logx.Printf("stopped syncing %s; still backing it up", label)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
+}
+
+// enableSync turns syncing back on after "Undo everything", including the
+// background task that keeps Syncthing running and applies other PCs' changes.
+func enableSync() {
+	if !store.LoadSettings().SyncDisabled {
+		return
+	}
+	_, _ = store.UpdateSettings(func(s *store.Settings) { s.SyncDisabled = false })
+	ensureBackgroundTask()
+	logx.Printf("syncing turned back on")
 }
 
 func findFolder(ctx context.Context, c *syncthing.Client, id string) (syncthing.Folder, error) {
@@ -405,8 +424,15 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 	if err != nil {
 		return err
 	}
-	if err := forgetBackup(id, deleteBackup); err != nil {
-		return err
+	if deleteBackup {
+		// Check now: once the folder is gone from the list, a failed
+		// deletion couldn't be retried from Syncer.
+		if _, ok := backup.Target(store.LoadSettings().BackupRoot); !ok {
+			return errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
+		}
+		if backup.Running() {
+			return backup.ErrBusy
+		}
 	}
 	if err := c.RemoveFolder(ctx, id); err != nil {
 		return err
@@ -417,9 +443,27 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		delete(s.NoBackup, id)
 	})
 	_, _ = meta.Reconcile(ctx, c)
+	if err := forgetBackup(id, deleteBackup); err != nil {
+		if deleteBackup {
+			runtime.EventsEmit(a.ctx, "changed")
+			return fmt.Errorf("stopped syncing, but the backup wasn't deleted: %w", err)
+		}
+		logx.Printf("forget backup index of %s: %v", id, err)
+	}
 	logx.Printf("removed %s (backup deleted: %v)", cmpOr(f.Label, id), deleteBackup)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
+}
+
+// keepHistory copies a game's backup history to its new backup-only id.
+func keepHistory(ctx context.Context, backupRoot, from, to string) {
+	target, ok := backup.Target(backupRoot)
+	if !ok {
+		return
+	}
+	if err := backup.CopyHistory(ctx, target, from, to); err != nil {
+		logx.Printf("keep backup history of %s: %v", from, err)
+	}
 }
 
 // forgetBackup drops a folder's backup bookkeeping and, if asked, its backup.

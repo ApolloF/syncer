@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/ApolloF/syncer/internal/paths"
 	"golang.org/x/sys/windows/registry"
@@ -120,11 +121,14 @@ func (i *Installed) Running(procPaths []string) bool {
 	return false
 }
 
+// normalize keeps only letters and digits (any script), lowercased, so
+// "Game™: Edition" and "game edition" compare equal. Minimum-length checks
+// use bytes, which lets short non-Latin titles (3 bytes per CJK rune) count.
 func normalize(s string) string {
 	var b strings.Builder
 	for _, c := range strings.ToLower(s) {
-		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
-			b.WriteByte(byte(c))
+		if unicode.IsLetter(c) || unicode.IsDigit(c) {
+			b.WriteRune(c)
 		}
 	}
 	return b.String()

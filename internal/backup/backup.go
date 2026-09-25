@@ -380,10 +380,17 @@ func Running() bool {
 
 // Forget drops Syncer's local bookkeeping for a folder and, with
 // deleteBackup, its backup copy and version history under target.
+// It waits for no one: while a backup runs it returns ErrBusy, so a running
+// backup can't recreate what was just deleted.
 func Forget(target, id string, deleteBackup bool) error {
 	if !paths.ValidID(id) {
 		return fmt.Errorf("unsupported folder id %q", id)
 	}
+	unlock, err := lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := os.Remove(indexPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -395,6 +402,58 @@ func Forget(target, id string, deleteBackup bool) error {
 			return fmt.Errorf("refusing to delete %s", d)
 		}
 		if err := os.RemoveAll(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CopyHistory seeds folder to's backup and version history from folder
+// from's, so a game that stops syncing (and gets its own backup id) keeps its
+// restore points. The source is left alone (other PCs may still back it up)
+// and files already under to are never overwritten.
+func CopyHistory(ctx context.Context, target, from, to string) error {
+	if !paths.ValidID(from) || !paths.ValidID(to) {
+		return errors.New("unsupported folder id")
+	}
+	unlock, err := lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	for _, d := range [][2]string{{from, to}, {filepath.Join(VersionsDir, from), filepath.Join(VersionsDir, to)}} {
+		src, dst := filepath.Join(target, d[0]), filepath.Join(target, d[1])
+		err := filepath.WalkDir(src, func(p string, e fs.DirEntry, err error) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) && p == src {
+					return filepath.SkipAll // nothing backed up yet
+				}
+				return err
+			}
+			if !e.Type().IsRegular() || strings.HasSuffix(p, tmpSuffix) {
+				return nil
+			}
+			rel, _ := filepath.Rel(src, p)
+			out := filepath.Join(dst, rel)
+			if _, err := os.Lstat(out); err == nil {
+				return nil
+			}
+			info, err := e.Info()
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+				return err
+			}
+			if err := copyFile(p, out); err != nil {
+				return err
+			}
+			return os.Chtimes(out, info.ModTime(), info.ModTime())
+		})
+		if err != nil {
 			return err
 		}
 	}
