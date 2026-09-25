@@ -448,6 +448,8 @@ export namespace store {
 	    autoAdd: boolean;
 	    autoAddMaxGB: number;
 	    dismissed: Record<string, boolean>;
+	    closeToTray: boolean;
+	    startAtLogin: boolean;
 	    migrated: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -468,6 +470,8 @@ export namespace store {
 	        this.autoAdd = source["autoAdd"];
 	        this.autoAddMaxGB = source["autoAddMaxGB"];
 	        this.dismissed = source["dismissed"];
+	        this.closeToTray = source["closeToTray"];
+	        this.startAtLogin = source["startAtLogin"];
 	        this.migrated = source["migrated"];
 	    }
 	}

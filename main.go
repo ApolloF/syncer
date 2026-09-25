@@ -8,7 +8,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/tasks"
@@ -18,13 +17,17 @@ import (
 var assets embed.FS
 
 func main() {
+	startHidden := false
 	for _, a := range os.Args[1:] {
 		switch a {
+		case "--tray": // started with Windows: only the tray icon, no window
+			startHidden = true
 		case "--background", "--backup":
 			runBackground()
 			return
 		case "--uninstall": // called by the uninstaller
 			_ = tasks.Delete(tasks.BackupTask)
+			removeAutostart()
 			return
 		}
 	}
@@ -40,13 +43,15 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		StartHidden:      startHidden,
 		OnStartup:        app.startup,
+		OnBeforeClose:    app.beforeClose,
+		OnShutdown:       app.shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "b1c9c8a4-syncer-apollof",
 			// Opening Syncer again just brings the existing window forward.
 			OnSecondInstanceLaunch: func(options.SecondInstanceData) {
-				runtime.WindowUnminimise(app.ctx)
-				runtime.Show(app.ctx)
+				app.showWindow()
 			},
 		},
 		Bind: []interface{}{app},

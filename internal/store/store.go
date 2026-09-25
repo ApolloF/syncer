@@ -27,6 +27,8 @@ type Settings struct {
 	AutoAdd           bool            `json:"autoAdd"`      // sync newly detected games automatically
 	AutoAddMaxGB      int             `json:"autoAddMaxGB"` // skip bigger folders when auto-adding; -1 = no limit
 	Dismissed         map[string]bool `json:"dismissed"`    // portable paths the user stopped syncing; never auto-added again
+	CloseToTray       bool            `json:"closeToTray"`  // closing the window keeps Syncer running in the tray
+	StartAtLogin      bool            `json:"startAtLogin"` // start hidden in the tray when signing in to Windows
 	Migrated          bool            `json:"migrated"`     // legacy script setup adopted
 }
 

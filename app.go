@@ -32,6 +32,7 @@ type App struct {
 	cancel    context.CancelFunc
 	lastScan  []discover.Found
 	conflicts *conflictCache
+	quitting  bool // quit from the tray: really exit
 }
 
 func NewApp() *App { return &App{} }
@@ -39,7 +40,9 @@ func NewApp() *App { return &App{} }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.applyTheme(store.LoadSettings().Theme)
+	a.startTray()
 	go func() {
+		ensureAutostart(store.LoadSettings().StartAtLogin)
 		migrateLegacy()
 		ensureBackgroundTask()
 		if c, err := syncthing.New(); err == nil {
@@ -690,6 +693,7 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	s, err := store.UpdateSettings(func(s *store.Settings) {
 		s.Theme, s.BackupEnabled, s.BackupRoot, s.DriveRoot = in.Theme, in.BackupEnabled, in.BackupRoot, in.DriveRoot
 		s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
+		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}
@@ -705,6 +709,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	}
 	a.applyTheme(s.Theme)
 	ensureBackgroundTask()
+	if s.StartAtLogin != old.StartAtLogin {
+		ensureAutostart(s.StartAtLogin)
+	}
 	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) {
 		go a.runAutoAdd()
 	}
