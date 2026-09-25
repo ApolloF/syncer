@@ -17,7 +17,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.26.x' # latest patch: releases ship Go's security fixes
+          check-latest: true
 
       - uses: actions/setup-node@v4
         with:

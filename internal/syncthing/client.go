@@ -6,11 +6,15 @@ package syncthing
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +24,10 @@ import (
 
 	"github.com/ApolloF/syncer/internal/paths"
 )
+
+// maxRespBody caps how much of a Syncthing response we ever decode, so a
+// misbehaving or compromised instance can't exhaust memory.
+const maxRespBody = 32 << 20
 
 // ErrNotRunning means Syncthing's API did not answer.
 var ErrNotRunning = errors.New("syncthing is not running")
@@ -61,11 +69,16 @@ func New() (*Client, error) {
 	if c.GUI.APIKey == "" {
 		return nil, errors.New("syncthing config has no API key")
 	}
-	addr := c.GUI.Address
-	if addr == "" {
-		addr = "127.0.0.1:8384"
+	addr := normalizeHost(c.GUI.Address)
+	loopback := isLoopbackHost(hostOnly(addr))
+	if !c.GUI.TLS && !loopback {
+		// Never send the API key in the clear to a non-local address.
+		return nil, errors.New("Syncthing's web GUI listens on a network address without HTTPS; Syncer only connects to it on this PC")
 	}
-	addr = strings.Replace(addr, "0.0.0.0", "127.0.0.1", 1)
+	transport, err := certPinnedTransport(c.GUI.TLS, loopback, filepath.Dir(ConfigPath()))
+	if err != nil {
+		return nil, err
+	}
 	scheme := "http"
 	if c.GUI.TLS {
 		scheme = "https"
@@ -73,8 +86,93 @@ func New() (*Client, error) {
 	return &Client{
 		base:   scheme + "://" + addr,
 		apiKey: c.GUI.APIKey,
-		http:   &http.Client{Timeout: 15 * time.Second, Transport: insecureLocalTransport(c.GUI.TLS)},
+		http:   &http.Client{Timeout: 15 * time.Second, Transport: transport},
 	}, nil
+}
+
+// normalizeHost rewrites an unspecified bind address ("", "0.0.0.0", "::",
+// "[::]") to loopback, keeping the port, and fills in the default port.
+// Syncthing's config may bind those to mean "listen on every interface";
+// Syncer only ever wants to reach it on this PC.
+func normalizeHost(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = addr, ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	if port == "" {
+		port = "8384"
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// hostOnly strips the port from a host:port address.
+func hostOnly(addr string) string {
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return h
+}
+
+// isLoopbackHost reports whether host only ever resolves to this PC.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// certPinnedTransport builds the transport used to reach Syncthing's GUI.
+// With TLS, it pins Syncthing's own self-signed cert (read from
+// https-cert.pem next to config.xml) instead of trusting any cert a server
+// at that address presents. If the pem can't be read, a loopback host falls
+// back to the old unverified-but-local behavior; a non-loopback host is
+// refused, since there is nothing to authenticate it with.
+func certPinnedTransport(useTLS, loopback bool, configDir string) (http.RoundTripper, error) {
+	if !useTLS {
+		return http.DefaultTransport, nil
+	}
+	pinned, err := readPinnedCert(configDir)
+	if err != nil {
+		if loopback {
+			return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}, nil
+		}
+		return nil, errors.New("Syncthing's GUI certificate could not be read; refusing to connect to a network address")
+	}
+	return &http.Transport{TLSClientConfig: &tls.Config{
+		InsecureSkipVerify:    true, // we verify the leaf ourselves, against the pinned cert
+		MinVersion:            tls.VersionTLS12,
+		VerifyPeerCertificate: verifyPinnedCert(pinned),
+	}}, nil
+}
+
+// readPinnedCert returns the DER bytes of Syncthing's GUI certificate.
+func readPinnedCert(configDir string) ([]byte, error) {
+	b, err := os.ReadFile(filepath.Join(configDir, "https-cert.pem"))
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return nil, errors.New("https-cert.pem has no PEM block")
+	}
+	return block.Bytes, nil
+}
+
+// verifyPinnedCert rejects any leaf certificate that isn't byte-identical to
+// the pinned one, so a network attacker can't present their own cert.
+func verifyPinnedCert(pinnedDER []byte) func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 || !bytes.Equal(rawCerts[0], pinnedDER) {
+			return errors.New("syncthing's GUI certificate does not match the pinned certificate")
+		}
+		return nil
+	}
 }
 
 // GUIURL is the address of Syncthing's own web UI.
@@ -115,7 +213,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.NewDecoder(io.LimitReader(resp.Body, maxRespBody)).Decode(out)
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {
@@ -280,6 +378,11 @@ func (c *Client) RemoveDevice(ctx context.Context, id string) error {
 // DismissPendingDevice removes an incoming connection request.
 func (c *Client) DismissPendingDevice(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/rest/cluster/pending/devices?device="+url.QueryEscape(id), nil, nil)
+}
+
+// Shutdown asks Syncthing to exit cleanly.
+func (c *Client) Shutdown(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/rest/system/shutdown", nil, nil)
 }
 
 // Rescan asks Syncthing to rescan one folder (or all when id is "").

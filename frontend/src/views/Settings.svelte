@@ -1,9 +1,10 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte'
   import Toggle from '../lib/Toggle.svelte'
-  import { ui, attempt, refresh, applyTheme } from '../lib/state.svelte'
-  import { SaveSettings, OpenSyncthingGUI, Log } from '../../wailsjs/go/main/App'
-  import type { store } from '../../wailsjs/go/models'
+  import Modal from '../lib/Modal.svelte'
+  import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
+  import { SaveSettings, OpenSyncthingGUI, Log, UndoAll } from '../../wailsjs/go/main/App'
+  import type { store, main } from '../../wailsjs/go/models'
 
   const o = $derived(ui.overview)
   let log = $state<string[] | null>(null)
@@ -20,11 +21,44 @@
     { id: 'light', label: 'Light' },
     { id: 'dark', label: 'Dark' },
   ]
+
+  let undoOpen = $state(false)
+  let undoBusy = $state(false)
+  let undoReport = $state<main.UndoReport | null>(null)
+  let opts = $state({ unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: true, uninstallSyncthing: false })
+
+  $effect(() => { if (!opts.stopSyncthing) opts.uninstallSyncthing = false })
+  $effect(() => { if (!opts.stopBackups) opts.deleteBackups = false })
+
+  function openUndo() {
+    opts = { unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: true, uninstallSyncthing: false }
+    undoReport = null
+    undoOpen = true
+  }
+
+  async function doUndo() {
+    undoBusy = true
+    try {
+      const report = await UndoAll(opts as main.UndoOptions)
+      toast(`${report.folders} games and ${report.devices} PCs unlinked`, 'ok')
+      refresh()
+      if (report.notes?.length) undoReport = report
+      else undoOpen = false
+    } catch (e) { fail(e) }
+    undoBusy = false
+  }
 </script>
 
 <header>
   <h1>Settings</h1>
 </header>
+
+{#if o?.settings.syncDisabled}
+  <div class="card step">
+    <div class="ic"><Icon name="alert" size={18} /></div>
+    <p class="muted">Syncing is off on this PC. Sync a game or link a PC to turn it back on.</p>
+  </div>
+{/if}
 
 <div class="card flush list">
   <div class="item">
@@ -38,6 +72,10 @@
   <div class="item">
     <div class="grow"><div class="name">Show Steam Cloud games</div><div class="faint small">Steam already syncs these; hidden from “Found on this PC” by default.</div></div>
     <Toggle checked={o?.settings.showSteamCloud} label="Show Steam Cloud games" onchange={(v) => save({ showSteamCloud: v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Only sync installed games</div><div class="faint small">Games from your other PCs are added here only when the game is installed on this PC.</div></div>
+    <Toggle checked={o?.settings.installedOnly} label="Only sync installed games" onchange={(v) => save({ installedOnly: v })} />
   </div>
   <div class="item">
     <div class="grow"><div class="name">Advanced sync settings</div><div class="faint small">Syncthing's own interface, for fine-tuning.</div></div>
@@ -60,6 +98,47 @@
   <b>Google Drive for desktop</b>. Game locations come from the Ludusavi manifest (PCGamingWiki).
 </p>
 
+<div class="card flush list">
+  <div class="item">
+    <div class="grow">
+      <div class="name">Undo everything</div>
+      <div class="faint small">Stop all syncing on this PC and put things back the way they were before Syncer. Save files are never deleted.</div>
+    </div>
+    <button class="btn danger" onclick={openUndo}><Icon name="undo" size={14} /> Undo…</button>
+  </div>
+</div>
+
+{#if undoOpen}
+  <Modal title="Undo everything?" onclose={() => { if (!undoBusy) undoOpen = false }}>
+    {#if undoReport}
+      <p>{undoReport.folders} game{undoReport.folders === 1 ? '' : 's'} and {undoReport.devices} PC{undoReport.devices === 1 ? '' : 's'} unlinked.</p>
+      {#if undoReport.notes.length}
+        <ul class="notes">
+          {#each undoReport.notes as n}<li>{n}</li>{/each}
+        </ul>
+      {/if}
+    {:else}
+      <label class="chk"><input type="checkbox" bind:checked={opts.unpair} /> Unpair all linked PCs</label>
+      <label class="chk"><input type="checkbox" bind:checked={opts.stopSyncthing} /> Stop Syncthing and remove its autostart</label>
+      <label class="chk"><input type="checkbox" bind:checked={opts.uninstallSyncthing} disabled={!opts.stopSyncthing} /> Uninstall Syncthing</label>
+      <label class="chk"><input type="checkbox" bind:checked={opts.stopBackups} /> Stop Google Drive backups too</label>
+      {#if !opts.stopBackups}<p class="faint small indent">Your games keep being backed up.</p>{/if}
+      <label class="chk"><input type="checkbox" bind:checked={opts.deleteBackups} disabled={!opts.stopBackups} /> Delete Google Drive backups and history</label>
+      {#if opts.deleteBackups}<p class="err small indent">This can't be undone from Syncer.</p>{/if}
+    {/if}
+    {#snippet actions()}
+      {#if undoReport}
+        <button class="btn" onclick={() => (undoOpen = false)}>Close</button>
+      {:else}
+        <button class="btn" disabled={undoBusy} onclick={() => (undoOpen = false)}>Cancel</button>
+        <button class="btn primary" disabled={undoBusy} onclick={doUndo}>
+          {#if undoBusy}<Icon name="refresh" size={15} class="spin" />{/if} Undo everything
+        </button>
+      {/if}
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
   .name { font-weight: 500; }
   .small { font-size: 12.5px; }
@@ -72,4 +151,15 @@
   .logbox { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .logbox .mono { font-size: 11.5px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
   .about { padding: 0 4px; line-height: 1.6; }
+  .step { display: flex; align-items: center; gap: 14px; padding: 14px 18px; margin-bottom: 14px; }
+  .ic {
+    width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .chk { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text); }
+  .chk input { accent-color: var(--accent); }
+  .chk:has(input:disabled) { opacity: .5; cursor: default; }
+  .indent { margin: -6px 0 0 26px; }
+  .err { color: var(--err); }
+  .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
 </style>

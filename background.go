@@ -5,49 +5,120 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 	"github.com/ApolloF/syncer/internal/tasks"
+	"github.com/ApolloF/syncer/internal/winx"
 )
 
 // runBackground is what the scheduled task runs: keep Syncthing alive, apply
-// shared metadata, then back up to Google Drive. No window is shown.
+// shared metadata, then back up to Google Drive. No window is shown. The whole
+// process runs at background priority so it never competes with a game.
 func runBackground() {
 	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Minute)
 	defer cancel()
+	if err := winx.BackgroundProcess(); err != nil {
+		logx.Printf("background priority: %v", err)
+	}
 	logx.Printf("background run started")
+	s := store.LoadSettings()
 
-	if err := syncthing.WaitReady(ctx, 3*time.Second); err != nil && syncthing.FindExe() != "" {
-		logx.Printf("syncthing not running, starting it")
-		if err := syncthing.Start(ctx); err != nil {
-			logx.Printf("start syncthing: %v", err)
+	if !s.SyncDisabled {
+		if err := syncthing.WaitReady(ctx, 3*time.Second); err != nil && syncthing.FindExe() != "" {
+			logx.Printf("syncthing not running, starting it")
+			if err := syncthing.Start(ctx); err != nil {
+				logx.Printf("start syncthing: %v", err)
+			}
+		}
+		if c, err := syncthing.New(); err == nil {
+			if rep, err := meta.Reconcile(ctx, c); err != nil {
+				logx.Printf("reconcile: %v", err)
+			} else if len(rep.Added) > 0 {
+				logx.Printf("reconcile: added %v", rep.Added)
+			}
 		}
 	}
-	if c, err := syncthing.New(); err == nil {
-		if rep, err := meta.Reconcile(ctx, c); err != nil {
-			logx.Printf("reconcile: %v", err)
-		} else if len(rep.Added) > 0 {
-			logx.Printf("reconcile: added %v", rep.Added)
-		}
-	}
-	if !store.LoadSettings().BackupEnabled {
+	if !s.BackupEnabled {
 		logx.Printf("backup disabled, done")
 		return
 	}
-	if _, err := runBackup(ctx, nil); err != nil {
+	var pause func(context.Context)
+	if s.PauseWhileGaming {
+		var stop context.CancelCauseFunc
+		ctx, stop = context.WithCancelCause(ctx)
+		defer stop(nil)
+		pause = gamingPause(stop, discover.LoadInstalled())
+		pause(ctx)
+		if ctx.Err() != nil {
+			logx.Printf("backup postponed: a game is still running")
+			return
+		}
+	}
+	if _, err := runBackup(ctx, nil, pause); err != nil {
 		logx.Printf("backup: %v", err)
 	}
 }
 
+var errGaming = errors.New("stopped while a game was running; it continues next run")
+
+// gamingPause returns a backup pause hook that holds the backup while a game
+// is running and gives up (cancelling with errGaming) shortly before the
+// task's time limit, so a long session just moves the backup to the next run.
+func gamingPause(stop context.CancelCauseFunc, inst *discover.Installed) func(context.Context) {
+	return func(ctx context.Context) {
+		waited := false
+		for playing(inst) && ctx.Err() == nil {
+			if !waited {
+				logx.Printf("backup paused: a game is running")
+				waited = true
+			}
+			if d, ok := ctx.Deadline(); ok && time.Until(d) < 3*time.Minute {
+				stop(errGaming)
+				return
+			}
+			sleep(ctx, time.Minute)
+		}
+		if waited && ctx.Err() == nil {
+			logx.Printf("backup resumed")
+		}
+	}
+}
+
+// playing reports whether the user is in a game: a full-screen app, or the
+// foreground window belongs to a store-installed game. Only the foreground
+// counts, since tools like Wallpaper Engine are "games" that run all day.
+func playing(inst *discover.Installed) bool {
+	return winx.FullScreen() || inst.Running([]string{winx.ForegroundPath()})
+}
+
+var instCache struct {
+	sync.Mutex
+	inst *discover.Installed
+	at   time.Time
+}
+
+// cachedInstalled avoids rescanning stores and the registry on every UI poll.
+func cachedInstalled() *discover.Installed {
+	instCache.Lock()
+	defer instCache.Unlock()
+	if instCache.inst == nil || time.Since(instCache.at) > time.Minute {
+		instCache.inst, instCache.at = discover.LoadInstalled(), time.Now()
+	}
+	return instCache.inst
+}
+
 // runBackup backs up every enabled folder and records the result.
-func runBackup(ctx context.Context, onProg func(backup.Progress)) (*store.BackupRun, error) {
+func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(context.Context)) (*store.BackupRun, error) {
 	s := store.LoadSettings()
 	target, ok := backup.Target(s.BackupRoot)
 	if !ok {
@@ -65,7 +136,7 @@ func runBackup(ctx context.Context, onProg func(backup.Progress)) (*store.Backup
 			fs = append(fs, f)
 		}
 	}
-	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg})
+	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause})
 	if err != nil {
 		if !errors.Is(err, backup.ErrBusy) {
 			record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Target: target, Errors: []string{err.Error()}})
@@ -90,8 +161,23 @@ func record(r *store.BackupRun) {
 	_ = store.SaveState(st)
 }
 
-// backupFolders lists folders from Syncthing, or the cached list if it's down.
+// backupFolders lists what to back up: Syncthing's folders (or the cached list
+// if it's down) plus this PC's backup-only folders. After "Undo everything"
+// Syncthing's list is ignored; its folders were converted to backup-only.
 func backupFolders() ([]backup.Folder, error) {
+	s := store.LoadSettings()
+	var synced []backup.Folder
+	var err error
+	if !s.SyncDisabled {
+		synced, err = syncedFolders()
+	}
+	if err != nil && len(s.BackupOnly) == 0 {
+		return nil, err
+	}
+	return mergeFolders(synced, s.BackupOnly), nil
+}
+
+func syncedFolders() ([]backup.Folder, error) {
 	var out []backup.Folder
 	if c, err := syncthing.New(); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -115,8 +201,26 @@ func backupFolders() ([]backup.Folder, error) {
 	return out, nil
 }
 
+// mergeFolders appends backup-only folders to the synced ones, skipping any
+// whose id or path a synced folder already covers.
+func mergeFolders(synced []backup.Folder, backupOnly map[string]store.LocalFolder) []backup.Folder {
+	out := append([]backup.Folder(nil), synced...)
+	var extra []backup.Folder
+next:
+	for _, lf := range backupOnly {
+		for _, f := range synced {
+			if f.ID == lf.ID || strings.EqualFold(filepath.Clean(f.Path), filepath.Clean(lf.Path)) {
+				continue next
+			}
+		}
+		extra = append(extra, backup.Folder{ID: lf.ID, Label: lf.Label, Path: lf.Path})
+	}
+	sort.Slice(extra, func(i, j int) bool { return extra[i].ID < extra[j].ID })
+	return append(out, extra...)
+}
+
 // ensureBackgroundTask (re)registers the scheduled task so it always points at
-// the current exe and interval.
+// the current exe and interval, and removes it once it has nothing left to do.
 func ensureBackgroundTask() {
 	exe, err := os.Executable()
 	if err != nil {
@@ -127,6 +231,12 @@ func ensureBackgroundTask() {
 		return // `wails dev` binary: never point the real task at it
 	}
 	s := store.LoadSettings()
+	if s.SyncDisabled && !s.BackupEnabled {
+		if err := tasks.Delete(tasks.BackupTask); err != nil {
+			logx.Printf("remove background task: %v", err)
+		}
+		return
+	}
 	err = tasks.Register(tasks.Spec{
 		Name:        tasks.BackupTask,
 		Description: "Syncer: keeps Syncthing running, applies settings from your other PCs and backs up game saves to Google Drive.",

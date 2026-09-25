@@ -2,6 +2,7 @@ package discover
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,10 @@ const sample = `Stardew Valley:
         - config
       when:
         - os: windows
+  installDir:
+    Stardew Valley: {}
+    "Other Dir": {}
+    'Game: It''s a Dir':
   steam:
     id: 413150
 "Game: With Colon":
@@ -56,9 +61,40 @@ func TestParseSample(t *testing.T) {
 	if sv.Name != "Stardew Valley" || !sv.SteamCloud || len(sv.Paths) != 1 || sv.Paths[0] != "<winAppData>/StardewValley/Saves" {
 		t.Errorf("stardew: %+v", sv)
 	}
+	if sv.SteamID != 413150 || !reflect.DeepEqual(sv.InstallDirs, []string{"Stardew Valley", "Other Dir", "Game: It's a Dir"}) {
+		t.Errorf("stardew install metadata: %+v", sv)
+	}
 	c := es[1]
 	if c.Name != "Game: With Colon" || c.SteamCloud || len(c.Paths) != 1 || c.Paths[0] != "<winDocuments>/My Games/Colon/<storeUserId>" {
 		t.Errorf("colon: %+v", c)
+	}
+	if c.SteamID != 0 || len(c.InstallDirs) != 0 {
+		t.Errorf("install metadata leaked between entries: %+v", c)
+	}
+}
+
+func TestParseInvalidSteamID(t *testing.T) {
+	for _, id := range []string{"nope", "-1", "0", "999999999999999999999999"} {
+		es, err := Parse(strings.NewReader("Game:\n  files:\n    <winAppData>/Game:\n  steam:\n    id: " + id + "\n"))
+		if err != nil || len(es) != 1 || es[0].SteamID != 0 {
+			t.Errorf("id %q: entries=%+v err=%v", id, es, err)
+		}
+	}
+}
+
+func TestCachedManifestMemory(t *testing.T) {
+	cacheMu.Lock()
+	old := cached
+	cached = []Entry{{Name: "Cached Game", SteamID: 123, InstallDirs: []string{"Game"}}}
+	cacheMu.Unlock()
+	t.Cleanup(func() {
+		cacheMu.Lock()
+		cached = old
+		cacheMu.Unlock()
+	})
+	es := CachedManifest()
+	if len(es) != 1 || es[0].Name != "Cached Game" || es[0].SteamID != 123 {
+		t.Fatalf("cached index: %+v", es)
 	}
 }
 

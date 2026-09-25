@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,9 +17,9 @@ import (
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
-	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
+	"github.com/ApolloF/syncer/internal/winx"
 )
 
 // App is bound to the frontend; every exported method is callable from JS.
@@ -127,6 +125,7 @@ type Overview struct {
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
+	Gaming     bool             `json:"gaming"` // automatic backups are holding off right now
 	Settings   store.Settings   `json:"settings"`
 }
 
@@ -141,6 +140,7 @@ func (a *App) Overview() Overview {
 	if !o.BackingUp {
 		o.BackingUp = backup.Running()
 	}
+	o.Gaming = s.PauseWhileGaming && playing(cachedInstalled())
 	c, err := a.client()
 	if err != nil {
 		return o
@@ -332,10 +332,13 @@ func (a *App) AddDevice(id, name string) error {
 	if name == "" {
 		name = "PC " + id[:7]
 	}
+	// Introducer lets a third PC join through any already linked PC, so the
+	// user never has to pair every PC with every other one.
 	if err := c.AddDevice(ctx, syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"},
 		Introducer: true}); err != nil {
 		return err
 	}
+	_, _ = store.UpdateSettings(func(s *store.Settings) { s.SyncDisabled = false })
 	_ = c.DismissPendingDevice(ctx, id)
 	if _, err := meta.Reconcile(ctx, c); err != nil {
 		return err
@@ -376,202 +379,6 @@ func (a *App) PasteText() string {
 	return s
 }
 
-// ---- folders -----------------------------------------------------------------
-
-type FolderView struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`
-	Path      string    `json:"path"`
-	State     string    `json:"state"`
-	Bytes     int64     `json:"bytes"`
-	Files     int       `json:"files"`
-	NeedBytes int64     `json:"needBytes"`
-	Errors    int       `json:"errors"`
-	Backup    bool      `json:"backup"`
-	Exists    bool      `json:"exists"`
-	Shared    int       `json:"shared"`
-	Modified  time.Time `json:"modified"`
-}
-
-func (a *App) Folders() ([]FolderView, error) {
-	c, err := a.client()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
-	fs, err := c.Folders(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s := store.LoadSettings()
-	out := make([]FolderView, 0, len(fs))
-	for _, f := range fs {
-		if f.ID == meta.FolderID {
-			continue
-		}
-		v := FolderView{ID: f.ID, Label: f.Label, Path: f.Path, Backup: !s.NoBackup[f.ID], Shared: len(f.Devices) - 1}
-		if v.Label == "" {
-			v.Label = f.ID
-		}
-		if fi, err := os.Stat(f.Path); err == nil {
-			v.Exists, v.Modified = true, fi.ModTime()
-		}
-		if st, err := c.FolderStatus(ctx, f.ID); err == nil {
-			v.State, v.Bytes, v.Files, v.NeedBytes, v.Errors = st.State, st.LocalBytes, st.GlobalFiles, st.NeedBytes, st.Errors+st.PullErrors
-		}
-		if f.Paused {
-			v.State = "paused"
-		}
-		out = append(out, v)
-	}
-	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
-	return out, nil
-}
-
-// ScanGames looks for save folders on this PC.
-func (a *App) ScanGames(refresh bool) ([]GameView, error) {
-	es, err := discover.Manifest(refresh)
-	if err != nil {
-		return nil, err
-	}
-	found := discover.Scan(es)
-	a.mu.Lock()
-	a.lastScan = found
-	a.mu.Unlock()
-	return a.annotate(found), nil
-}
-
-type GameView struct {
-	discover.Found
-	SyncedBy string `json:"syncedBy"` // folder id/label covering this path
-}
-
-func (a *App) annotate(found []discover.Found) []GameView {
-	var folders []syncthing.Folder
-	if c, err := a.client(); err == nil {
-		ctx, cancel := a.callCtx()
-		folders, _ = c.Folders(ctx)
-		cancel()
-	}
-	out := make([]GameView, 0, len(found))
-	for _, f := range found {
-		g := GameView{Found: f}
-		for _, sf := range folders {
-			if sf.ID != meta.FolderID && paths.Within(sf.Path, f.Path) {
-				g.SyncedBy = sf.Label
-				if g.SyncedBy == "" {
-					g.SyncedBy = sf.ID
-				}
-				break
-			}
-		}
-		out = append(out, g)
-	}
-	return out
-}
-
-// ManifestUpdated returns when the game database was last refreshed (unix s).
-func (a *App) ManifestUpdated() int64 {
-	t := discover.ManifestAge()
-	if t.IsZero() {
-		return 0
-	}
-	return t.Unix()
-}
-
-// AddFolder starts syncing (and backing up) a save folder.
-func (a *App) AddFolder(label, path string) error {
-	path = filepath.Clean(path)
-	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
-		return errors.New("folder not found: " + path)
-	}
-	if _, _, ok := paths.Portable(path); !ok {
-		return errors.New("only folders inside your user profile, Documents, AppData or Saved Games can be synced between PCs")
-	}
-	c, err := a.client()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
-	st, err := c.Status(ctx)
-	if err != nil {
-		return err
-	}
-	fs, err := c.Folders(ctx)
-	if err != nil {
-		return err
-	}
-	taken := map[string]bool{}
-	for _, f := range fs {
-		taken[f.ID] = true
-		if paths.Within(f.Path, path) {
-			return errors.New("already synced as part of \"" + f.Label + "\"")
-		}
-		if paths.Within(path, f.Path) && f.ID != meta.FolderID {
-			return errors.New("this folder contains \"" + f.Label + "\", which is already synced — remove that first")
-		}
-	}
-	ds, _ := c.Devices(ctx)
-	var others []string
-	for _, d := range ds {
-		if d.DeviceID != st.MyID {
-			others = append(others, d.DeviceID)
-		}
-	}
-	if label == "" {
-		label = filepath.Base(path)
-	}
-	id := meta.NewID(label, taken)
-	if err := meta.AddFolder(ctx, c, id, label, path, st.MyID, others); err != nil {
-		return err
-	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) { delete(s.Ignored, id); delete(s.NoBackup, id) })
-	_, _ = meta.Reconcile(ctx, c)
-	logx.Printf("added folder %s (%s)", label, path)
-	runtime.EventsEmit(a.ctx, "changed")
-	return nil
-}
-
-// PickFolder opens a native folder picker.
-func (a *App) PickFolder() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Choose a save folder", DefaultDirectory: paths.Root(paths.Home)})
-}
-
-// RemoveFolder stops syncing a folder on this PC. Files are never deleted.
-func (a *App) RemoveFolder(id string) error {
-	c, err := a.client()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
-	if err := c.RemoveFolder(ctx, id); err != nil {
-		return err
-	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) { s.Ignored[id] = true })
-	_, _ = meta.Reconcile(ctx, c)
-	runtime.EventsEmit(a.ctx, "changed")
-	return nil
-}
-
-func (a *App) SetFolderBackup(id string, on bool) error {
-	_, err := store.UpdateSettings(func(s *store.Settings) {
-		if on {
-			delete(s.NoBackup, id)
-		} else {
-			s.NoBackup[id] = true
-		}
-	})
-	return err
-}
-
-func (a *App) OpenPath(p string) {
-	_ = exec.Command("explorer.exe", p).Start()
-}
-
 // ---- backup ------------------------------------------------------------------
 
 // BackupNow runs a backup in the background, streaming "backup:progress" and
@@ -586,6 +393,7 @@ func (a *App) BackupNow() error {
 	a.backingUp, a.cancel = true, cancel
 	a.mu.Unlock()
 	go func() {
+		defer winx.BackgroundThread()() // low CPU/IO priority, even while a game runs
 		defer func() {
 			a.mu.Lock()
 			a.backingUp, a.cancel = false, nil
@@ -598,7 +406,7 @@ func (a *App) BackupNow() error {
 				last = time.Now()
 				runtime.EventsEmit(a.ctx, "backup:progress", p)
 			}
-		})
+		}, nil)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "backup:done", map[string]any{"error": err.Error()})
 			return
@@ -677,7 +485,7 @@ func (a *App) Log() []string { return logx.Tail(200) }
 func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	s, err := store.UpdateSettings(func(s *store.Settings) {
 		s.Theme, s.BackupEnabled, s.BackupRoot = in.Theme, in.BackupEnabled, in.BackupRoot
-		s.ShowSteamCloud = in.ShowSteamCloud
+		s.ShowSteamCloud, s.PauseWhileGaming, s.InstalledOnly = in.ShowSteamCloud, in.PauseWhileGaming, in.InstalledOnly
 		if in.IntervalHours > 0 {
 			s.IntervalHours = in.IntervalHours
 		}

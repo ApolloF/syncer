@@ -26,9 +26,11 @@ const refreshAfter = 7 * 24 * time.Hour
 
 // Entry is one game's Windows save locations, with manifest placeholders.
 type Entry struct {
-	Name       string
-	Paths      []string
-	SteamCloud bool
+	Name        string
+	Paths       []string
+	SteamCloud  bool
+	InstallDirs []string
+	SteamID     int
 }
 
 var (
@@ -42,7 +44,19 @@ func cacheDir() string {
 	return d
 }
 
-func indexFile() string { return filepath.Join(cacheDir(), "manifest-index.gob.gz") }
+func indexFile() string { return filepath.Join(cacheDir(), "manifest-index-v3.gob.gz") }
+
+// CachedManifest returns the local index without downloading or refreshing it.
+func CachedManifest() []Entry {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	if cached == nil {
+		if es, err := readIndex(); err == nil {
+			cached = es
+		}
+	}
+	return cached
+}
 
 // Manifest returns the parsed manifest index, downloading or refreshing it when
 // needed. A stale cache is used if the network is unavailable.
@@ -129,9 +143,23 @@ func writeIndex(es []Entry) error {
 		f.Close()
 		return err
 	}
-	zw.Close()
-	f.Close()
-	return os.Rename(tmp, indexFile())
+	if err := zw.Close(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, indexFile()); err != nil {
+		return err
+	}
+	old, _ := filepath.Glob(filepath.Join(cacheDir(), "manifest-index*.gob.gz"))
+	for _, name := range old {
+		if name != indexFile() {
+			_ = os.Remove(name)
+		}
+	}
+	return nil
 }
 
 // Parse reads the manifest YAML. The file is machine-generated with a fixed
@@ -144,7 +172,7 @@ func Parse(r io.Reader) ([]Entry, error) {
 	var (
 		out     []Entry
 		cur     *Entry
-		section string // files | cloud | other
+		section string
 		p       *pathInfo
 	)
 	flush := func() {
@@ -179,6 +207,17 @@ func Parse(r io.Reader) ([]Entry, error) {
 		case section == "cloud" && ind == 4:
 			if k, v, ok := strings.Cut(t, ":"); ok && strings.TrimSpace(k) == "steam" && strings.TrimSpace(v) == "true" {
 				cur.SteamCloud = true
+			}
+		case section == "installDir" && ind == 4:
+			dir := unquote(strings.TrimSuffix(strings.TrimSuffix(t, ": {}"), ":"))
+			if dir != "" {
+				cur.InstallDirs = append(cur.InstallDirs, dir)
+			}
+		case section == "steam" && ind == 4:
+			if k, v, ok := strings.Cut(t, ":"); ok && k == "id" {
+				if id, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && id > 0 {
+					cur.SteamID = id
+				}
 			}
 		case section == "files" && ind == 4:
 			flush()

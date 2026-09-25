@@ -53,7 +53,12 @@ type Options struct {
 	Target   string
 	KeepDays int
 	OnProg   func(Progress)
+	// Pause is called before each folder and every few seconds while copying;
+	// it may block (e.g. while a game is running) until the run may continue.
+	Pause func(ctx context.Context)
 }
+
+var pauseEvery = 2 * time.Second // var so tests can pause on every file
 
 type indexEntry struct {
 	Size  int64 `json:"s"`
@@ -75,9 +80,16 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 	stamp := time.Now().Format(stampFmt)
 	p := Progress{Folders: len(folders)}
 	for i, f := range folders {
+		if opts.Pause != nil {
+			opts.Pause(ctx)
+		}
 		if ctx.Err() != nil {
-			res.Errors = append(res.Errors, "cancelled")
+			res.Errors = append(res.Errors, stopReason(ctx))
 			break
+		}
+		if !paths.ValidID(f.ID) {
+			res.Errors = append(res.Errors, f.Label+": unsupported folder id")
+			continue
 		}
 		p.Folder, p.FolderIdx = f.Label, i+1
 		if opts.OnProg != nil {
@@ -87,7 +99,7 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 			continue // game not present on this PC
 		}
 		res.Folders++
-		c, v, b, errs := mirror(ctx, f, opts.Target, stamp, &p, opts.OnProg)
+		c, v, b, errs := mirror(ctx, f, opts, stamp, &p)
 		res.Copied += c
 		res.Versions += v
 		res.Bytes += b
@@ -101,7 +113,18 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 	return res, nil
 }
 
-func mirror(ctx context.Context, f Folder, target, stamp string, p *Progress, onProg func(Progress)) (copied, versioned int, bytes int64, errs []string) {
+// stopReason says why a run stopped early: a cause given by the caller (e.g.
+// a game kept running) or plain cancellation.
+func stopReason(ctx context.Context) string {
+	if c := context.Cause(ctx); c != nil && !errors.Is(c, context.Canceled) && !errors.Is(c, context.DeadlineExceeded) {
+		return c.Error()
+	}
+	return "cancelled"
+}
+
+func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progress) (copied, versioned int, bytes int64, errs []string) {
+	target, onProg := opts.Target, opts.OnProg
+	lastPause := time.Now()
 	dst := filepath.Join(target, f.ID)
 	verRoot := filepath.Join(target, VersionsDir, f.ID, stamp)
 	m := LoadMatcher(f.Path)
@@ -111,6 +134,10 @@ func mirror(ctx context.Context, f Folder, target, stamp string, p *Progress, on
 	errf := func(format string, a ...any) { errs = append(errs, f.Label+": "+fmt.Sprintf(format, a...)) }
 
 	_ = filepath.WalkDir(f.Path, func(path string, d fs.DirEntry, err error) error {
+		if opts.Pause != nil && time.Since(lastPause) >= pauseEvery {
+			opts.Pause(ctx)
+			lastPause = time.Now()
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -174,7 +201,8 @@ func mirror(ctx context.Context, f Folder, target, stamp string, p *Progress, on
 
 	// Files gone locally: move their backup copy into versions. If the local
 	// folder is suddenly empty, assume something is wrong and keep everything.
-	if len(seen) > 0 {
+	// A cancelled walk hasn't seen every file, so it must not retire anything.
+	if len(seen) > 0 && ctx.Err() == nil {
 		_ = filepath.WalkDir(dst, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
@@ -196,7 +224,9 @@ func mirror(ctx context.Context, f Folder, target, stamp string, p *Progress, on
 		})
 		removeEmptyDirs(dst)
 	}
-	saveIndex(f.ID, newIdx)
+	if ctx.Err() == nil {
+		saveIndex(f.ID, newIdx)
+	}
 	if onProg != nil {
 		onProg(*p)
 	}
@@ -346,6 +376,34 @@ func Running() bool {
 	}
 	u()
 	return false
+}
+
+// Forget drops Syncer's local bookkeeping for a folder and, with
+// deleteBackup, its backup copy and version history under target.
+func Forget(target, id string, deleteBackup bool) error {
+	if !paths.ValidID(id) {
+		return fmt.Errorf("unsupported folder id %q", id)
+	}
+	if err := os.Remove(indexPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if !deleteBackup || target == "" {
+		return nil
+	}
+	for _, d := range []string{filepath.Join(target, id), filepath.Join(target, VersionsDir, id)} {
+		if !strictlyInside(target, d) {
+			return fmt.Errorf("refusing to delete %s", d)
+		}
+		if err := os.RemoveAll(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func strictlyInside(parent, child string) bool {
+	rel, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(child))
+	return err == nil && rel != "." && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func hiddenOutput(name string, args ...string) (string, error) {

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/paths"
 )
 
 // Restore copies a folder's backup back to its local path as it was at point
@@ -17,6 +19,9 @@ import (
 // the state at point T is: latest backup, overlaid by every version taken at or
 // after T, newest first, so older (closer to T) copies win.
 func Restore(target string, f Folder, point time.Time) (int, error) {
+	if !paths.ValidID(f.ID) {
+		return 0, fmt.Errorf("unsupported folder id %q", f.ID)
+	}
 	unlock, err := lock()
 	if err != nil {
 		return 0, err

@@ -3,9 +3,13 @@
 import {main} from '../models';
 import {store} from '../models';
 
+export function AddBackupOnly(arg1:string,arg2:string):Promise<void>;
+
 export function AddDevice(arg1:string,arg2:string):Promise<void>;
 
 export function AddFolder(arg1:string,arg2:string):Promise<void>;
+
+export function Available():Promise<Array<main.AvailableView>>;
 
 export function BackupNow():Promise<void>;
 
@@ -41,7 +45,9 @@ export function PickFolder():Promise<string>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
 
-export function RemoveFolder(arg1:string):Promise<void>;
+export function RemoveFolder(arg1:string,arg2:boolean):Promise<void>;
+
+export function RemoveUninstalled():Promise<number>;
 
 export function Restore(arg1:string,arg2:number):Promise<number>;
 
@@ -53,4 +59,10 @@ export function ScanGames(arg1:boolean):Promise<Array<main.GameView>>;
 
 export function SetFolderBackup(arg1:string,arg2:boolean):Promise<void>;
 
+export function SetFolderSync(arg1:string,arg2:boolean):Promise<void>;
+
 export function StartSyncthing():Promise<void>;
+
+export function SyncAvailable(arg1:string):Promise<void>;
+
+export function UndoAll(arg1:main.UndoOptions):Promise<main.UndoReport>;

@@ -21,6 +21,26 @@ export namespace backup {
 
 export namespace main {
 	
+	export class AvailableView {
+	    id: string;
+	    label: string;
+	    path: string;
+	    from: string;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AvailableView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	        this.from = source["from"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class DeviceView {
 	    id: string;
 	    name: string;
@@ -128,6 +148,8 @@ export namespace main {
 	    needBytes: number;
 	    errors: number;
 	    backup: boolean;
+	    sync: boolean;
+	    installed: boolean;
 	    exists: boolean;
 	    shared: number;
 	    // Go type: time
@@ -148,6 +170,8 @@ export namespace main {
 	        this.needBytes = source["needBytes"];
 	        this.errors = source["errors"];
 	        this.backup = source["backup"];
+	        this.sync = source["sync"];
+	        this.installed = source["installed"];
 	        this.exists = source["exists"];
 	        this.shared = source["shared"];
 	        this.modified = this.convertValues(source["modified"], null);
@@ -248,6 +272,7 @@ export namespace main {
 	    target: string;
 	    lastBackup?: store.BackupRun;
 	    backingUp: boolean;
+	    gaming: boolean;
 	    settings: store.Settings;
 	
 	    static createFrom(source: any = {}) {
@@ -267,6 +292,7 @@ export namespace main {
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);
 	        this.backingUp = source["backingUp"];
+	        this.gaming = source["gaming"];
 	        this.settings = this.convertValues(source["settings"], store.Settings);
 	    }
 	
@@ -289,6 +315,43 @@ export namespace main {
 		}
 	}
 	
+	
+	export class UndoOptions {
+	    unpair: boolean;
+	    stopBackups: boolean;
+	    deleteBackups: boolean;
+	    stopSyncthing: boolean;
+	    uninstallSyncthing: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new UndoOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.unpair = source["unpair"];
+	        this.stopBackups = source["stopBackups"];
+	        this.deleteBackups = source["deleteBackups"];
+	        this.stopSyncthing = source["stopSyncthing"];
+	        this.uninstallSyncthing = source["uninstallSyncthing"];
+	    }
+	}
+	export class UndoReport {
+	    folders: number;
+	    devices: number;
+	    notes: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UndoReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.folders = source["folders"];
+	        this.devices = source["devices"];
+	        this.notes = source["notes"];
+	    }
+	}
 
 }
 
@@ -342,6 +405,24 @@ export namespace store {
 		    return a;
 		}
 	}
+	export class LocalFolder {
+	    id: string;
+	    label: string;
+	    path: string;
+	    syncID?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	        this.syncID = source["syncID"];
+	    }
+	}
 	export class Settings {
 	    theme: string;
 	    backupEnabled: boolean;
@@ -352,6 +433,10 @@ export namespace store {
 	    ignored: Record<string, boolean>;
 	    showSteamCloud: boolean;
 	    migrated: boolean;
+	    pauseWhileGaming: boolean;
+	    installedOnly: boolean;
+	    syncDisabled: boolean;
+	    backupOnly: Record<string, LocalFolder>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -368,7 +453,29 @@ export namespace store {
 	        this.ignored = source["ignored"];
 	        this.showSteamCloud = source["showSteamCloud"];
 	        this.migrated = source["migrated"];
+	        this.pauseWhileGaming = source["pauseWhileGaming"];
+	        this.installedOnly = source["installedOnly"];
+	        this.syncDisabled = source["syncDisabled"];
+	        this.backupOnly = this.convertValues(source["backupOnly"], LocalFolder, true);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

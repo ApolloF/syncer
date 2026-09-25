@@ -2,9 +2,7 @@ package syncthing
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,14 +15,6 @@ import (
 )
 
 const createNoWindow = 0x08000000
-
-func insecureLocalTransport(useTLS bool) http.RoundTripper {
-	if !useTLS {
-		return http.DefaultTransport
-	}
-	// Syncthing's GUI cert is self-signed and we only ever talk to localhost.
-	return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-}
 
 // FindExe locates syncthing.exe (WinGet link, WinGet package dir, or PATH).
 func FindExe() string {
@@ -48,6 +38,14 @@ func FindExe() string {
 // Hidden returns a command that runs without flashing a console window.
 func Hidden(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return cmd
+}
+
+// HiddenContext is Hidden for a command that must be cancelable, e.g. a
+// winget install/uninstall the user can abort.
+func HiddenContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	return cmd
 }
@@ -87,11 +85,22 @@ func WaitReady(ctx context.Context, timeout time.Duration) error {
 
 // Install installs Syncthing via winget (per-user, silent).
 func Install(ctx context.Context) error {
-	cmd := Hidden("winget", "install", "--id", "Syncthing.Syncthing", "-e", "--silent",
+	cmd := HiddenContext(ctx, "winget", "install", "--id", "Syncthing.Syncthing", "-e", "--silent",
 		"--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
 	out, err := cmd.CombinedOutput()
 	if err != nil && FindExe() == "" {
 		return errors.New("winget install failed: " + lastLine(string(out)))
+	}
+	return nil
+}
+
+// Uninstall removes Syncthing via winget (per-user, silent).
+func Uninstall(ctx context.Context) error {
+	cmd := HiddenContext(ctx, "winget", "uninstall", "--id", "Syncthing.Syncthing", "-e", "--silent",
+		"--disable-interactivity", "--accept-source-agreements")
+	out, err := cmd.CombinedOutput()
+	if err != nil && FindExe() != "" {
+		return errors.New("winget uninstall failed: " + lastLine(string(out)))
 	}
 	return nil
 }

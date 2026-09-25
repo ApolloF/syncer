@@ -146,3 +146,77 @@ func TestLockExclusive(t *testing.T) {
 		t.Fatal("still locked")
 	}
 }
+
+func TestRunSkipsInvalidID(t *testing.T) {
+	target := t.TempDir()
+	res, err := Run(context.Background(), []Folder{{ID: `..\evil`, Label: "Evil", Path: t.TempDir()}}, Options{Target: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OK || len(res.Errors) != 1 || res.Folders != 0 {
+		t.Fatalf("invalid id not rejected: %+v", res)
+	}
+}
+
+func TestRunCallsPause(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "pause-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	write(t, filepath.Join(src, "a.sav"), "a")
+	calls := 0
+	_, err := Run(context.Background(), []Folder{{ID: id, Label: "P", Path: src}},
+		Options{Target: target, Pause: func(context.Context) { calls++ }})
+	if err != nil || calls == 0 {
+		t.Fatalf("pause calls=%d err=%v", calls, err)
+	}
+}
+
+func TestCancelledRunKeepsBackup(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "cancel-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	write(t, filepath.Join(src, "a.sav"), "a")
+	write(t, filepath.Join(src, "b.sav"), "b")
+	if _, err := Run(context.Background(), []Folder{{ID: id, Label: "C", Path: src}}, Options{Target: target}); err != nil {
+		t.Fatal(err)
+	}
+	// Cancel on the third walk step (root, a.sav, b.sav): a.sav is seen, b.sav isn't.
+	defer func(d time.Duration) { pauseEvery = d }(pauseEvery)
+	pauseEvery = 0
+	ctx, cancel := context.WithCancel(context.Background())
+	steps := 0
+	pause := func(context.Context) {
+		if steps++; steps == 3 {
+			cancel()
+		}
+	}
+	mirror(ctx, Folder{ID: id, Label: "C", Path: src}, Options{Target: target, Pause: pause}, "x", &Progress{})
+	for _, n := range []string{"a.sav", "b.sav"} {
+		if _, err := os.Stat(filepath.Join(target, id, n)); err != nil {
+			t.Errorf("%s retired by a cancelled run", n)
+		}
+	}
+}
+
+func TestForget(t *testing.T) {
+	target := t.TempDir()
+	if err := Forget(target, "..", true); err == nil {
+		t.Fatal("Forget accepted ..")
+	}
+	id := "forget-" + time.Now().Format("150405")
+	write(t, filepath.Join(target, id, "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, id, "x", "a.sav"), "a")
+	write(t, filepath.Join(target, "other", "b.sav"), "b")
+	if err := Forget(target, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id)); err == nil {
+		t.Error("backup not deleted")
+	}
+	if _, err := os.Stat(filepath.Join(target, VersionsDir, id)); err == nil {
+		t.Error("versions not deleted")
+	}
+	if _, err := os.Stat(filepath.Join(target, "other", "b.sav")); err != nil {
+		t.Error("unrelated backup deleted")
+	}
+}

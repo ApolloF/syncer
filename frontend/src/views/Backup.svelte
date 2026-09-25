@@ -55,6 +55,9 @@
     <h1>Backup</h1>
     <p class="muted">A copy of every save in your Google Drive, with 30 days of history.</p>
   </div>
+  {#if o?.gaming && o.settings.pauseWhileGaming && !o.backingUp}
+    <span class="pill accent">Paused while you play</span>
+  {/if}
   {#if o?.backingUp}
     <button class="btn" onclick={() => CancelBackup()}><Icon name="stop" size={14} /> Stop</button>
   {:else}
@@ -129,6 +132,10 @@
     <select value={o?.settings.keepDays} onchange={(e) => save({ keepDays: +e.currentTarget.value })}>
       {#each [7, 14, 30, 90, 365] as d}<option value={d}>{d} days</option>{/each}
     </select>
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Pause while playing</div><div class="faint small">Automatic backups wait until you're done gaming and always run at low priority.</div></div>
+    <Toggle checked={o?.settings.pauseWhileGaming} label="Pause while playing" onchange={(v) => save({ pauseWhileGaming: v })} />
   </div>
 </div>
 <p class="faint small hint">Pick which games are backed up on the Games page. Restore a save from its <Icon name="history" size={13} /> button there.</p>
