@@ -36,6 +36,8 @@
       s.push({ key: 'link', icon: 'link', title: 'Link your other PC', text: 'Install Syncer there, then paste this PC\'s ID. Every save follows automatically.', action: 'Link a PC' })
     if (o.conflicts)
       s.push({ key: 'conflicts', icon: 'alert', title: `${o.conflicts} save${o.conflicts > 1 ? 's have' : ' has'} two versions`, text: 'Two PCs changed the same save. Pick which one to keep; the other goes into the backup history.', action: 'Review' })
+    if (o.overlaps)
+      s.push({ key: 'overlaps', icon: 'alert', title: `${o.overlaps} save folder${o.overlaps > 1 ? 's are' : ' is'} synced twice`, text: 'A bigger folder from an older setup also holds it, so the same files sync and back up twice.', action: 'Review' })
     if (o.pending)
       s.push({ key: 'pending', icon: 'devices', title: `${o.pending} PC${o.pending > 1 ? 's' : ''} want${o.pending > 1 ? '' : 's'} to connect`, text: 'Review and accept the request.', action: 'Review' })
     return s
@@ -46,7 +48,7 @@
     else if (key === 'start') run(key, StartSyncthing, 'Sync started')
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
     else if (key === 'link' || key === 'pending') ui.view = 'devices'
-    else if (key === 'conflicts') ui.view = 'games'
+    else if (key === 'conflicts' || key === 'overlaps') ui.view = 'games'
     else if (key === 'paused') run(key, Resume, 'Syncing and backups resumed')
     else if (key === 'update') OpenUpdate()
   }

@@ -58,7 +58,7 @@ func runBackground() {
 				} else if len(rep.Added) > 0 {
 					logx.Printf("reconcile: added %v", rep.Added)
 				}
-				if _, err := autoAdd(ctx, c); err != nil {
+				if _, _, err := autoAdd(ctx, c); err != nil {
 					logx.Printf("auto-add: %v", err)
 				}
 			}

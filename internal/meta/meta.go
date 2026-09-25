@@ -113,13 +113,18 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 	}
 
-	// Adopt folders other PCs have.
+	// Adopt folders other PCs have. The most specific paths go first: when
+	// one folder holds another (an old whole-vendor folder around a game's own
+	// save folder), the game's folder is added and the one around it skipped.
 	installed := lazyInstalled()
-	for _, sf := range readOthers(me) {
+	synced := syncedPaths(folders)
+	cands := readOthers(me)
+	sort.SliceStable(cands, func(i, j int) bool { return resolvedLen(cands[i]) > resolvedLen(cands[j]) })
+	for _, sf := range cands {
 		if _, ok := byID[sf.ID]; ok {
 			continue
 		}
-		p, reason := Adoptable(sf, settings, installed)
+		p, reason := Adoptable(sf, settings, installed, synced)
 		if reason == SkipUnsafe {
 			warnOnce(sf.ID, "meta: not adopting %q (%s/%s): unsafe id or path", sf.ID, sf.Root, sf.Rel)
 		}
@@ -132,6 +137,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[sf.ID] = syncthing.Folder{ID: sf.ID, Label: sf.Label, Path: p, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}}
+		synced = append(synced, p)
 		rep.Added = append(rep.Added, sf.Label)
 		logx.Printf("meta: added %s (%s) from another PC", sf.Label, p)
 	}
@@ -194,13 +200,20 @@ const (
 	SkipRemoved      = "removed"       // the user stopped syncing it on this PC
 	SkipBackupOnly   = "backup-only"   // backed up here but deliberately not synced
 	SkipNotInstalled = "not-installed" // "only installed games" is on and it isn't
+	SkipOverlap      = "overlap"       // holds, or sits in, a folder already synced here
+	SkipOneDrive     = "onedrive"      // OneDrive already syncs that folder on this PC
 )
+
+// inOneDrive is a variable so tests don't depend on this PC's OneDrive.
+var inOneDrive = paths.InOneDrive
 
 // Adoptable resolves a folder published by another PC to a local path and
 // says why it must not be added here ("" = add it). Peers' metadata is
 // untrusted: a compromised PC must not make this one share arbitrary folders,
-// so the id and path are validated before anything else.
-func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) bool) (string, string) {
+// so the id and path are validated before anything else. synced are the paths
+// of the folders this PC already syncs: two synced folders must never overlap,
+// or the same files sync (and back up) twice.
+func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) bool, synced []string) (string, string) {
 	if !paths.ValidID(sf.ID) || sf.ID == FolderID {
 		return "", SkipUnsafe
 	}
@@ -213,13 +226,38 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 			return p, SkipBackupOnly
 		}
 	}
+	for _, sp := range synced {
+		if paths.Within(sp, p) || paths.Within(p, sp) {
+			return p, SkipOverlap
+		}
+	}
 	switch {
 	case s.Ignored[sf.ID]:
 		return p, SkipRemoved
+	case inOneDrive(p):
+		return p, SkipOneDrive
 	case s.InstalledOnly && !installed(sf.Label):
 		return p, SkipNotInstalled
 	}
 	return p, ""
+}
+
+// syncedPaths lists the paths of the game folders Syncthing has.
+func syncedPaths(fs []syncthing.Folder) []string {
+	var out []string
+	for _, f := range fs {
+		if f.ID != FolderID {
+			out = append(out, f.Path)
+		}
+	}
+	return out
+}
+
+// resolvedLen is the length of a published folder's local path (0 if it
+// doesn't resolve), to order folders from most to least specific.
+func resolvedLen(sf SharedFolder) int {
+	p, _ := paths.Resolve(sf.Root, sf.Rel)
+	return len(p)
 }
 
 // lazyInstalled looks up installed games only when asked, from a snapshot
@@ -273,14 +311,15 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 	}
 	s := store.LoadSettings()
 	installed := lazyInstalled()
+	synced := syncedPaths(folders)
 	var out []Avail
 	for _, df := range readOtherFiles(st.MyID) {
 		for _, sf := range df.Folders {
 			if have[sf.ID] {
 				continue
 			}
-			p, reason := Adoptable(sf, s, installed)
-			if reason == SkipUnsafe || reason == SkipBackupOnly {
+			p, reason := Adoptable(sf, s, installed, synced)
+			if reason == SkipUnsafe || reason == SkipBackupOnly || reason == SkipOverlap {
 				continue
 			}
 			if reason == "" {
@@ -290,8 +329,32 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
 		}
 	}
+	out = dropOuter(out)
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
 	return out, nil
+}
+
+// dropOuter keeps one folder of each nested group: a folder that holds
+// another offered folder is left out (syncing both would sync those files
+// twice), and of two folders at the same path the first is kept.
+func dropOuter(av []Avail) []Avail {
+	var out []Avail
+	for i, a := range av {
+		outer := false
+		for j, b := range av {
+			if i == j || !paths.Within(a.Path, b.Path) {
+				continue
+			}
+			if !paths.Within(b.Path, a.Path) || j < i { // b is inside a, or the same path offered earlier
+				outer = true
+				break
+			}
+		}
+		if !outer {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // AddFolder creates a Syncthing folder shared with all devices, with versioning.

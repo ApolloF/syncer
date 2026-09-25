@@ -49,6 +49,9 @@ type FolderView struct {
 	Exclude     []string  `json:"exclude"`     // file patterns skipped on this PC
 	NewerOn     string    `json:"newerOn"`     // another PC backed up a newer save that isn't here yet
 	NewerAt     time.Time `json:"newerAt"`
+
+	Inside   string `json:"inside"`   // id of another synced folder that holds this one (synced twice)
+	OneDrive bool   `json:"oneDrive"` // OneDrive syncs this folder too
 }
 
 // Folders lists synced folders plus this PC's backup-only ones. Backup-only
@@ -73,10 +76,12 @@ func (a *App) Folders() ([]FolderView, error) {
 				}
 			}
 			conflicts := a.conflictCounts(bf)
+			inside := nestedIn(bf)
 			for _, f := range fs {
 				if f.ID != meta.FolderID {
 					v := a.syncedView(ctx, c, f, s, installed)
 					v.Conflicts = conflicts[f.ID]
+					v.Inside = inside[f.ID]
 					out = append(out, v)
 				}
 			}
@@ -94,6 +99,10 @@ func (a *App) Folders() ([]FolderView, error) {
 			v.Exists, v.Modified = true, fi.ModTime()
 		}
 		out = append(out, v)
+	}
+	od := paths.OneDriveRoots()
+	for i := range out {
+		out[i].OneDrive = paths.WithinAny(od, out[i].Path)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
 	a.addDetails(out, s)
@@ -167,6 +176,22 @@ func (a *App) annotate(found []discover.Found) []GameView {
 	return out
 }
 
+// nestedIn maps each synced folder that lies inside another synced folder to
+// that folder's id. Syncer no longer creates such pairs, but older setups (or
+// adopting from another PC before that was checked) left some behind.
+func nestedIn(fs []backup.Folder) map[string]string {
+	m := map[string]string{}
+	for _, inner := range fs {
+		for _, outer := range fs {
+			if inner.ID != outer.ID && paths.Within(outer.Path, inner.Path) && !paths.Within(inner.Path, outer.Path) {
+				m[inner.ID] = outer.ID
+				break
+			}
+		}
+	}
+	return m
+}
+
 func cmpOr(a, b string) string {
 	if a != "" {
 		return a
@@ -192,15 +217,12 @@ func checkNewFolder(path string, synced []backup.Folder) (taken map[string]bool,
 	if err := paths.CheckSyncable(path); err != nil {
 		return nil, "", err
 	}
+	if err := overlapsSynced(path, "", synced); err != nil {
+		return nil, "", err
+	}
 	taken = map[string]bool{}
 	for _, f := range synced {
 		taken[f.ID] = true
-		if paths.Within(f.Path, path) {
-			return nil, "", coveredError("already synced as part of \"" + cmpOr(f.Label, f.ID) + "\"")
-		}
-		if paths.Within(path, f.Path) {
-			return nil, "", coveredError("this folder contains \"" + cmpOr(f.Label, f.ID) + "\", which is already synced — remove that first")
-		}
 	}
 	for id, lf := range store.LoadSettings().BackupOnly {
 		taken[id] = true
@@ -215,6 +237,21 @@ func checkNewFolder(path string, synced []backup.Folder) (taken map[string]bool,
 		}
 	}
 	return taken, backupOnly, nil
+}
+
+// overlapsSynced says why path can't be synced when it lies in, or holds, a
+// synced folder other than skipID: the same files would sync twice.
+func overlapsSynced(path, skipID string, synced []backup.Folder) error {
+	for _, f := range synced {
+		switch {
+		case f.ID == skipID:
+		case paths.Within(f.Path, path):
+			return coveredError("already synced as part of \"" + cmpOr(f.Label, f.ID) + "\"")
+		case paths.Within(path, f.Path):
+			return coveredError("this folder contains \"" + cmpOr(f.Label, f.ID) + "\", which is already synced — remove that first")
+		}
+	}
+	return nil
 }
 
 // AddFolder starts syncing (and backing up) a save folder. A folder that is
@@ -282,7 +319,7 @@ func addBackupOnly(label, path string, synced []backup.Folder) (string, error) {
 		return "", err
 	}
 	if backupOnly != "" {
-		return "", errors.New("already backed up")
+		return "", coveredError("already backed up")
 	}
 	if label = strings.TrimSpace(label); label == "" {
 		label = filepath.Base(path)
@@ -360,6 +397,19 @@ func hostSuffix() string {
 func (a *App) share(ctx context.Context, c *syncthing.Client, id, label, path string, backupOff bool) error {
 	st, err := c.Status(ctx)
 	if err != nil {
+		return err
+	}
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return err
+	}
+	var synced []backup.Folder
+	for _, f := range fs {
+		if f.ID != meta.FolderID {
+			synced = append(synced, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
+		}
+	}
+	if err := overlapsSynced(path, id, synced); err != nil {
 		return err
 	}
 	ds, _ := c.Devices(ctx)

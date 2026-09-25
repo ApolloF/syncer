@@ -142,6 +142,22 @@
   const others = $derived((cache.others ?? []).filter(b => matches(b.label, b.path)))
   const elsewhereCount = $derived(cache.available && cache.others ? cache.available.length + cache.others.length : null)
   const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
+  // Synced folders inside another synced folder, grouped by the outer one.
+  const overlaps = $derived.by(() => {
+    const m = new Map<string, { outer: main.FolderView; inner: main.FolderView[] }>()
+    for (const f of cache.folders) {
+      const outer = f.inside ? cache.folders.find(x => x.id === f.inside) : undefined
+      if (!outer) continue
+      const e = m.get(outer.id) ?? { outer, inner: [] }
+      e.inner.push(f)
+      m.set(outer.id, e)
+    }
+    return [...m.values()]
+  })
+  const outerIds = $derived(new Set(overlaps.map(v => v.outer.id)))
+  const removeInner = $derived(removeFor ? overlaps.find(v => v.outer.id === removeFor!.id)?.inner ?? [] : [])
+  const base = (p: string) => p.split('\\').filter(Boolean).pop() ?? p
+  const names = (fs: main.FolderView[]) => [...new Set(fs.map(f => f.label))].join(', ')
   const notInstalled = $derived((cache.found ?? []).filter(g => !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
   const bulkCount = $derived(notInstalled.filter(g => bulkPick[g.path]).length)
 
@@ -435,6 +451,13 @@
     {#if f.sync && f.newerOn && !f.needBytes}
       <span class="pill warn" title="{f.newerOn} saved this game on {new Date(f.newerAt).toLocaleString()}, but that save hasn't reached this PC yet. Turn {f.newerOn} on and let it sync before you play here.">Newer on {f.newerOn}</span>
     {/if}
+    {#if outerIds.has(f.id)}
+      <span class="pill warn" title="This folder holds another synced save folder, so those files sync and back up twice">Synced twice</span>
+    {/if}
+    {#if f.oneDrive}
+      {#if f.sync}<span class="pill warn" title="OneDrive syncs this folder too. Two sync tools on the same saves can make conflicting copies. Turn off Sync to leave syncing to OneDrive; Syncer keeps backing it up.">Also in OneDrive</span>
+      {:else}<span class="pill" title="OneDrive syncs these saves between your PCs; Syncer backs them up.">In OneDrive</span>{/if}
+    {/if}
     {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
     {#if f.sync}<span class="pill {s.kind}">{s.text}</span>
     {:else if !f.exists}<span class="pill" title="The save folder isn't on this PC. Restore it from the backup to bring it back.">Not on this PC</span>
@@ -495,6 +518,16 @@
   {#if !o?.syncthing.running && !o?.settings.syncDisabled}
     <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">Sync isn't running. Start it from the Overview.</span></div>
   {/if}
+  {#each overlaps as v (v.outer.id)}
+    <div class="card notice row">
+      <Icon name="alert" size={16} />
+      <span class="grow">
+        <b>{names(v.inner)}</b> {v.inner.length === 1 ? 'is' : 'are'} synced twice: the folder
+        <span class="mono" title={v.outer.path}>{base(v.outer.path)}</span> ({v.outer.label}) also holds {v.inner.length === 1 ? 'its save folder' : 'their save folders'}.
+      </span>
+      <button class="btn sm" onclick={() => openRemove(v.outer)}>Stop syncing {base(v.outer.path)}…</button>
+    </div>
+  {/each}
   {#if o?.settings.installedOnly && uninstalledCount > 0}
     <div class="card notice row">
       <span class="grow">{plural(uninstalledCount, 'synced game')} {uninstalledCount === 1 ? "isn't" : "aren't"} installed on this PC.</span>
@@ -537,6 +570,7 @@
               {#if g.emulator}<span class="pill warn" title="Saves a Steam emulator ({g.emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud">{g.emulator} saves</span>{/if}
               {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
               {#if !g.installed}<span class="pill" title="Syncer didn't find this game installed on this PC">Not installed</span>{/if}
+              {#if g.oneDrive}<span class="pill" title="These saves are in OneDrive, which already syncs them between your PCs, so Syncer backs them up instead of syncing them. Sync them only if OneDrive isn't on your other PCs.">In OneDrive</span>{/if}
             </div>
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>
           </div>
@@ -573,7 +607,9 @@
             <div class="path faint ellipsis" title={a.path}>{a.path}</div>
           </div>
           <span class="meta faint">from {a.from}</span>
-          {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>{:else}<span class="pill">Removed here</span>{/if}
+          {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
+          {:else if a.reason === 'onedrive'}<span class="pill warn" title="On this PC this folder is in OneDrive, which may already sync it. Sync it here only if OneDrive doesn't.">In OneDrive</span>
+          {:else}<span class="pill">Removed here</span>{/if}
           <button class="btn sm" disabled={syncingId === a.id} onclick={() => syncHere(a)}>
             {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync here
@@ -663,11 +699,13 @@
 
 {#if removeFor}
   {@const f = removeFor}
-  <Modal title="Remove {f.label} from Syncer?" onclose={() => (removeFor = null)}>
-    <p>Syncer stops syncing and backing up this game on this PC and removes its sync markers. Your save files stay where they are; your other PCs keep their copy.</p>
+  <Modal title="Remove {removeInner.length ? base(f.path) : f.label} from Syncer?" onclose={() => (removeFor = null)}>
+    <p class="mono ellipsis" title={f.path}>{f.path}</p>
+    <p>Syncer stops syncing and backing up this folder on this PC and removes its sync markers. Your save files stay where they are; your other PCs keep their copy.</p>
+    {#if removeInner.length}<p class="small">{names(removeInner)} keep{removeInner.length === 1 ? 's' : ''} syncing through {removeInner.length === 1 ? 'its own save folder' : 'their own save folders'}.</p>{/if}
     <label class="chk"><input type="checkbox" bind:checked={deleteBackupToo} /> Also delete its Google Drive backup and history</label>
     {#if deleteBackupToo}<p class="err small">This can't be undone from Syncer.</p>{/if}
-    {#if f.exists}
+    {#if f.exists && !removeInner.length}
       <p class="small">Want the save files on this PC gone instead? <button class="linkbtn danger" onclick={() => openDelete(f)}>Delete the save files…</button></p>
     {/if}
     {#snippet actions()}

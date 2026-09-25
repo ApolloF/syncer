@@ -156,6 +156,7 @@ type Overview struct {
 	Syncing    int              `json:"syncing"`
 	Errors     int              `json:"errors"`
 	Conflicts  int              `json:"conflicts"` // conflict copies across all folders
+	Overlaps   int              `json:"overlaps"`  // synced folders inside another synced folder
 	Drive      backup.DriveInfo `json:"drive"`
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
@@ -217,6 +218,7 @@ func (a *App) Overview() Overview {
 		for _, n := range a.conflictCounts(bf) {
 			o.Conflicts += n
 		}
+		o.Overlaps = len(nestedIn(bf))
 		for _, f := range fs {
 			if f.ID == meta.FolderID {
 				continue

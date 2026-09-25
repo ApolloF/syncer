@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,6 +82,36 @@ func TestCleanMarkers(t *testing.T) {
 	for _, n := range []string{"save.sav", filepath.Join(".stversions", "old.sav")} {
 		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
 			t.Errorf("%s was deleted", n)
+		}
+	}
+}
+
+func TestNestedIn(t *testing.T) {
+	got := nestedIn([]backup.Folder{
+		{ID: "roaming-arrowhead", Path: `C:\R\Arrowhead`},
+		{ID: "helldivers-2", Path: `C:\R\Arrowhead\Helldivers2\saves`},
+		{ID: "other", Path: `C:\R\ArrowheadX`},
+	})
+	if len(got) != 1 || got["helldivers-2"] != "roaming-arrowhead" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestOverlapsSynced(t *testing.T) {
+	synced := []backup.Folder{{ID: "outer", Label: "Arrowhead", Path: `C:\R\Arrowhead`}}
+	for _, c := range []struct {
+		path, skip string
+		bad        bool
+	}{
+		{`C:\R\Arrowhead\Helldivers2`, "", true}, // inside
+		{`C:\R`, "", true},                       // holds it
+		{`C:\R\ArrowheadX`, "", false},           // next to it
+		{`C:\R\Arrowhead`, "outer", false},       // itself
+	} {
+		err := overlapsSynced(c.path, c.skip, synced)
+		var ce coveredError
+		if (err != nil) != c.bad || (err != nil && !errors.As(err, &ce)) {
+			t.Errorf("%s: got %v", c.path, err)
 		}
 	}
 }
