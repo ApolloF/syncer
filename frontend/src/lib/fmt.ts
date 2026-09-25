@@ -25,6 +25,23 @@ export function when(unix: number): string {
   return new Date(unix * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+/** "14:30", or "Fri 06:00" when it isn't today. */
+export function pausedUntil(t: string | number | Date | undefined | null): string {
+  if (!t) return ''
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`
+}
+
+/** 06:00 tomorrow, local time. */
+export function tomorrowMorning(): Date {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  d.setHours(6, 0, 0, 0)
+  return d
+}
+
 export function err(e: unknown): string {
   if (typeof e === 'string') return e
   if (e && typeof e === 'object' && 'message' in e) return String((e as Error).message)

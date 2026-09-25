@@ -34,8 +34,15 @@ type Settings struct {
 	PauseWhileGaming bool                   `json:"pauseWhileGaming"` // hold automatic backups while a game runs
 	InstalledOnly    bool                   `json:"installedOnly"`    // adopt folders from other PCs only for installed games
 	SyncDisabled     bool                   `json:"syncDisabled"`     // set by "Undo everything": leave Syncthing alone
-	BackupOnly       map[string]LocalFolder `json:"backupOnly"`       // backed up here, not synced (by folder id)
+	BackupOnly       map[string]LocalFolder `json:"backupOnly"`       // backed up here, not synced (by folder id); with NoBackup too: "off"
+
+	PausedUntil   time.Time `json:"pausedUntil,omitzero"` // syncing and automatic backups are paused until then
+	Notify        bool      `json:"notify"`               // Windows notifications about problems
+	NoUpdateCheck bool      `json:"noUpdateCheck"`        // don't look for new Syncer releases
 }
+
+// Paused reports whether syncing and automatic backups are paused right now.
+func (s Settings) Paused() bool { return time.Now().Before(s.PausedUntil) }
 
 // LocalFolder is a save folder known only to this PC.
 type LocalFolder struct {
@@ -62,17 +69,31 @@ type BackupRun struct {
 
 // State is machine-written status.
 type State struct {
-	LastBackup *BackupRun `json:"lastBackup"`
+	LastBackup  *BackupRun `json:"lastBackup"`
+	LastSuccess time.Time  `json:"lastSuccess,omitzero"` // last backup that finished without errors
 	// Protected: when the existing files of a folder (id|path) were saved as
 	// a restore point before it started syncing.
 	Protected map[string]time.Time `json:"protected,omitempty"`
+	// PausedFolders are the Syncthing folders a pause stopped, so resuming
+	// leaves folders paused by hand alone.
+	PausedFolders []string `json:"pausedFolders,omitempty"`
+	Update        *Update  `json:"update,omitempty"` // newest release seen
+	// Notified remembers which problems were already reported (key -> when).
+	Notified map[string]time.Time `json:"notified,omitempty"`
+}
+
+// Update is the newest Syncer release found on GitHub.
+type Update struct {
+	Checked time.Time `json:"checked"`
+	Latest  string    `json:"latest"` // tag, e.g. "v0.7.0"
+	URL     string    `json:"url"`    // release page
 }
 
 var mu sync.Mutex
 
 func defaults() Settings {
 	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true, AutoAddMaxGB: 1,
-		PauseWhileGaming: true, NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{},
+		PauseWhileGaming: true, Notify: true, NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{},
 		BackupOnly: map[string]LocalFolder{}}
 }
 

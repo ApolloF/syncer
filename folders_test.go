@@ -37,6 +37,22 @@ func TestBackupOnlyID(t *testing.T) {
 	}
 }
 
+func TestToBackupOnlyKeepsBackupChoice(t *testing.T) {
+	s := store.Settings{NoBackup: map[string]bool{"off": true}, Ignored: map[string]bool{},
+		Dismissed: map[string]bool{}, BackupOnly: map[string]store.LocalFolder{}}
+	on := toBackupOnly(&s, "on", "On Game", `C:\Saves\On`)
+	off := toBackupOnly(&s, "off", "Off Game", `C:\Saves\Off`)
+	if s.NoBackup[on] || !s.NoBackup[off] || s.NoBackup["off"] {
+		t.Errorf("backup choice not carried over: %v", s.NoBackup)
+	}
+	if lf := s.BackupOnly[off]; lf.SyncID != "off" || lf.Path != `C:\Saves\Off` || !s.Ignored["off"] {
+		t.Errorf("backup-only record: %+v", lf)
+	}
+	if !s.Dismissed[dismissKey(`C:\Saves\Off`)] {
+		t.Error("auto-add could sync it again")
+	}
+}
+
 func TestCleanMarkers(t *testing.T) {
 	dir := t.TempDir()
 	must := func(err error) {

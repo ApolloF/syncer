@@ -79,7 +79,10 @@ func (a *App) Folders() ([]FolderView, error) {
 		return nil, err
 	}
 	for _, lf := range s.BackupOnly {
-		v := FolderView{ID: lf.ID, Label: lf.Label, Path: lf.Path, State: "backup-only", Backup: true, Installed: true}
+		v := FolderView{ID: lf.ID, Label: lf.Label, Path: lf.Path, State: "backup-only", Backup: !s.NoBackup[lf.ID], Installed: true}
+		if !v.Backup {
+			v.State = "off" // kept in the list, neither synced nor backed up
+		}
 		if fi, err := os.Stat(lf.Path); err == nil {
 			v.Exists, v.Modified = true, fi.ModTime()
 		}
@@ -230,6 +233,7 @@ func (a *App) AddFolder(label, path string) error {
 	})
 	enableSync()
 	_, _ = meta.Reconcile(ctx, c)
+	_ = syncPause(ctx, c) // added mid-pause: it waits too
 	logx.Printf("added folder %s (%s)", label, path)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
@@ -288,8 +292,9 @@ func backupOnlyID(label string, taken map[string]bool) string {
 }
 
 // share adds a Syncthing folder shared with every paired PC and turns syncing
-// back on if "Undo everything" had turned it off.
-func (a *App) share(ctx context.Context, c *syncthing.Client, id, label, path string) error {
+// back on if "Undo everything" had turned it off. backupOff keeps the game out
+// of the backup.
+func (a *App) share(ctx context.Context, c *syncthing.Client, id, label, path string, backupOff bool) error {
 	st, err := c.Status(ctx)
 	if err != nil {
 		return err
@@ -306,18 +311,25 @@ func (a *App) share(ctx context.Context, c *syncthing.Client, id, label, path st
 	}
 	_, _ = store.UpdateSettings(func(s *store.Settings) {
 		delete(s.Ignored, id)
-		delete(s.NoBackup, id)
+		if backupOff {
+			s.NoBackup[id] = true
+		} else {
+			delete(s.NoBackup, id)
+		}
 		delete(s.Dismissed, dismissKey(path))
 	})
 	enableSync()
 	_, _ = meta.Reconcile(ctx, c)
+	_ = syncPause(ctx, c) // added mid-pause: it waits too
 	logx.Printf("added folder %s (%s)", label, path)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
 }
 
 // SetFolderSync turns syncing for one game on or off on this PC. Off keeps
-// backing it up (as a backup-only folder) and never touches its files.
+// it as a backup-only folder and never touches its files. Whether it is
+// backed up carries over both ways, so a game with both toggles off stays off
+// whichever one the user flips first.
 func (a *App) SetFolderSync(id string, on bool) error {
 	c, err := a.client()
 	if err != nil {
@@ -326,7 +338,8 @@ func (a *App) SetFolderSync(id string, on bool) error {
 	ctx, cancel := joinCtx(a.ctx)
 	defer cancel()
 	if on {
-		lf, ok := store.LoadSettings().BackupOnly[id]
+		s := store.LoadSettings()
+		lf, ok := s.BackupOnly[id]
 		if !ok {
 			return errors.New("unknown folder")
 		}
@@ -345,11 +358,14 @@ func (a *App) SetFolderSync(id string, on bool) error {
 			}
 			syncID = meta.NewID(lf.Label, taken)
 		}
-		if err := a.share(ctx, c, syncID, lf.Label, lf.Path); err != nil {
+		if err := a.share(ctx, c, syncID, lf.Label, lf.Path, s.NoBackup[id]); err != nil {
 			return err
 		}
 		_ = forgetBackup(id, false) // backups continue under the synced id
-		_, err = store.UpdateSettings(func(s *store.Settings) { delete(s.BackupOnly, id) })
+		_, err = store.UpdateSettings(func(s *store.Settings) {
+			delete(s.BackupOnly, id)
+			delete(s.NoBackup, id)
+		})
 		runtime.EventsEmit(a.ctx, "changed")
 		return err
 	}
@@ -367,25 +383,37 @@ func (a *App) SetFolderSync(id string, on bool) error {
 	}
 	cleanMarkers(f.Path)
 	var bid string
-	s, err := store.UpdateSettings(func(s *store.Settings) {
-		taken := map[string]bool{}
-		for k := range s.BackupOnly {
-			taken[k] = true
-		}
-		bid = backupOnlyID(label, taken)
-		s.BackupOnly[bid] = store.LocalFolder{ID: bid, Label: label, Path: f.Path, SyncID: f.ID}
-		s.Ignored[f.ID] = true
-		s.Dismissed[dismissKey(f.Path)] = true // auto-add must not sync it again
-		delete(s.NoBackup, f.ID)
-	})
+	s, err := store.UpdateSettings(func(s *store.Settings) { bid = toBackupOnly(s, f.ID, label, f.Path) })
 	if err != nil {
 		return err
 	}
 	keepHistory(a.ctx, s, f.ID, bid)
 	_, _ = meta.Reconcile(ctx, c)
-	logx.Printf("stopped syncing %s; still backing it up", label)
+	if s.NoBackup[bid] {
+		logx.Printf("stopped syncing %s; it isn't backed up either", label)
+	} else {
+		logx.Printf("stopped syncing %s; still backing it up", label)
+	}
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
+}
+
+// toBackupOnly records a synced folder as backup-only on this PC and returns
+// its new id. A game whose backup was off is now neither synced nor backed up.
+func toBackupOnly(s *store.Settings, syncID, label, path string) string {
+	taken := map[string]bool{}
+	for k := range s.BackupOnly {
+		taken[k] = true
+	}
+	bid := backupOnlyID(label, taken)
+	s.BackupOnly[bid] = store.LocalFolder{ID: bid, Label: label, Path: path, SyncID: syncID}
+	s.Ignored[syncID] = true
+	s.Dismissed[dismissKey(path)] = true // auto-add must not sync it again
+	if s.NoBackup[syncID] {
+		s.NoBackup[bid] = true
+	}
+	delete(s.NoBackup, syncID)
+	return bid
 }
 
 // enableSync turns syncing back on after "Undo everything", including the
@@ -521,10 +549,10 @@ func cleanMarkers(dir string) string {
 	return ""
 }
 
+// SetFolderBackup turns the backup of one game on or off. A game that isn't
+// synced either stays listed as "off": nothing happens to it until one of
+// its toggles is turned back on.
 func (a *App) SetFolderBackup(id string, on bool) error {
-	if _, ok := store.LoadSettings().BackupOnly[id]; ok && !on {
-		return errors.New("this game is only backed up; remove it instead")
-	}
 	_, err := store.UpdateSettings(func(s *store.Settings) {
 		if on {
 			delete(s.NoBackup, id)
@@ -532,6 +560,9 @@ func (a *App) SetFolderBackup(id string, on bool) error {
 			s.NoBackup[id] = true
 		}
 	})
+	if err == nil {
+		runtime.EventsEmit(a.ctx, "changed")
+	}
 	return err
 }
 
@@ -579,7 +610,7 @@ func (a *App) SyncAvailable(id string) error {
 	}
 	for _, v := range av {
 		if v.ID == id {
-			return a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path)
+			return a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false)
 		}
 	}
 	return errors.New("that game is no longer offered by your other PCs")

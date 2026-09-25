@@ -131,7 +131,8 @@
 
   async function toggleBackup(f: main.FolderView, on: boolean) {
     f.backup = on
-    if (!(await attempt(() => SetFolderBackup(f.id, on)))) f.backup = !on
+    if (await attempt(() => SetFolderBackup(f.id, on))) { if (!f.sync) load() }
+    else f.backup = !on
   }
 
   async function toggleSync(f: main.FolderView, on: boolean) {
@@ -190,6 +191,25 @@
       load(); refresh()
     }
     syncingId = ''
+  }
+
+  // Why a game that supports Steam Cloud isn't left to it (steam.Reason* codes).
+  function cloudNote(reason: string): { text: string; tip: string } {
+    const i = reason.indexOf(':')
+    const code = i < 0 ? reason : reason.slice(0, i)
+    const detail = i < 0 ? '' : reason.slice(i + 1)
+    const covers = 'Syncer covers these saves.'
+    switch (code) {
+      case 'not-installed': return { text: 'Not installed through Steam', tip: `Steam didn't install this copy (for example a repack or cracked copy), so Steam Cloud doesn't keep its saves. ${covers}` }
+      case 'modified': return { text: 'Modified Steam files', tip: `The game folder has ${detail}, a sign of a crack or Steam emulator, so Steam Cloud doesn't keep its saves. ${covers}` }
+      case 'emulator': return { text: `Cracked copy (${detail})`, tip: `A Steam emulator (${detail}) runs this game instead of Steam, so Steam Cloud doesn't keep its saves. ${covers}` }
+      case 'outside-steam': return { text: 'Played outside Steam', tip: `These saves changed after Steam last synced them: the game was played without Steam (a crack or mod launcher). ${covers}` }
+      case 'mod-saves': return { text: 'Mod saves', tip: `Mod files (${detail}) here aren't kept by Steam Cloud. ${covers}` }
+      case 'untracked': return { text: 'Folder not in Steam Cloud', tip: `Steam Cloud keeps other files of this game, not this folder. ${covers}` }
+      case 'no-cloud-data': return { text: 'Not in your Steam Cloud', tip: `Your Steam account on this PC has no cloud saves for this game (another account owns it, or it never synced). ${covers}` }
+      case 'cloud-off': return { text: 'Steam Cloud off', tip: `Steam Cloud is switched off for your account or this game. ${covers}` }
+      default: return { text: 'Steam Cloud not in use', tip: `This game supports Steam Cloud, but Steam or a signed-in account wasn't found on this PC. ${covers}` }
+    }
   }
 
   function stateOf(f: main.FolderView): { kind: string; text: string } {
@@ -273,7 +293,9 @@
             </button>
           {/if}
           {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
-          {#if f.sync}<span class="pill {s.kind}">{s.text}</span>{:else}<span class="pill">Backup only</span>{/if}
+          {#if f.sync}<span class="pill {s.kind}">{s.text}</span>
+          {:else if f.backup}<span class="pill">Backup only</span>
+          {:else}<span class="pill" title="Neither synced nor backed up. Turn either toggle back on to include it again.">Off</span>{/if}
           <div class="acts">
             <button class="btn ghost icon sm" title="Open folder" onclick={() => OpenPath(f.path)}><Icon name="folder" size={16} /></button>
             <button class="btn ghost icon sm" title="Restore from backup" onclick={() => openRestore(f)}><Icon name="history" size={16} /></button>
@@ -281,12 +303,12 @@
           </div>
           <span title="Sync between PCs"><Toggle checked={f.sync} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} /></span>
           <span title="Back up to Google Drive">
-            <Toggle checked={f.sync ? f.backup : true} disabled={!f.sync} label="Back up" onchange={(v) => toggleBackup(f, v)} />
+            <Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />
           </span>
         </div>
       {/each}
     </div>
-    <p class="faint hint">Sync = share with your other PCs. Backup = copy to Google Drive.</p>
+    <p class="faint hint">Sync = share with your other PCs. Backup = copy to Google Drive. Turn both off to keep a game listed but leave it alone.</p>
   {/if}
 {:else if cache.tab === 'found'}
   {#if scanning && !cache.found}
@@ -298,8 +320,9 @@
           <div class="grow">
             <div class="row name-row">
               <span class="name ellipsis">{g.name}</span>
-              {#if g.steamCloud}<span class="pill" title="Steam Cloud keeps this save for your Steam account on this PC">Steam Cloud</span>
-              {:else if g.steamCloudUnverified}<span class="pill warn" title="This game supports Steam Cloud, but it isn't in use for your Steam account on this PC (installed outside Steam, another account, or cloud off), so Syncer covers it">Steam Cloud not in use</span>{/if}
+              {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
+              {:else if g.steamCloudUnverified}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
+              {#if g.emulator}<span class="pill warn" title="Saves a Steam emulator ({g.emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud">{g.emulator} saves</span>{/if}
               {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
             </div>
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>

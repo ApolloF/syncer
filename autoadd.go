@@ -29,7 +29,7 @@ func autoAdd(ctx context.Context, c *syncthing.Client) ([]string, error) {
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
 	s := store.LoadSettings()
-	if !s.AutoAdd || s.SyncDisabled {
+	if !s.AutoAdd || s.SyncDisabled || s.Paused() {
 		return nil, nil
 	}
 	es, err := discover.Manifest(false)

@@ -16,6 +16,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is set at release builds (-ldflags "-X main.version=v1.2.3").
+var version = "dev"
+
 func main() {
 	startHidden := false
 	for _, a := range os.Args[1:] {
@@ -25,8 +28,12 @@ func main() {
 		case "--background", "--backup":
 			runBackground()
 			return
+		case "--resume": // a pause ran out (\Syncer-Resume task)
+			runResume()
+			return
 		case "--uninstall": // called by the uninstaller
 			_ = tasks.Delete(tasks.BackupTask)
+			_ = tasks.Delete(tasks.ResumeTask)
 			removeAutostart()
 			return
 		}

@@ -33,6 +33,13 @@ func runBackground() {
 	logx.Printf("background run started")
 	s := store.LoadSettings()
 
+	if !s.PausedUntil.IsZero() && !s.Paused() {
+		// The pause ran out while nothing of Syncer was running.
+		if ns, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Time{} }); err == nil {
+			s = ns
+		}
+		_ = tasks.Delete(tasks.ResumeTask)
+	}
 	if !s.SyncDisabled {
 		if err := syncthing.WaitReady(ctx, 3*time.Second); err != nil && syncthing.FindExe() != "" {
 			logx.Printf("syncthing not running, starting it")
@@ -41,15 +48,24 @@ func runBackground() {
 			}
 		}
 		if c, err := syncthing.New(); err == nil {
-			if rep, err := meta.Reconcile(ctx, c); err != nil {
-				logx.Printf("reconcile: %v", err)
-			} else if len(rep.Added) > 0 {
-				logx.Printf("reconcile: added %v", rep.Added)
+			if err := syncPause(ctx, c); err != nil {
+				logx.Printf("pause: %v", err)
 			}
-			if _, err := autoAdd(ctx, c); err != nil {
-				logx.Printf("auto-add: %v", err)
+			if !s.Paused() {
+				if rep, err := meta.Reconcile(ctx, c); err != nil {
+					logx.Printf("reconcile: %v", err)
+				} else if len(rep.Added) > 0 {
+					logx.Printf("reconcile: added %v", rep.Added)
+				}
+				if _, err := autoAdd(ctx, c); err != nil {
+					logx.Printf("auto-add: %v", err)
+				}
 			}
 		}
+	}
+	if s.Paused() {
+		logx.Printf("paused until %s, no backup", s.PausedUntil.Format("Mon 15:04"))
+		return
 	}
 	if !s.BackupEnabled {
 		logx.Printf("backup disabled, done")
@@ -167,7 +183,7 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 // them when sync was turned off didn't happen (e.g. a backup was running).
 func seedHistory(ctx context.Context, s store.Settings, target string) {
 	for _, lf := range s.BackupOnly {
-		if lf.SyncID == "" || !paths.ValidID(lf.ID) {
+		if lf.SyncID == "" || !paths.ValidID(lf.ID) || s.NoBackup[lf.ID] {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(target, lf.ID)); err == nil {
@@ -184,7 +200,12 @@ func seedHistory(ctx context.Context, s store.Settings, target string) {
 func backupTarget(s store.Settings) (string, bool) { return backup.Target(s.BackupRoot, s.DriveRoot) }
 
 func record(r *store.BackupRun) {
-	store.UpdateState(func(st *store.State) { st.LastBackup = r })
+	store.UpdateState(func(st *store.State) {
+		st.LastBackup = r
+		if r.OK {
+			st.LastSuccess = r.Finished
+		}
+	})
 }
 
 // backupFolders lists what to back up: Syncthing's folders (or the cached list
@@ -246,12 +267,8 @@ next:
 // ensureBackgroundTask (re)registers the scheduled task so it always points at
 // the current exe and interval, and removes it once it has nothing left to do.
 func ensureBackgroundTask() {
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-	exe, _ = filepath.EvalSymlinks(exe)
-	if strings.HasSuffix(strings.ToLower(exe), "-dev.exe") {
+	exe, ok := taskExe()
+	if !ok {
 		return // `wails dev` binary: never point the real task at it
 	}
 	s := store.LoadSettings()
@@ -261,7 +278,7 @@ func ensureBackgroundTask() {
 		}
 		return
 	}
-	err = tasks.Register(tasks.Spec{
+	err := tasks.Register(tasks.Spec{
 		Name:        tasks.BackupTask,
 		Description: "Syncer: keeps Syncthing running, applies settings from your other PCs and backs up game saves to Google Drive.",
 		Exe:         exe,

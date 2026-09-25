@@ -35,8 +35,21 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Version
+        # Release builds carry their tag (shown in the app, used by the update
+        # check) and put it in the exe's file properties; others are "dev".
+        run: |
+          $v = 'dev'
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF_NAME
+            $j = Get-Content wails.json -Raw | ConvertFrom-Json
+            $j.info.productVersion = ($v.TrimStart('v') -split '[-+]')[0]
+            $j | ConvertTo-Json -Depth 10 | Set-Content wails.json -Encoding utf8
+          }
+          "SYNCER_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build
-        run: wails build -clean -nsis -trimpath -ldflags "-s -w"
+        run: wails build -clean -nsis -trimpath -ldflags "-s -w -X main.version=${{ env.SYNCER_VERSION }}"
 
       - uses: actions/upload-artifact@v4
         with:

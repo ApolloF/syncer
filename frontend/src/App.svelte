@@ -2,6 +2,7 @@
   import { fly } from 'svelte/transition'
   import Icon from './lib/Icon.svelte'
   import { ui, init, applyTheme, type View } from './lib/state.svelte'
+  import { pausedUntil } from './lib/fmt'
   import Overview from './views/Overview.svelte'
   import Games from './views/Games.svelte'
   import Devices from './views/Devices.svelte'
@@ -24,6 +25,7 @@
   const badge = $derived<Partial<Record<View, number>>>({ devices: o?.pending ?? 0 })
   const health = $derived.by(() => {
     if (!o) return { kind: '', text: 'Loading…' }
+    if (o.paused) return { kind: 'warn', text: `Paused until ${pausedUntil(o.settings.pausedUntil)}` }
     if (!o.syncthing.running) return { kind: 'err', text: 'Sync is off' }
     if (o.errors) return { kind: 'warn', text: `${o.errors} folder issue${o.errors > 1 ? 's' : ''}` }
     if (o.syncing) return { kind: 'warn', text: 'Syncing…' }

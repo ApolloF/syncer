@@ -20,6 +20,7 @@ import (
 
 const (
 	BackupTask       = `\Syncer-Background`
+	ResumeTask       = `\Syncer-Resume` // ends a pause on time
 	SyncthingTask    = `\Syncthing-AutoStart`
 	LegacyBackupTask = `\GameSave-GDrive-Backup`
 )
@@ -88,6 +89,7 @@ type Spec struct {
 	AtLogon     bool
 	LogonDelay  time.Duration
 	RepeatEvery time.Duration // 0 = no repetition
+	At          time.Time     // run once at this time (zero = no one-off run)
 	TimeLimit   time.Duration // 0 = unlimited
 }
 
@@ -144,6 +146,11 @@ func (s Spec) xml() string {
 		fmt.Fprintf(&trig, `<TimeTrigger><Enabled>true</Enabled><StartBoundary>%s</StartBoundary>`+
 			`<Repetition><Interval>%s</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition></TimeTrigger>`,
 			start, dur(s.RepeatEvery))
+	}
+	if !s.At.IsZero() {
+		// Local time without an offset: the task follows the PC's clock.
+		fmt.Fprintf(&trig, `<TimeTrigger><Enabled>true</Enabled><StartBoundary>%s</StartBoundary></TimeTrigger>`,
+			s.At.Local().Format("2006-01-02T15:04:05"))
 	}
 	return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
