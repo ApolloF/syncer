@@ -98,13 +98,13 @@ func (a *App) forgetConflicts() {
 
 func folderByID(id string) (backup.Folder, error) {
 	fs, err := backupFolders()
-	if err != nil {
-		return backup.Folder{}, err
-	}
 	for _, f := range fs {
 		if f.ID == id {
 			return f, nil
 		}
+	}
+	if err != nil {
+		return backup.Folder{}, err
 	}
 	return backup.Folder{}, errors.New("unknown folder")
 }

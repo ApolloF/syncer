@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/ApolloF/syncer/internal/paths"
+	"github.com/ApolloF/syncer/internal/winx"
 )
 
 // DriveInfo describes where Google Drive for desktop exposes "My Drive".
@@ -113,7 +114,7 @@ func myDriveIn(root string) string {
 }
 
 func driveRunning() bool {
-	out, err := hiddenOutput("tasklist", "/FI", "IMAGENAME eq GoogleDriveFS.exe", "/NH")
+	out, err := hiddenOutput(winx.System32("tasklist.exe"), "/FI", "IMAGENAME eq GoogleDriveFS.exe", "/NH")
 	return err == nil && strings.Contains(strings.ToLower(out), "googledrivefs.exe")
 }
 

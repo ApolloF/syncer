@@ -10,9 +10,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf16"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -21,8 +24,29 @@ const (
 	LegacyBackupTask = `\GameSave-GDrive-Backup`
 )
 
+var (
+	schtasksOnce sync.Once
+	schtasksPath string
+)
+
+// schtasksExe resolves the absolute path to schtasks.exe under the system
+// directory, so a malicious schtasks.exe earlier on PATH can't be run
+// instead. Falls back to the bare name only if the system directory can't
+// be determined.
+func schtasksExe() string {
+	schtasksOnce.Do(func() {
+		dir, err := windows.GetSystemDirectory()
+		if err != nil {
+			schtasksPath = "schtasks.exe"
+			return
+		}
+		schtasksPath = filepath.Join(dir, "schtasks.exe")
+	})
+	return schtasksPath
+}
+
 func run(args ...string) (string, error) {
-	cmd := exec.Command("schtasks.exe", args...)
+	cmd := exec.Command(schtasksExe(), args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err

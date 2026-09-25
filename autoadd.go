@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
@@ -29,7 +29,7 @@ func autoAdd(ctx context.Context, c *syncthing.Client) ([]string, error) {
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
 	s := store.LoadSettings()
-	if !s.AutoAdd {
+	if !s.AutoAdd || s.SyncDisabled {
 		return nil, nil
 	}
 	es, err := discover.Manifest(false)
@@ -114,15 +114,10 @@ type coveredError string
 func (e coveredError) Error() string { return string(e) }
 
 // addFolder creates a synced folder for path, shared with every paired PC,
-// and returns its id.
+// and returns its id. A path that is backed up only counts as covered: turning
+// its sync on is the caller's call (see AddFolder).
 func addFolder(ctx context.Context, c *syncthing.Client, label, path string) (string, error) {
 	path = filepath.Clean(path)
-	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
-		return "", errors.New("folder not found: " + path)
-	}
-	if _, _, ok := paths.Portable(path); !ok {
-		return "", errors.New("only folders inside your user profile, Documents, AppData or Saved Games can be synced between PCs")
-	}
 	st, err := c.Status(ctx)
 	if err != nil {
 		return "", err
@@ -131,16 +126,20 @@ func addFolder(ctx context.Context, c *syncthing.Client, label, path string) (st
 	if err != nil {
 		return "", err
 	}
-	taken := map[string]bool{}
+	var synced []backup.Folder
 	for _, f := range fs {
-		taken[f.ID] = true
-		if paths.Within(f.Path, path) {
-			return "", coveredError("already synced as part of \"" + f.Label + "\"")
-		}
-		if paths.Within(path, f.Path) && f.ID != meta.FolderID {
-			return "", coveredError("this folder contains \"" + f.Label + "\", which is already synced — remove that first")
+		if f.ID != meta.FolderID {
+			synced = append(synced, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
 		}
 	}
+	taken, backupOnly, err := checkNewFolder(path, synced)
+	if err != nil {
+		return "", err
+	}
+	if backupOnly != "" {
+		return "", coveredError("already backed up only")
+	}
+	taken[meta.FolderID] = true
 	ds, _ := c.Devices(ctx)
 	var others []string
 	for _, d := range ds {

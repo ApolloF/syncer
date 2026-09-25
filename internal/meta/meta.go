@@ -14,8 +14,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
@@ -52,6 +54,10 @@ type Report struct {
 // Reconcile brings Syncthing's config in line with the shared metadata.
 func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	var rep Report
+	settings := store.LoadSettings()
+	if settings.SyncDisabled {
+		return rep, nil // "Undo everything" was used: leave Syncthing alone
+	}
 	st, err := c.Status(ctx)
 	if err != nil {
 		return rep, err
@@ -65,7 +71,6 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	settings := store.LoadSettings()
 	var others []string
 	for _, d := range devices {
 		if d.DeviceID != me {
@@ -109,12 +114,16 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 
 	// Adopt folders other PCs have.
+	installed := lazyInstalled()
 	for _, sf := range readOthers(me) {
-		if _, ok := byID[sf.ID]; ok || settings.Ignored[sf.ID] {
+		if _, ok := byID[sf.ID]; ok {
 			continue
 		}
-		p, ok := paths.Resolve(sf.Root, sf.Rel)
-		if !ok {
+		p, reason := Adoptable(sf, settings, installed)
+		if reason == SkipUnsafe {
+			warnOnce(sf.ID, "meta: not adopting %q (%s/%s): unsafe id or path", sf.ID, sf.Root, sf.Rel)
+		}
+		if reason != "" {
 			continue
 		}
 		if err := AddFolder(ctx, c, sf.ID, sf.Label, p, me, others); err != nil {
@@ -173,6 +182,111 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 // shared with other PCs, so the saves already at path can be protected first.
 // An error stops the folder from being added (it is retried later).
 var BeforeJoin func(ctx context.Context, id, label, path string) error
+
+// Reasons a folder published by another PC isn't added here.
+const (
+	SkipUnsafe       = "unsafe"        // bad id, or a path that must never be shared
+	SkipRemoved      = "removed"       // the user stopped syncing it on this PC
+	SkipBackupOnly   = "backup-only"   // backed up here but deliberately not synced
+	SkipNotInstalled = "not-installed" // "only installed games" is on and it isn't
+)
+
+// Adoptable resolves a folder published by another PC to a local path and
+// says why it must not be added here ("" = add it). Peers' metadata is
+// untrusted: a compromised PC must not make this one share arbitrary folders,
+// so the id and path are validated before anything else.
+func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) bool) (string, string) {
+	if !paths.ValidID(sf.ID) || sf.ID == FolderID {
+		return "", SkipUnsafe
+	}
+	p, ok := paths.Resolve(sf.Root, sf.Rel)
+	if !ok || paths.CheckSyncable(p) != nil {
+		return "", SkipUnsafe
+	}
+	for _, lf := range s.BackupOnly {
+		if lf.SyncID == sf.ID || lf.ID == sf.ID || paths.Within(lf.Path, p) || paths.Within(p, lf.Path) {
+			return p, SkipBackupOnly
+		}
+	}
+	switch {
+	case s.Ignored[sf.ID]:
+		return p, SkipRemoved
+	case s.InstalledOnly && !installed(sf.Label):
+		return p, SkipNotInstalled
+	}
+	return p, ""
+}
+
+// lazyInstalled scans installed games at most once, and only when asked.
+func lazyInstalled() func(string) bool {
+	var once sync.Once
+	var inst *discover.Installed
+	return func(label string) bool {
+		once.Do(func() { inst = discover.LoadInstalled() })
+		return inst.Has(label)
+	}
+}
+
+var (
+	warnedMu sync.Mutex
+	warned   = map[string]bool{}
+)
+
+// warnOnce logs once per key per process; reconcile runs every minute.
+func warnOnce(key, format string, args ...any) {
+	warnedMu.Lock()
+	defer warnedMu.Unlock()
+	if !warned[key] {
+		warned[key] = true
+		logx.Printf(format, args...)
+	}
+}
+
+// Avail is a folder another PC syncs that this PC doesn't.
+type Avail struct {
+	SharedFolder
+	Path   string
+	From   string
+	Reason string
+}
+
+// Available lists folders published by other PCs that this PC neither syncs
+// nor backs up, with the reason they were skipped. Unsafe ones are never offered.
+func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
+	st, err := c.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	folders, err := c.Folders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	for _, f := range folders {
+		have[f.ID] = true
+	}
+	s := store.LoadSettings()
+	installed := lazyInstalled()
+	var out []Avail
+	for _, df := range readOtherFiles(st.MyID) {
+		for _, sf := range df.Folders {
+			if have[sf.ID] {
+				continue
+			}
+			p, reason := Adoptable(sf, s, installed)
+			if reason == SkipUnsafe || reason == SkipBackupOnly {
+				continue
+			}
+			if reason == "" {
+				reason = SkipRemoved // not adopted yet, e.g. syncing is off here
+			}
+			have[sf.ID] = true
+			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
+	return out, nil
+}
 
 // AddFolder creates a Syncthing folder shared with all devices, with versioning.
 func AddFolder(ctx context.Context, c *syncthing.Client, id, label, path, me string, others []string) error {
@@ -255,14 +369,20 @@ func changed(me string, df DeviceFile) bool {
 	return false
 }
 
-// readOthers unions the folder lists published by other PCs.
-func readOthers(me string) []SharedFolder {
+// maxDeviceFile caps a peer's metadata file; real ones are a few KB.
+const maxDeviceFile = 1 << 20
+
+// readDeviceFiles parses every PC's published file, skipping oversized or
+// malformed ones: they arrive from other PCs and aren't trusted.
+func readDeviceFiles() []DeviceFile {
 	es, _ := os.ReadDir(Dir())
-	seen := map[string]bool{}
-	var out []SharedFolder
+	var out []DeviceFile
 	for _, e := range es {
 		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".json") || strings.HasPrefix(n, me) {
+		if !e.Type().IsRegular() || !strings.HasSuffix(n, ".json") {
+			continue
+		}
+		if fi, err := e.Info(); err != nil || fi.Size() > maxDeviceFile {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(Dir(), n))
@@ -270,9 +390,28 @@ func readOthers(me string) []SharedFolder {
 			continue
 		}
 		var df DeviceFile
-		if json.Unmarshal(b, &df) != nil {
-			continue
+		if json.Unmarshal(b, &df) == nil && df.Device != "" {
+			out = append(out, df)
 		}
+	}
+	return out
+}
+
+func readOtherFiles(me string) []DeviceFile {
+	var out []DeviceFile
+	for _, df := range readDeviceFiles() {
+		if df.Device != me {
+			out = append(out, df)
+		}
+	}
+	return out
+}
+
+// readOthers unions the folder lists published by other PCs.
+func readOthers(me string) []SharedFolder {
+	seen := map[string]bool{}
+	var out []SharedFolder
+	for _, df := range readOtherFiles(me) {
 		for _, f := range df.Folders {
 			if !seen[f.ID] && f.ID != FolderID {
 				seen[f.ID] = true
@@ -286,16 +425,8 @@ func readOthers(me string) []SharedFolder {
 // Peers returns names published by other PCs (device id -> name).
 func Peers() map[string]string {
 	m := map[string]string{}
-	es, _ := os.ReadDir(Dir())
-	for _, e := range es {
-		b, err := os.ReadFile(filepath.Join(Dir(), e.Name()))
-		if err != nil {
-			continue
-		}
-		var df DeviceFile
-		if json.Unmarshal(b, &df) == nil && df.Device != "" {
-			m[df.Device] = df.Name
-		}
+	for _, df := range readDeviceFiles() {
+		m[df.Device] = df.Name
 	}
 	return m
 }
@@ -330,4 +461,12 @@ func CachedFolders() ([]CachedFolder, error) {
 	}
 	var out []CachedFolder
 	return out, json.Unmarshal(b, &out)
+}
+
+// ForgetCache removes the cached folder list.
+func ForgetCache() error {
+	if err := os.Remove(cacheFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }

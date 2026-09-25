@@ -1,7 +1,12 @@
 <script module lang="ts">
   import type { main } from '../../wailsjs/go/models'
   // Survive tab switches so the list doesn't flash or rescan every time.
-  const cache = $state({ folders: [] as main.FolderView[], found: null as main.GameView[] | null, tab: 'synced' as 'synced' | 'found' })
+  const cache = $state({
+    folders: [] as main.FolderView[],
+    found: null as main.GameView[] | null,
+    available: null as main.AvailableView[] | null,
+    tab: 'synced' as 'synced' | 'found' | 'other',
+  })
 </script>
 
 <script lang="ts">
@@ -12,13 +17,15 @@
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes, ago, when } from '../lib/fmt'
   import {
-    Folders, ScanGames, AddFolder, RemoveFolder, SetFolderBackup, OpenPath,
-    PickFolder, RestorePoints, Restore, SaveSettings, Conflicts, ResolveConflict,
+    Folders, ScanGames, AddFolder, AddBackupOnly, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
+    PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
+    Conflicts, ResolveConflict,
   } from '../../wailsjs/go/main/App'
-  import type { conflict } from '../../wailsjs/go/models'
+  import type { conflict, store } from '../../wailsjs/go/models'
 
   let loading = $state(false)
   let scanning = $state(false)
+  let loadingAvailable = $state(false)
   let query = $state('')
   let adding = $state('')
   let restoreFor = $state<main.FolderView | null>(null)
@@ -26,6 +33,7 @@
   let point = $state(0)
   let restoring = $state(false)
   let removeFor = $state<main.FolderView | null>(null)
+  let deleteBackupToo = $state(false)
   let custom = $state<{ path: string; name: string } | null>(null)
   let conflictsFor = $state<main.FolderView | null>(null)
   let conflicts = $state<conflict.Conflict[]>([])
@@ -49,6 +57,8 @@
       load(); refresh()
     }
   }
+  let stoppingUninstalled = $state(false)
+  let syncingId = $state('')
 
   const o = $derived(ui.overview)
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
@@ -66,11 +76,18 @@
     scanning = false
   }
 
-  $effect(() => { ui.tick; load() })
+  async function loadAvailable() {
+    loadingAvailable = true
+    try { cache.available = (await Available()) ?? [] } catch (e) { fail(e) }
+    loadingAvailable = false
+  }
+
+  $effect(() => { ui.tick; load(); if (cache.tab === 'other') loadAvailable() })
   $effect(() => { if (cache.tab === 'found' && cache.found === null && !scanning) scan() })
   // Games added in the background: the "found" list is out of date.
   let seenAdded = ui.gamesAdded
   $effect(() => { if (ui.gamesAdded !== seenAdded) { seenAdded = ui.gamesAdded; if (cache.found) scan() } })
+  $effect(() => { if (cache.tab === 'other' && cache.available === null && !loadingAvailable) loadAvailable() })
 
   const found = $derived.by(() => {
     const q = query.trim().toLowerCase()
@@ -83,10 +100,21 @@
     const q = query.trim().toLowerCase()
     return cache.folders.filter(f => !q || f.label.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
   })
+  const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
 
   async function add(name: string, path: string) {
     adding = path
     const ok = await attempt(() => AddFolder(name, path), `Now syncing ${name}`)
+    adding = ''
+    if (ok) {
+      cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as main.GameView : g) ?? null
+      load(); refresh()
+    }
+  }
+
+  async function addBackupOnly(name: string, path: string) {
+    adding = path
+    const ok = await attempt(() => AddBackupOnly(name, path), `Backing up ${name}`)
     adding = ''
     if (ok) {
       cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as main.GameView : g) ?? null
@@ -106,6 +134,12 @@
     if (!(await attempt(() => SetFolderBackup(f.id, on)))) f.backup = !on
   }
 
+  async function toggleSync(f: main.FolderView, on: boolean) {
+    f.sync = on
+    if (await attempt(() => SetFolderSync(f.id, on))) { load(); refresh() }
+    else f.sync = !on
+  }
+
   async function openRestore(f: main.FolderView) {
     restoreFor = f
     point = 0
@@ -123,14 +157,39 @@
     restoring = false
   }
 
+  function openRemove(f: main.FolderView) {
+    removeFor = f
+    deleteBackupToo = false
+  }
+
   async function doRemove() {
     if (!removeFor) return
     const f = removeFor
+    const del = deleteBackupToo
     removeFor = null
-    if (await attempt(() => RemoveFolder(f.id), `Stopped syncing ${f.label}`)) {
+    if (await attempt(() => RemoveFolder(f.id, del), `Removed ${f.label} from Syncer`)) {
       cache.found = null
       load(); refresh()
     }
+  }
+
+  async function stopUninstalled() {
+    stoppingUninstalled = true
+    try {
+      const n = await RemoveUninstalled()
+      toast(`Stopped syncing ${n} game${n === 1 ? '' : 's'}`, 'ok')
+      load(); refresh()
+    } catch (e) { fail(e) }
+    stoppingUninstalled = false
+  }
+
+  async function syncHere(a: main.AvailableView) {
+    syncingId = a.id
+    if (await attempt(() => SyncAvailable(a.id), `Now syncing ${a.label}`)) {
+      cache.available = cache.available?.filter(x => x.id !== a.id) ?? null
+      load(); refresh()
+    }
+    syncingId = ''
   }
 
   function stateOf(f: main.FolderView): { kind: string; text: string } {
@@ -163,6 +222,9 @@
     <button class:active={cache.tab === 'found'} onclick={() => (cache.tab = 'found')}>
       Found on this PC {#if cache.found}<span class="count">{found.length}</span>{/if}
     </button>
+    <button class:active={cache.tab === 'other'} onclick={() => (cache.tab = 'other')}>
+      On other PCs {#if cache.available}<span class="count">{cache.available.length}</span>{/if}
+    </button>
   </div>
   <div class="search grow">
     <Icon name="search" size={15} />
@@ -176,7 +238,7 @@
 </div>
 
 {#if cache.tab === 'synced'}
-  {#if !o?.syncthing.running}
+  {#if !o?.syncthing.running && cache.folders.length === 0}
     <div class="card empty"><Icon name="alert" size={22} /><p>Sync isn't running. Start it from the Overview.</p></div>
   {:else if synced.length === 0 && !loading}
     <div class="card empty">
@@ -185,6 +247,17 @@
       <button class="btn primary" onclick={() => (cache.tab = 'found')}>Find games on this PC</button>
     </div>
   {:else}
+    {#if !o?.syncthing.running && !o?.settings.syncDisabled}
+      <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">Sync isn't running, so only backed-up games are listed. Start it from the Overview.</span></div>
+    {/if}
+    {#if o?.settings.installedOnly && uninstalledCount > 0}
+      <div class="card notice row">
+        <span class="grow">{uninstalledCount} synced game{uninstalledCount === 1 ? '' : 's'} aren't installed on this PC.</span>
+        <button class="btn sm" disabled={stoppingUninstalled} onclick={stopUninstalled}>
+          {#if stoppingUninstalled}<Icon name="refresh" size={14} class="spin" />{/if} Stop syncing them
+        </button>
+      </div>
+    {/if}
     <div class="card flush list">
       {#each synced as f (f.id)}
         {@const s = stateOf(f)}
@@ -199,19 +272,23 @@
               {f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}
             </button>
           {/if}
-          <span class="pill {s.kind}">{s.text}</span>
+          {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
+          {#if f.sync}<span class="pill {s.kind}">{s.text}</span>{:else}<span class="pill">Backup only</span>{/if}
           <div class="acts">
             <button class="btn ghost icon sm" title="Open folder" onclick={() => OpenPath(f.path)}><Icon name="folder" size={16} /></button>
             <button class="btn ghost icon sm" title="Restore from backup" onclick={() => openRestore(f)}><Icon name="history" size={16} /></button>
-            <button class="btn ghost icon sm danger" title="Stop syncing" onclick={() => (removeFor = f)}><Icon name="trash" size={16} /></button>
+            <button class="btn ghost icon sm danger" title="Remove from Syncer" onclick={() => openRemove(f)}><Icon name="trash" size={16} /></button>
           </div>
-          <span title="Back up to Google Drive"><Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} /></span>
+          <span title="Sync between PCs"><Toggle checked={f.sync} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} /></span>
+          <span title="Back up to Google Drive">
+            <Toggle checked={f.sync ? f.backup : true} disabled={!f.sync} label="Back up" onchange={(v) => toggleBackup(f, v)} />
+          </span>
         </div>
       {/each}
     </div>
-    <p class="faint hint">Toggle = include in Google Drive backup.</p>
+    <p class="faint hint">Sync = share with your other PCs. Backup = copy to Google Drive.</p>
   {/if}
-{:else}
+{:else if cache.tab === 'found'}
   {#if scanning && !cache.found}
     <div class="card empty"><Icon name="refresh" size={22} class="spin" /><p>Looking for save folders…</p></div>
   {:else}
@@ -228,6 +305,9 @@
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>
           </div>
           <span class="meta faint">{bytes(g.size)} · {ago(g.modified)}</span>
+          <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
+            Back up only
+          </button>
           <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path)}>
             {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync
@@ -239,10 +319,33 @@
     </div>
     <div class="row hint">
       <Toggle checked={showCloud} label="Include Steam Cloud games"
-        onchange={async (v) => { if (o) { await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: v })); refresh() } }} />
+        onchange={async (v) => { if (o) { await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: v } as store.Settings)); refresh() } }} />
       <span class="faint">Also sync games Steam Cloud already covers{hiddenCloud && !showCloud ? ` (${hiddenCloud} hidden)` : ''}</span>
     </div>
     <p class="faint hint">{autoOn ? `New games are synced automatically; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Automatic syncing of new games is off (Settings).'}</p>
+  {/if}
+{:else}
+  {#if loadingAvailable && !cache.available}
+    <div class="card empty"><Icon name="refresh" size={22} class="spin" /><p>Checking your other PCs…</p></div>
+  {:else if (cache.available ?? []).length === 0}
+    <div class="card empty"><Icon name="devices" size={22} /><p>Nothing else on your other PCs.</p></div>
+  {:else}
+    <div class="card flush list">
+      {#each cache.available ?? [] as a (a.id)}
+        <div class="item" transition:slide={{ duration: 150 }}>
+          <div class="grow">
+            <div class="name ellipsis">{a.label}</div>
+            <div class="path faint ellipsis" title={a.path}>{a.path}</div>
+          </div>
+          <span class="meta faint">from {a.from}</span>
+          {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>{:else}<span class="pill">Removed here</span>{/if}
+          <button class="btn sm" disabled={syncingId === a.id} onclick={() => syncHere(a)}>
+            {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
+            Sync here
+          </button>
+        </div>
+      {/each}
+    </div>
   {/if}
 {/if}
 
@@ -297,11 +400,13 @@
 {/if}
 
 {#if removeFor}
-  <Modal title="Stop syncing {removeFor.label}?" onclose={() => (removeFor = null)}>
-    <p>Nothing is deleted. The files stay on this PC and your other PCs keep their copy, but changes stop flowing.</p>
+  <Modal title="Remove {removeFor.label} from Syncer?" onclose={() => (removeFor = null)}>
+    <p>Syncer stops syncing and backing up this game on this PC and removes its sync markers. Your save files stay where they are; your other PCs keep their copy.</p>
+    <label class="chk"><input type="checkbox" bind:checked={deleteBackupToo} /> Also delete its Google Drive backup and history</label>
+    {#if deleteBackupToo}<p class="err small">This can't be undone from Syncer.</p>{/if}
     {#snippet actions()}
       <button class="btn" onclick={() => (removeFor = null)}>Cancel</button>
-      <button class="btn primary" onclick={doRemove}>Stop syncing</button>
+      <button class="btn primary" onclick={doRemove}>Remove</button>
     {/snippet}
   </Modal>
 {/if}
@@ -312,6 +417,7 @@
     <input type="text" bind:value={custom.name} placeholder="Game name" />
     {#snippet actions()}
       <button class="btn" onclick={() => (custom = null)}>Cancel</button>
+      <button class="btn ghost" onclick={() => { const c = custom!; custom = null; addBackupOnly(c.name, c.path) }}>Back up only</button>
       <button class="btn primary" onclick={() => { const c = custom!; custom = null; add(c.name, c.path) }}>Sync this folder</button>
     {/snippet}
   </Modal>
@@ -348,5 +454,9 @@
   .conf { display: flex; flex-direction: column; gap: 8px; }
   .versions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .ver { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 10px; border-radius: 8px; background: var(--hover); }
-  .small { font-size: 12px; }
+  .notice { gap: 12px; padding: 12px 16px; margin-bottom: 12px; align-items: center; }
+  .chk { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text); }
+  .chk input { accent-color: var(--accent); }
+  .err { color: var(--err); }
+  .small { font-size: 12.5px; }
 </style>

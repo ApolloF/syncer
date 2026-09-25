@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -18,9 +17,9 @@ import (
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
-	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
+	"github.com/ApolloF/syncer/internal/winx"
 )
 
 // App is bound to the frontend; every exported method is callable from JS.
@@ -140,6 +139,7 @@ type Overview struct {
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
+	Gaming     bool             `json:"gaming"` // automatic backups are holding off right now
 	Settings   store.Settings   `json:"settings"`
 }
 
@@ -154,6 +154,7 @@ func (a *App) Overview() Overview {
 	if !o.BackingUp {
 		o.BackingUp = backup.Running()
 	}
+	o.Gaming = s.PauseWhileGaming && playing(cachedInstalled())
 	c, err := a.client()
 	if err != nil {
 		return o
@@ -354,10 +355,13 @@ func (a *App) AddDevice(id, name string) error {
 	if name == "" {
 		name = "PC " + id[:7]
 	}
+	// Introducer lets a third PC join through any already linked PC, so the
+	// user never has to pair every PC with every other one.
 	if err := c.AddDevice(ctx, syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"},
 		Introducer: true}); err != nil {
 		return err
 	}
+	enableSync()
 	_ = c.DismissPendingDevice(ctx, id)
 	if _, err := meta.Reconcile(ctx, c); err != nil {
 		return err
@@ -398,194 +402,6 @@ func (a *App) PasteText() string {
 	return s
 }
 
-// ---- folders -----------------------------------------------------------------
-
-type FolderView struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`
-	Path      string    `json:"path"`
-	State     string    `json:"state"`
-	Bytes     int64     `json:"bytes"`
-	Files     int       `json:"files"`
-	NeedBytes int64     `json:"needBytes"`
-	Errors    int       `json:"errors"`
-	Backup    bool      `json:"backup"`
-	Exists    bool      `json:"exists"`
-	Shared    int       `json:"shared"`
-	Conflicts int       `json:"conflicts"` // two versions of a save exist
-	Modified  time.Time `json:"modified"`
-}
-
-func (a *App) Folders() ([]FolderView, error) {
-	c, err := a.client()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
-	fs, err := c.Folders(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s := store.LoadSettings()
-	var bf []backup.Folder
-	for _, f := range fs {
-		if f.ID != meta.FolderID {
-			bf = append(bf, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
-		}
-	}
-	conflicts := a.conflictCounts(bf)
-	out := make([]FolderView, 0, len(fs))
-	for _, f := range fs {
-		if f.ID == meta.FolderID {
-			continue
-		}
-		v := FolderView{ID: f.ID, Label: f.Label, Path: f.Path, Backup: !s.NoBackup[f.ID], Shared: len(f.Devices) - 1,
-			Conflicts: conflicts[f.ID]}
-		if v.Label == "" {
-			v.Label = f.ID
-		}
-		if fi, err := os.Stat(f.Path); err == nil {
-			v.Exists, v.Modified = true, fi.ModTime()
-		}
-		if st, err := c.FolderStatus(ctx, f.ID); err == nil {
-			v.State, v.Bytes, v.Files, v.NeedBytes, v.Errors = st.State, st.LocalBytes, st.GlobalFiles, st.NeedBytes, st.Errors+st.PullErrors
-		}
-		if f.Paused {
-			v.State = "paused"
-		}
-		out = append(out, v)
-	}
-	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
-	return out, nil
-}
-
-// ScanGames looks for save folders on this PC.
-func (a *App) ScanGames(refresh bool) ([]GameView, error) {
-	es, err := discover.Manifest(refresh)
-	if err != nil {
-		return nil, err
-	}
-	found := discover.Scan(es)
-	a.mu.Lock()
-	a.lastScan = found
-	a.mu.Unlock()
-	return a.annotate(found), nil
-}
-
-type GameView struct {
-	discover.Found
-	SyncedBy string `json:"syncedBy"` // folder id/label covering this path
-}
-
-func (a *App) annotate(found []discover.Found) []GameView {
-	var folders []syncthing.Folder
-	if c, err := a.client(); err == nil {
-		ctx, cancel := a.callCtx()
-		folders, _ = c.Folders(ctx)
-		cancel()
-	}
-	out := make([]GameView, 0, len(found))
-	for _, f := range found {
-		g := GameView{Found: f}
-		for _, sf := range folders {
-			if sf.ID != meta.FolderID && paths.Within(sf.Path, f.Path) {
-				g.SyncedBy = sf.Label
-				if g.SyncedBy == "" {
-					g.SyncedBy = sf.ID
-				}
-				break
-			}
-		}
-		out = append(out, g)
-	}
-	return out
-}
-
-// ManifestUpdated returns when the game database was last refreshed (unix s).
-func (a *App) ManifestUpdated() int64 {
-	t := discover.ManifestAge()
-	if t.IsZero() {
-		return 0
-	}
-	return t.Unix()
-}
-
-// AddFolder starts syncing (and backing up) a save folder.
-func (a *App) AddFolder(label, path string) error {
-	c, err := a.client()
-	if err != nil {
-		return err
-	}
-	// Long enough for the safety snapshot of a big save folder.
-	ctx, cancel := context.WithTimeout(a.ctx, 35*time.Minute)
-	defer cancel()
-	id, err := addFolder(ctx, c, label, path)
-	if err != nil {
-		return err
-	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) {
-		delete(s.Ignored, id)
-		delete(s.NoBackup, id)
-		delete(s.Dismissed, dismissKey(path))
-	})
-	_, _ = meta.Reconcile(ctx, c)
-	logx.Printf("added folder %s (%s)", label, path)
-	runtime.EventsEmit(a.ctx, "changed")
-	return nil
-}
-
-// PickFolder opens a native folder picker.
-func (a *App) PickFolder() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Choose a save folder", DefaultDirectory: paths.Root(paths.Home)})
-}
-
-// RemoveFolder stops syncing a folder on this PC. Files are never deleted.
-func (a *App) RemoveFolder(id string) error {
-	c, err := a.client()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
-	var path string
-	if fs, err := c.Folders(ctx); err == nil {
-		for _, f := range fs {
-			if f.ID == id {
-				path = f.Path
-			}
-		}
-	}
-	if err := c.RemoveFolder(ctx, id); err != nil {
-		return err
-	}
-	_, _ = store.UpdateSettings(func(s *store.Settings) {
-		s.Ignored[id] = true
-		if path != "" {
-			s.Dismissed[dismissKey(path)] = true
-		}
-	})
-	_, _ = meta.Reconcile(ctx, c)
-	runtime.EventsEmit(a.ctx, "changed")
-	return nil
-}
-
-func (a *App) SetFolderBackup(id string, on bool) error {
-	_, err := store.UpdateSettings(func(s *store.Settings) {
-		if on {
-			delete(s.NoBackup, id)
-		} else {
-			s.NoBackup[id] = true
-		}
-	})
-	return err
-}
-
-func (a *App) OpenPath(p string) {
-	_ = exec.Command("explorer.exe", p).Start()
-}
-
 // ---- backup ------------------------------------------------------------------
 
 // BackupNow runs a backup in the background, streaming "backup:progress" and
@@ -600,6 +416,7 @@ func (a *App) BackupNow() error {
 	a.backingUp, a.cancel = true, cancel
 	a.mu.Unlock()
 	go func() {
+		defer winx.BackgroundThread()() // low CPU/IO priority, even while a game runs
 		defer func() {
 			a.mu.Lock()
 			a.backingUp, a.cancel = false, nil
@@ -612,7 +429,7 @@ func (a *App) BackupNow() error {
 				last = time.Now()
 				runtime.EventsEmit(a.ctx, "backup:progress", p)
 			}
-		})
+		}, nil)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "backup:done", map[string]any{"error": err.Error()})
 			return
@@ -648,10 +465,7 @@ func (a *App) Restore(id string, point int64) (int, error) {
 	if !ok {
 		return 0, errors.New("Google Drive folder not found")
 	}
-	fs, err := backupFolders()
-	if err != nil {
-		return 0, err
-	}
+	fs, listErr := backupFolders()
 	for _, f := range fs {
 		if f.ID == id {
 			var at time.Time
@@ -664,6 +478,9 @@ func (a *App) Restore(id string, point int64) (int, error) {
 			}
 			return n, err
 		}
+	}
+	if listErr != nil {
+		return 0, listErr
 	}
 	return 0, errors.New("unknown folder")
 }
@@ -694,6 +511,7 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.Theme, s.BackupEnabled, s.BackupRoot, s.DriveRoot = in.Theme, in.BackupEnabled, in.BackupRoot, in.DriveRoot
 		s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
 		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
+		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}

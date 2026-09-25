@@ -30,6 +30,21 @@ type Settings struct {
 	CloseToTray       bool            `json:"closeToTray"`  // closing the window keeps Syncer running in the tray
 	StartAtLogin      bool            `json:"startAtLogin"` // start hidden in the tray when signing in to Windows
 	Migrated          bool            `json:"migrated"`     // legacy script setup adopted
+
+	PauseWhileGaming bool                   `json:"pauseWhileGaming"` // hold automatic backups while a game runs
+	InstalledOnly    bool                   `json:"installedOnly"`    // adopt folders from other PCs only for installed games
+	SyncDisabled     bool                   `json:"syncDisabled"`     // set by "Undo everything": leave Syncthing alone
+	BackupOnly       map[string]LocalFolder `json:"backupOnly"`       // backed up here, not synced (by folder id)
+}
+
+// LocalFolder is a save folder known only to this PC.
+type LocalFolder struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Path  string `json:"path"`
+	// SyncID is the shared id it had while synced, so syncing it again
+	// rejoins the same folder on the other PCs.
+	SyncID string `json:"syncID,omitempty"`
 }
 
 // BackupRun is the outcome of the last backup.
@@ -57,7 +72,8 @@ var mu sync.Mutex
 
 func defaults() Settings {
 	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true, AutoAddMaxGB: 1,
-		NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{}}
+		PauseWhileGaming: true, NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{},
+		BackupOnly: map[string]LocalFolder{}}
 }
 
 // LoadSettings reads settings, falling back to defaults.
@@ -72,6 +88,9 @@ func LoadSettings() Settings {
 	}
 	if s.Dismissed == nil {
 		s.Dismissed = map[string]bool{}
+	}
+	if s.BackupOnly == nil {
+		s.BackupOnly = map[string]LocalFolder{}
 	}
 	if s.IntervalHours <= 0 {
 		s.IntervalHours = 3
@@ -129,16 +148,27 @@ func save(name string, v any) error {
 	return WriteJSON(filepath.Join(paths.AppDir(), name), v)
 }
 
-// WriteJSON writes v to path via a temp file + rename so readers never see a
-// half-written file.
+// WriteJSON writes v to path via a uniquely named temp file + rename, so
+// readers never see a half-written file and the window and the background
+// task never clobber each other's temp file.
 func WriteJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+	}
+	return err
 }

@@ -190,3 +190,111 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("unchanged snapshot: n=%d err=%v", n, err)
 	}
 }
+
+func TestRunSkipsInvalidID(t *testing.T) {
+	target := t.TempDir()
+	res, err := Run(context.Background(), []Folder{{ID: `..\evil`, Label: "Evil", Path: t.TempDir()}}, Options{Target: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OK || len(res.Errors) != 1 || res.Folders != 0 {
+		t.Fatalf("invalid id not rejected: %+v", res)
+	}
+}
+
+func TestRunCallsPause(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "pause-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	write(t, filepath.Join(src, "a.sav"), "a")
+	calls := 0
+	_, err := Run(context.Background(), []Folder{{ID: id, Label: "P", Path: src}},
+		Options{Target: target, Pause: func(context.Context) { calls++ }})
+	if err != nil || calls == 0 {
+		t.Fatalf("pause calls=%d err=%v", calls, err)
+	}
+}
+
+func TestCancelledRunKeepsBackup(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "cancel-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	write(t, filepath.Join(src, "a.sav"), "a")
+	write(t, filepath.Join(src, "b.sav"), "b")
+	if _, err := Run(context.Background(), []Folder{{ID: id, Label: "C", Path: src}}, Options{Target: target}); err != nil {
+		t.Fatal(err)
+	}
+	// Cancel on the third walk step (root, a.sav, b.sav): a.sav is seen, b.sav isn't.
+	defer func(d time.Duration) { pauseEvery = d }(pauseEvery)
+	pauseEvery = 0
+	ctx, cancel := context.WithCancel(context.Background())
+	steps := 0
+	pause := func(context.Context) {
+		if steps++; steps == 3 {
+			cancel()
+		}
+	}
+	mirror(ctx, Folder{ID: id, Label: "C", Path: src}, Options{Target: target, Pause: pause}, "x", &Progress{})
+	for _, n := range []string{"a.sav", "b.sav"} {
+		if _, err := os.Stat(filepath.Join(target, id, n)); err != nil {
+			t.Errorf("%s retired by a cancelled run", n)
+		}
+	}
+}
+
+func TestForget(t *testing.T) {
+	target := t.TempDir()
+	if err := Forget(target, "..", true); err == nil {
+		t.Fatal("Forget accepted ..")
+	}
+	id := "forget-" + time.Now().Format("150405")
+	write(t, filepath.Join(target, id, "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, id, "x", "a.sav"), "a")
+	write(t, filepath.Join(target, "other", "b.sav"), "b")
+	if err := Forget(target, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id)); err == nil {
+		t.Error("backup not deleted")
+	}
+	if _, err := os.Stat(filepath.Join(target, VersionsDir, id)); err == nil {
+		t.Error("versions not deleted")
+	}
+	if _, err := os.Stat(filepath.Join(target, "other", "b.sav")); err != nil {
+		t.Error("unrelated backup deleted")
+	}
+}
+
+func TestCopyHistory(t *testing.T) {
+	target := t.TempDir()
+	write(t, filepath.Join(target, "old", "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, "old", "2026-01-02_030405", "a.sav"), "v0")
+	write(t, filepath.Join(target, "new--pc", "b.sav"), "mine")
+	write(t, filepath.Join(target, "old", "b.sav"), "theirs")
+	if err := CopyHistory(context.Background(), target, "old", "new--pc"); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(target, "new--pc", "a.sav")) != "a" || len(Points(target, "new--pc")) != 1 {
+		t.Fatal("history not copied")
+	}
+	if read(t, filepath.Join(target, "new--pc", "b.sav")) != "mine" {
+		t.Fatal("existing file overwritten")
+	}
+	if read(t, filepath.Join(target, "old", "a.sav")) != "a" {
+		t.Fatal("source changed")
+	}
+	if err := CopyHistory(context.Background(), target, "missing", "x"); err != nil {
+		t.Fatalf("missing source: %v", err)
+	}
+}
+
+func TestLockBlocksBackup(t *testing.T) {
+	u, err := Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u()
+	if _, err := Run(context.Background(), nil, Options{Target: t.TempDir()}); err != ErrBusy {
+		t.Fatalf("got %v, want ErrBusy", err)
+	}
+}
