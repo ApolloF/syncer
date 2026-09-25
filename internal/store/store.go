@@ -13,15 +13,20 @@ import (
 
 // Settings are user choices local to this PC.
 type Settings struct {
-	Theme          string          `json:"theme"`          // system | light | dark
-	BackupEnabled  bool            `json:"backupEnabled"`  // scheduled Drive backup on/off
-	BackupRoot     string          `json:"backupRoot"`     // override for the Drive folder; "" = auto-detect
-	IntervalHours  int             `json:"intervalHours"`  // backup schedule
-	KeepDays       int             `json:"keepDays"`       // how long old versions are kept
-	NoBackup       map[string]bool `json:"noBackup"`       // folder ids excluded from backup
-	Ignored        map[string]bool `json:"ignored"`        // folder ids never auto-added from other PCs
-	ShowSteamCloud bool            `json:"showSteamCloud"` // list Steam Cloud games in discovery
-	Migrated       bool            `json:"migrated"`       // legacy script setup adopted
+	Theme         string          `json:"theme"`         // system | light | dark
+	BackupEnabled bool            `json:"backupEnabled"` // scheduled Drive backup on/off
+	BackupRoot    string          `json:"backupRoot"`    // override for the Drive folder; "" = auto-detect
+	DriveRoot     string          `json:"driveRoot"`     // chosen "My Drive" when several accounts are signed in; "" = first found
+	IntervalHours int             `json:"intervalHours"` // backup schedule
+	KeepDays      int             `json:"keepDays"`      // how long old versions are kept
+	NoBackup      map[string]bool `json:"noBackup"`      // folder ids excluded from backup
+	Ignored       map[string]bool `json:"ignored"`       // folder ids never auto-added from other PCs
+	// Treat games confirmed to be in Steam Cloud like any other: list them and
+	// add them automatically. (JSON name kept from when it only showed them.)
+	IncludeSteamCloud bool            `json:"showSteamCloud"`
+	AutoAdd           bool            `json:"autoAdd"`   // sync newly detected games automatically
+	Dismissed         map[string]bool `json:"dismissed"` // portable paths the user stopped syncing; never auto-added again
+	Migrated          bool            `json:"migrated"`  // legacy script setup adopted
 }
 
 // BackupRun is the outcome of the last backup.
@@ -45,8 +50,8 @@ type State struct {
 var mu sync.Mutex
 
 func defaults() Settings {
-	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30,
-		NoBackup: map[string]bool{}, Ignored: map[string]bool{}}
+	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true,
+		NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{}}
 }
 
 // LoadSettings reads settings, falling back to defaults.
@@ -58,6 +63,9 @@ func LoadSettings() Settings {
 	}
 	if s.Ignored == nil {
 		s.Ignored = map[string]bool{}
+	}
+	if s.Dismissed == nil {
+		s.Dismissed = map[string]bool{}
 	}
 	if s.IntervalHours <= 0 {
 		s.IntervalHours = 3

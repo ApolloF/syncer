@@ -13,7 +13,8 @@ Syncer is a small desktop app built on two tools that already work well:
 
 ## Features
 
-- **Finds your games.** It checks ~14k games from the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest) (save locations from PCGamingWiki) against your PC in under a second. Games that Steam Cloud already covers are hidden by default. You can also add any folder yourself.
+- **Finds your games, and keeps finding them.** It checks ~14k games from the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest) (save locations from PCGamingWiki) against your PC in under a second. Newly installed games start syncing on their own (at logon, every few hours, and hourly while the window is open). Games you stop syncing are never added back. You can also add any folder yourself.
+- **Knows what Steam Cloud really covers.** A game supporting Steam Cloud isn't enough: Syncer checks that your Steam account on this PC actually keeps that game's saves in the cloud. Copies installed outside Steam, games owned by another account, or cloud switched off are synced like any other. You can choose to include confirmed Steam Cloud games too.
 - **Links PCs with one ID.** Paste the other PC's device ID (or accept its request) and every synced game shows up there at the correct local path, even if the user name or Documents location is different.
 - **Backs up with history.** Only changed files get copied. A file that changes or gets deleted is moved to `.versions\<game>\<time>\` and kept for 30 days by default. If a save folder suddenly turns up empty, Syncer won't wipe the backup.
 - **Restores any save.** You can restore the latest backup or any earlier point. Your current files are saved as a restore point first, so a restore can be undone.
@@ -25,8 +26,8 @@ Syncer is a small desktop app built on two tools that already work well:
 
 1. Download **`Syncer-amd64-installer.exe`** from [Releases](https://github.com/ApolloF/syncer/releases) and run it. It installs just for your user (no admin prompt) into `%LOCALAPPDATA%\Programs\Syncer` and adds Start menu and desktop shortcuts. Prefer no installer? `Syncer.exe` from the same release is portable. Keep it in a permanent folder, since the background task points at it.
 2. Open Syncer. If Syncthing isn't installed yet, the Overview has a one-click install (via `winget`).
-3. Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in. Syncer finds it on its own.
-4. Go to **Games → Found on this PC** and click **Sync** on the games you want.
+3. Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in. Syncer finds it on its own. Signed in with more than one Google account (e.g. `G:` and `H:`)? Pick which one gets the backups under **Backup → Account**.
+4. Your games start syncing automatically. Check **Games → Found on this PC** for anything else you want, such as unrecognized folders.
 
 ### Linking a second PC
 

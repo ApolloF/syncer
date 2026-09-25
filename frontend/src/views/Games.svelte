@@ -29,6 +29,7 @@
 
   const o = $derived(ui.overview)
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
+  const autoOn = $derived(o?.settings.autoAdd ?? true)
 
   async function load() {
     loading = true
@@ -44,6 +45,9 @@
 
   $effect(() => { ui.tick; load() })
   $effect(() => { if (cache.tab === 'found' && cache.found === null && !scanning) scan() })
+  // Games added in the background: the "found" list is out of date.
+  let seenAdded = ui.gamesAdded
+  $effect(() => { if (ui.gamesAdded !== seenAdded) { seenAdded = ui.gamesAdded; if (cache.found) scan() } })
 
   const found = $derived.by(() => {
     const q = query.trim().toLowerCase()
@@ -189,7 +193,8 @@
           <div class="grow">
             <div class="row name-row">
               <span class="name ellipsis">{g.name}</span>
-              {#if g.steamCloud}<span class="pill">Steam Cloud</span>{/if}
+              {#if g.steamCloud}<span class="pill" title="Steam Cloud keeps this save for your Steam account on this PC">Steam Cloud</span>
+              {:else if g.steamCloudUnverified}<span class="pill warn" title="This game supports Steam Cloud, but it isn't in use for your Steam account on this PC (installed outside Steam, another account, or cloud off), so Syncer covers it">Steam Cloud not in use</span>{/if}
               {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
             </div>
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>
@@ -205,10 +210,11 @@
       {/each}
     </div>
     <div class="row hint">
-      <Toggle checked={showCloud} label="Show Steam Cloud games"
+      <Toggle checked={showCloud} label="Include Steam Cloud games"
         onchange={async (v) => { if (o) { await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: v })); refresh() } }} />
-      <span class="faint">Show games already covered by Steam Cloud{hiddenCloud && !showCloud ? ` (${hiddenCloud} hidden)` : ''}</span>
+      <span class="faint">Also sync games Steam Cloud already covers{hiddenCloud && !showCloud ? ` (${hiddenCloud} hidden)` : ''}</span>
     </div>
+    <p class="faint hint">{autoOn ? 'New games are synced automatically; unrecognized folders need a click.' : 'Automatic syncing of new games is off (Settings).'}</p>
   {/if}
 {/if}
 

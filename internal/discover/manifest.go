@@ -28,7 +28,8 @@ const refreshAfter = 7 * 24 * time.Hour
 type Entry struct {
 	Name       string
 	Paths      []string
-	SteamCloud bool
+	SteamCloud bool // the game supports Steam Cloud (not that it's in use here)
+	SteamID    int  // Steam app id, 0 if not on Steam
 }
 
 var (
@@ -42,7 +43,7 @@ func cacheDir() string {
 	return d
 }
 
-func indexFile() string { return filepath.Join(cacheDir(), "manifest-index.gob.gz") }
+func indexFile() string { return filepath.Join(cacheDir(), "manifest-index-v2.gob.gz") }
 
 // Manifest returns the parsed manifest index, downloading or refreshing it when
 // needed. A stale cache is used if the network is unavailable.
@@ -131,6 +132,7 @@ func writeIndex(es []Entry) error {
 	}
 	zw.Close()
 	f.Close()
+	_ = os.Remove(filepath.Join(cacheDir(), "manifest-index.gob.gz")) // pre-Steam-id format
 	return os.Rename(tmp, indexFile())
 }
 
@@ -179,6 +181,10 @@ func Parse(r io.Reader) ([]Entry, error) {
 		case section == "cloud" && ind == 4:
 			if k, v, ok := strings.Cut(t, ":"); ok && strings.TrimSpace(k) == "steam" && strings.TrimSpace(v) == "true" {
 				cur.SteamCloud = true
+			}
+		case section == "steam" && ind == 4:
+			if k, v, ok := strings.Cut(t, ":"); ok && strings.TrimSpace(k) == "id" {
+				cur.SteamID, _ = strconv.Atoi(strings.TrimSpace(v))
 			}
 		case section == "files" && ind == 4:
 			flush()

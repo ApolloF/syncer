@@ -53,11 +53,11 @@ func TestParseSample(t *testing.T) {
 		t.Fatalf("want 2 entries, got %d: %+v", len(es), es)
 	}
 	sv := es[0]
-	if sv.Name != "Stardew Valley" || !sv.SteamCloud || len(sv.Paths) != 1 || sv.Paths[0] != "<winAppData>/StardewValley/Saves" {
+	if sv.Name != "Stardew Valley" || !sv.SteamCloud || sv.SteamID != 413150 || len(sv.Paths) != 1 || sv.Paths[0] != "<winAppData>/StardewValley/Saves" {
 		t.Errorf("stardew: %+v", sv)
 	}
 	c := es[1]
-	if c.Name != "Game: With Colon" || c.SteamCloud || len(c.Paths) != 1 || c.Paths[0] != "<winDocuments>/My Games/Colon/<storeUserId>" {
+	if c.Name != "Game: With Colon" || c.SteamCloud || c.SteamID != 0 || len(c.Paths) != 1 || c.Paths[0] != "<winDocuments>/My Games/Colon/<storeUserId>" {
 		t.Errorf("colon: %+v", c)
 	}
 }

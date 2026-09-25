@@ -36,8 +36,12 @@
     </div>
   </div>
   <div class="item">
-    <div class="grow"><div class="name">Show Steam Cloud games</div><div class="faint small">Steam already syncs these; hidden from “Found on this PC” by default.</div></div>
-    <Toggle checked={o?.settings.showSteamCloud} label="Show Steam Cloud games" onchange={(v) => save({ showSteamCloud: v })} />
+    <div class="grow"><div class="name">Sync new games automatically</div><div class="faint small">Games found on this PC start syncing and backing up without a click. Games you stop syncing stay off.</div></div>
+    <Toggle checked={o?.settings.autoAdd} label="Sync new games automatically" onchange={(v) => save({ autoAdd: v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Include Steam Cloud games</div><div class="faint small">Also sync and back up games Steam Cloud already keeps for your account. Games where Steam Cloud can't be confirmed on this PC are always included.</div></div>
+    <Toggle checked={o?.settings.showSteamCloud} label="Include Steam Cloud games" onchange={(v) => save({ showSteamCloud: v })} />
   </div>
   <div class="item">
     <div class="grow"><div class="name">Advanced sync settings</div><div class="faint small">Syncthing's own interface, for fine-tuning.</div></div>
