@@ -669,6 +669,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	s, err := store.UpdateSettings(func(s *store.Settings) {
 		s.Theme, s.BackupEnabled, s.BackupRoot, s.DriveRoot = in.Theme, in.BackupEnabled, in.BackupRoot, in.DriveRoot
 		s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
+		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
+			s.AutoAddMaxGB = in.AutoAddMaxGB
+		}
 		if in.IntervalHours > 0 {
 			s.IntervalHours = in.IntervalHours
 		}
@@ -681,7 +684,7 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	}
 	a.applyTheme(s.Theme)
 	ensureBackgroundTask()
-	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud) {
+	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) {
 		go a.runAutoAdd()
 	}
 	return s, nil

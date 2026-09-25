@@ -389,6 +389,7 @@ export namespace store {
 	    ignored: Record<string, boolean>;
 	    showSteamCloud: boolean;
 	    autoAdd: boolean;
+	    autoAddMaxGB: number;
 	    dismissed: Record<string, boolean>;
 	    migrated: boolean;
 	
@@ -408,6 +409,7 @@ export namespace store {
 	        this.ignored = source["ignored"];
 	        this.showSteamCloud = source["showSteamCloud"];
 	        this.autoAdd = source["autoAdd"];
+	        this.autoAddMaxGB = source["autoAddMaxGB"];
 	        this.dismissed = source["dismissed"];
 	        this.migrated = source["migrated"];
 	    }
