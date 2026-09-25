@@ -15,6 +15,8 @@
     refresh()
   }
 
+  const sizes = [1, 5, 10, 25, 50, 100, -1]
+
   const themes = [
     { id: 'system', label: 'System' },
     { id: 'light', label: 'Light' },
@@ -38,6 +40,13 @@
   <div class="item">
     <div class="grow"><div class="name">Sync new games automatically</div><div class="faint small">Games found on this PC start syncing and backing up without a click. Games you stop syncing stay off.</div></div>
     <Toggle checked={o?.settings.autoAdd} label="Sync new games automatically" onchange={(v) => save({ autoAdd: v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Largest save to add automatically</div><div class="faint small">Bigger save folders stay in “Found on this PC” for you to add by hand.</div></div>
+    <select disabled={!o?.settings.autoAdd} value={o?.settings.autoAddMaxGB} onchange={(e) => save({ autoAddMaxGB: +e.currentTarget.value })}>
+      {#each sizes as g}<option value={g}>{g === -1 ? 'No limit' : `${g} GB`}</option>{/each}
+      {#if o && !sizes.includes(o.settings.autoAddMaxGB)}<option value={o.settings.autoAddMaxGB}>{o.settings.autoAddMaxGB} GB</option>{/if}
+    </select>
   </div>
   <div class="item">
     <div class="grow"><div class="name">Include Steam Cloud games</div><div class="faint small">Also sync and back up games Steam Cloud already keeps for your account. Games where Steam Cloud can't be confirmed on this PC are always included.</div></div>

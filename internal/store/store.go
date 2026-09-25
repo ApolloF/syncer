@@ -24,9 +24,10 @@ type Settings struct {
 	// Treat games confirmed to be in Steam Cloud like any other: list them and
 	// add them automatically. (JSON name kept from when it only showed them.)
 	IncludeSteamCloud bool            `json:"showSteamCloud"`
-	AutoAdd           bool            `json:"autoAdd"`   // sync newly detected games automatically
-	Dismissed         map[string]bool `json:"dismissed"` // portable paths the user stopped syncing; never auto-added again
-	Migrated          bool            `json:"migrated"`  // legacy script setup adopted
+	AutoAdd           bool            `json:"autoAdd"`      // sync newly detected games automatically
+	AutoAddMaxGB      int             `json:"autoAddMaxGB"` // skip bigger folders when auto-adding; -1 = no limit
+	Dismissed         map[string]bool `json:"dismissed"`    // portable paths the user stopped syncing; never auto-added again
+	Migrated          bool            `json:"migrated"`     // legacy script setup adopted
 }
 
 // BackupRun is the outcome of the last backup.
@@ -50,7 +51,7 @@ type State struct {
 var mu sync.Mutex
 
 func defaults() Settings {
-	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true,
+	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true, AutoAddMaxGB: 1,
 		NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{}}
 }
 
@@ -72,6 +73,9 @@ func LoadSettings() Settings {
 	}
 	if s.KeepDays <= 0 {
 		s.KeepDays = 30
+	}
+	if s.AutoAddMaxGB == 0 || s.AutoAddMaxGB < -1 {
+		s.AutoAddMaxGB = 1
 	}
 	return s
 }

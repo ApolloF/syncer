@@ -19,10 +19,6 @@ import (
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
-// Folders bigger than this are left for the user to add by hand: a save folder
-// that large is more likely a misdetection (mods, caches, a whole install).
-const autoAddMaxBytes = 1 << 30
-
 var autoAddMu sync.Mutex
 
 // autoAdd starts syncing every newly detected game: recognised by the game
@@ -88,7 +84,9 @@ func (a *App) runAutoAdd() {
 }
 
 func wantAuto(g discover.Found, s store.Settings) bool {
-	if !g.Known || g.Size > autoAddMaxBytes || g.Files == 0 {
+	// Folders over the size limit are left for the user to add by hand: they
+	// are more often a misdetection (mods, caches, a whole install).
+	if !g.Known || g.Files == 0 || (s.AutoAddMaxGB > 0 && g.Size > int64(s.AutoAddMaxGB)<<30) {
 		return false
 	}
 	if g.SteamCloud && !s.IncludeSteamCloud {

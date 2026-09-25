@@ -214,7 +214,7 @@
         onchange={async (v) => { if (o) { await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: v })); refresh() } }} />
       <span class="faint">Also sync games Steam Cloud already covers{hiddenCloud && !showCloud ? ` (${hiddenCloud} hidden)` : ''}</span>
     </div>
-    <p class="faint hint">{autoOn ? 'New games are synced automatically; unrecognized folders need a click.' : 'Automatic syncing of new games is off (Settings).'}</p>
+    <p class="faint hint">{autoOn ? `New games are synced automatically; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Automatic syncing of new games is off (Settings).'}</p>
   {/if}
 {/if}
 
