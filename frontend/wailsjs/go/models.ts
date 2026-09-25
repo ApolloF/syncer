@@ -314,6 +314,8 @@ export namespace main {
 	    newerOn: string;
 	    // Go type: time
 	    newerAt: any;
+	    inside: string;
+	    oneDrive: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderView(source);
@@ -342,6 +344,8 @@ export namespace main {
 	        this.exclude = source["exclude"];
 	        this.newerOn = source["newerOn"];
 	        this.newerAt = this.convertValues(source["newerAt"], null);
+	        this.inside = source["inside"];
+	        this.oneDrive = source["oneDrive"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -369,6 +373,7 @@ export namespace main {
 	    steamCloudUnverified: boolean;
 	    steamCloudReason: string;
 	    emulator: string;
+	    oneDrive: boolean;
 	    known: boolean;
 	    size: number;
 	    files: number;
@@ -389,6 +394,7 @@ export namespace main {
 	        this.steamCloudUnverified = source["steamCloudUnverified"];
 	        this.steamCloudReason = source["steamCloudReason"];
 	        this.emulator = source["emulator"];
+	        this.oneDrive = source["oneDrive"];
 	        this.known = source["known"];
 	        this.size = source["size"];
 	        this.files = source["files"];
@@ -472,6 +478,7 @@ export namespace main {
 	    syncing: number;
 	    errors: number;
 	    conflicts: number;
+	    overlaps: number;
 	    drive: backup.DriveInfo;
 	    target: string;
 	    lastBackup?: store.BackupRun;
@@ -496,6 +503,7 @@ export namespace main {
 	        this.syncing = source["syncing"];
 	        this.errors = source["errors"];
 	        this.conflicts = source["conflicts"];
+	        this.overlaps = source["overlaps"];
 	        this.drive = this.convertValues(source["drive"], backup.DriveInfo);
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);

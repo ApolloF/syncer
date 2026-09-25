@@ -26,7 +26,9 @@ type Found struct {
 	SteamCloudUnverified bool   `json:"steamCloudUnverified"`
 	SteamCloudReason     string `json:"steamCloudReason"`
 	// Emulator names the Steam emulator (e.g. "RUNE") whose save folder this is.
-	Emulator string    `json:"emulator"`
+	Emulator string `json:"emulator"`
+	// OneDrive: the folder is in OneDrive, which already syncs it between PCs.
+	OneDrive bool      `json:"oneDrive"`
 	Known    bool      `json:"known"` // false = heuristic, not in the database
 	Size     int64     `json:"size"`
 	Files    int       `json:"files"`
@@ -235,6 +237,10 @@ func Scan(entries []Entry) []Found {
 		}(&out[i])
 	}
 	wg2.Wait()
+	od := paths.OneDriveRoots()
+	for i := range out {
+		out[i].OneDrive = paths.WithinAny(od, out[i].Path)
+	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out
 }

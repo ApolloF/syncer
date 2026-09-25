@@ -25,28 +25,43 @@ var autoAddMu sync.Mutex
 // database, not already synced, not one the user stopped syncing, installed
 // here when "only installed games" is on, and not already in Steam Cloud
 // (unless IncludeSteamCloud is on). Games that support Steam Cloud but can't
-// be confirmed to use it here are added too.
-func autoAdd(ctx context.Context, c *syncthing.Client) ([]string, error) {
+// be confirmed to use it here are added too. Games whose saves are in OneDrive
+// are backed up only: OneDrive already syncs them, and two sync tools on the
+// same files make conflicting copies. It returns the games synced and the
+// games backed up only.
+func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string, err error) {
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
 	s := store.LoadSettings()
 	if !s.AutoAdd || s.SyncDisabled || s.Paused() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	es, err := discover.Manifest(false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	installed := func(string) bool { return true }
 	if s.InstalledOnly {
 		installed = cachedInstalled().Has
 	}
-	var added []string
 	for _, g := range discover.Scan(es) {
 		if ctx.Err() != nil {
 			break
 		}
 		if !wantAuto(g, s, installed) {
+			continue
+		}
+		if g.OneDrive {
+			id, err := addBackupOnly(g.Name, g.Path, currentSynced())
+			if err != nil {
+				var ce coveredError
+				if !errors.As(err, &ce) {
+					logx.Printf("auto-add %s: %v", g.Name, err)
+				}
+				continue
+			}
+			backedUp = append(backedUp, g.Name)
+			logx.Printf("auto-added %s (%s) as %s, backed up only: it's in OneDrive", g.Name, g.Path, id)
 			continue
 		}
 		id, err := addFolder(ctx, c, g.Name, g.Path)
@@ -63,7 +78,7 @@ func autoAdd(ctx context.Context, c *syncthing.Client) ([]string, error) {
 	if len(added) > 0 {
 		_, _ = meta.Reconcile(ctx, c)
 	}
-	return added, nil
+	return added, backedUp, nil
 }
 
 // runAutoAdd runs autoAdd for the open window and tells the UI what changed.
@@ -74,7 +89,7 @@ func (a *App) runAutoAdd() {
 	}
 	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
 	defer cancel()
-	added, err := autoAdd(ctx, c)
+	added, backedUp, err := autoAdd(ctx, c)
 	if err != nil {
 		if !errors.Is(err, syncthing.ErrNotRunning) {
 			logx.Printf("auto-add: %v", err)
@@ -83,6 +98,11 @@ func (a *App) runAutoAdd() {
 	}
 	if len(added) > 0 {
 		runtime.EventsEmit(a.ctx, "toast", "Now syncing new games: "+strings.Join(added, ", "))
+	}
+	if len(backedUp) > 0 {
+		runtime.EventsEmit(a.ctx, "toast", "Backing up new games OneDrive already syncs: "+strings.Join(backedUp, ", "))
+	}
+	if len(added)+len(backedUp) > 0 {
 		runtime.EventsEmit(a.ctx, "changed")
 		runtime.EventsEmit(a.ctx, "games:added")
 	}
