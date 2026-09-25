@@ -30,6 +30,8 @@
       s.push({ key: 'driveoff', icon: 'cloud', title: 'Google Drive is not running', text: 'Backups are saved locally and upload once Google Drive for desktop runs again.' })
     if (o.syncthing.running && o.devices === 0)
       s.push({ key: 'link', icon: 'link', title: 'Link your other PC', text: 'Install Syncer there, then paste this PC\'s ID. Every save follows automatically.', action: 'Link a PC' })
+    if (o.conflicts)
+      s.push({ key: 'conflicts', icon: 'alert', title: `${o.conflicts} save${o.conflicts > 1 ? 's have' : ' has'} two versions`, text: 'Two PCs changed the same save. Pick which one to keep; the other goes into the backup history.', action: 'Review' })
     if (o.pending)
       s.push({ key: 'pending', icon: 'devices', title: `${o.pending} PC${o.pending > 1 ? 's' : ''} want${o.pending > 1 ? '' : 's'} to connect`, text: 'Review and accept the request.', action: 'Review' })
     return s
@@ -40,6 +42,7 @@
     else if (key === 'start') run(key, StartSyncthing, 'Sync started')
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
     else if (key === 'link' || key === 'pending') ui.view = 'devices'
+    else if (key === 'conflicts') ui.view = 'games'
   }
 
   const lb = $derived(o?.lastBackup)

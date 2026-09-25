@@ -53,6 +53,59 @@ export namespace backup {
 
 }
 
+export namespace conflict {
+	
+	export class Conflict {
+	    rel: string;
+	    copy: string;
+	    device: string;
+	    deviceName: string;
+	    size: number;
+	    // Go type: time
+	    modified: any;
+	    missing: boolean;
+	    copySize: number;
+	    // Go type: time
+	    copyModified: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Conflict(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rel = source["rel"];
+	        this.copy = source["copy"];
+	        this.device = source["device"];
+	        this.deviceName = source["deviceName"];
+	        this.size = source["size"];
+	        this.modified = this.convertValues(source["modified"], null);
+	        this.missing = source["missing"];
+	        this.copySize = source["copySize"];
+	        this.copyModified = this.convertValues(source["copyModified"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class DeviceView {
@@ -164,6 +217,7 @@ export namespace main {
 	    backup: boolean;
 	    exists: boolean;
 	    shared: number;
+	    conflicts: number;
 	    // Go type: time
 	    modified: any;
 	
@@ -184,6 +238,7 @@ export namespace main {
 	        this.backup = source["backup"];
 	        this.exists = source["exists"];
 	        this.shared = source["shared"];
+	        this.conflicts = source["conflicts"];
 	        this.modified = this.convertValues(source["modified"], null);
 	    }
 	
@@ -280,6 +335,7 @@ export namespace main {
 	    folders: number;
 	    syncing: number;
 	    errors: number;
+	    conflicts: number;
 	    drive: backup.DriveInfo;
 	    target: string;
 	    lastBackup?: store.BackupRun;
@@ -299,6 +355,7 @@ export namespace main {
 	        this.folders = source["folders"];
 	        this.syncing = source["syncing"];
 	        this.errors = source["errors"];
+	        this.conflicts = source["conflicts"];
 	        this.drive = this.convertValues(source["drive"], backup.DriveInfo);
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);

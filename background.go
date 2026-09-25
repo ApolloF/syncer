@@ -92,9 +92,7 @@ func runBackup(ctx context.Context, onProg func(backup.Progress)) (*store.Backup
 func backupTarget(s store.Settings) (string, bool) { return backup.Target(s.BackupRoot, s.DriveRoot) }
 
 func record(r *store.BackupRun) {
-	st := store.LoadState()
-	st.LastBackup = r
-	_ = store.SaveState(st)
+	store.UpdateState(func(st *store.State) { st.LastBackup = r })
 }
 
 // backupFolders lists folders from Syncthing, or the cached list if it's down.

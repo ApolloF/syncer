@@ -13,8 +13,9 @@
   import { bytes, ago, when } from '../lib/fmt'
   import {
     Folders, ScanGames, AddFolder, RemoveFolder, SetFolderBackup, OpenPath,
-    PickFolder, RestorePoints, Restore, SaveSettings,
+    PickFolder, RestorePoints, Restore, SaveSettings, Conflicts, ResolveConflict,
   } from '../../wailsjs/go/main/App'
+  import type { conflict } from '../../wailsjs/go/models'
 
   let loading = $state(false)
   let scanning = $state(false)
@@ -26,6 +27,28 @@
   let restoring = $state(false)
   let removeFor = $state<main.FolderView | null>(null)
   let custom = $state<{ path: string; name: string } | null>(null)
+  let conflictsFor = $state<main.FolderView | null>(null)
+  let conflicts = $state<conflict.Conflict[]>([])
+  let resolving = $state('')
+
+  async function openConflicts(f: main.FolderView) {
+    conflictsFor = f
+    try { conflicts = (await Conflicts(f.id)) ?? [] } catch (e) { fail(e) }
+  }
+
+  async function resolve(c: conflict.Conflict, useCopy: boolean) {
+    if (!conflictsFor) return
+    const f = conflictsFor
+    resolving = c.copy
+    const ok = await attempt(() => ResolveConflict(f.id, c.copy, useCopy),
+      useCopy ? `Using the other version of ${c.rel}` : `Kept the current ${c.rel}`)
+    resolving = ''
+    if (ok) {
+      conflicts = conflicts.filter(x => x.copy !== c.copy)
+      if (!conflicts.length) conflictsFor = null
+      load(); refresh()
+    }
+  }
 
   const o = $derived(ui.overview)
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
@@ -171,6 +194,11 @@
             <div class="path faint ellipsis" title={f.path}>{f.path}</div>
           </div>
           <span class="meta faint">{bytes(f.bytes)}</span>
+          {#if f.conflicts}
+            <button class="pill warn linkish" title="Two PCs changed the same save — choose which to keep" onclick={() => openConflicts(f)}>
+              {f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}
+            </button>
+          {/if}
           <span class="pill {s.kind}">{s.text}</span>
           <div class="acts">
             <button class="btn ghost icon sm" title="Open folder" onclick={() => OpenPath(f.path)}><Icon name="folder" size={16} /></button>
@@ -236,6 +264,38 @@
   </Modal>
 {/if}
 
+{#if conflictsFor}
+  <Modal title="Two versions of {conflictsFor.label}" onclose={() => (conflictsFor = null)}>
+    <p>Two PCs changed the same save. The game loads the current one; the other was kept aside. Close the game, then pick which to keep. The version you don't pick goes into the backup history, so you can still restore it.</p>
+    <div class="conflicts">
+      {#each conflicts as c (c.copy)}
+        <div class="conf">
+          <div class="mono ellipsis" title={c.rel}>{c.rel}</div>
+          <div class="versions">
+            <div class="ver">
+              <div class="faint small">Current{c.missing ? ' (deleted)' : ''}</div>
+              <div>{c.missing ? '—' : `${when(Date.parse(c.modified) / 1000)} · ${bytes(c.size)}`}</div>
+              <button class="btn sm" disabled={!!resolving} onclick={() => resolve(c, false)}>Keep current</button>
+            </div>
+            <div class="ver">
+              <div class="faint small">Other version{c.deviceName ? ` · from ${c.deviceName}` : ''}</div>
+              <div>{when(Date.parse(c.copyModified) / 1000)} · {bytes(c.copySize)}</div>
+              <button class="btn sm primary" disabled={!!resolving} onclick={() => resolve(c, true)}>
+                {#if resolving === c.copy}<Icon name="refresh" size={14} class="spin" />{/if} Use this one
+              </button>
+            </div>
+          </div>
+        </div>
+      {:else}
+        <p class="faint">No conflicts left.</p>
+      {/each}
+    </div>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (conflictsFor = null)}>Close</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 {#if removeFor}
   <Modal title="Stop syncing {removeFor.label}?" onclose={() => (removeFor = null)}>
     <p>Nothing is deleted. The files stay on this PC and your other PCs keep their copy, but changes stop flowing.</p>
@@ -283,4 +343,10 @@
   .pt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; color: var(--text); cursor: pointer; }
   .pt:hover { background: var(--hover); }
   .pt input { accent-color: var(--accent); }
+  .linkish { border: 0; cursor: pointer; font: inherit; font-size: 12px; }
+  .conflicts { display: flex; flex-direction: column; gap: 12px; max-height: 340px; overflow-y: auto; }
+  .conf { display: flex; flex-direction: column; gap: 8px; }
+  .versions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .ver { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 10px; border-radius: 8px; background: var(--hover); }
+  .small { font-size: 12px; }
 </style>

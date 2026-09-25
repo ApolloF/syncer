@@ -18,6 +18,10 @@ export function CancelBackup() {
   return window['go']['main']['App']['CancelBackup']();
 }
 
+export function Conflicts(arg1) {
+  return window['go']['main']['App']['Conflicts'](arg1);
+}
+
 export function CopyText(arg1) {
   return window['go']['main']['App']['CopyText'](arg1);
 }
@@ -80,6 +84,10 @@ export function RemoveDevice(arg1) {
 
 export function RemoveFolder(arg1) {
   return window['go']['main']['App']['RemoveFolder'](arg1);
+}
+
+export function ResolveConflict(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResolveConflict'](arg1, arg2, arg3);
 }
 
 export function Restore(arg1, arg2) {

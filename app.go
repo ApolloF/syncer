@@ -31,6 +31,7 @@ type App struct {
 	backingUp bool
 	cancel    context.CancelFunc
 	lastScan  []discover.Found
+	conflicts *conflictCache
 }
 
 func NewApp() *App { return &App{} }
@@ -131,6 +132,7 @@ type Overview struct {
 	Folders    int              `json:"folders"`
 	Syncing    int              `json:"syncing"`
 	Errors     int              `json:"errors"`
+	Conflicts  int              `json:"conflicts"` // conflict copies across all folders
 	Drive      backup.DriveInfo `json:"drive"`
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
@@ -177,6 +179,15 @@ func (a *App) Overview() Overview {
 		o.Pending = len(p)
 	}
 	if fs, err := c.Folders(ctx); err == nil {
+		var bf []backup.Folder
+		for _, f := range fs {
+			if f.ID != meta.FolderID {
+				bf = append(bf, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
+			}
+		}
+		for _, n := range a.conflictCounts(bf) {
+			o.Conflicts += n
+		}
 		for _, f := range fs {
 			if f.ID == meta.FolderID {
 				continue
@@ -398,6 +409,7 @@ type FolderView struct {
 	Backup    bool      `json:"backup"`
 	Exists    bool      `json:"exists"`
 	Shared    int       `json:"shared"`
+	Conflicts int       `json:"conflicts"` // two versions of a save exist
 	Modified  time.Time `json:"modified"`
 }
 
@@ -413,12 +425,20 @@ func (a *App) Folders() ([]FolderView, error) {
 		return nil, err
 	}
 	s := store.LoadSettings()
+	var bf []backup.Folder
+	for _, f := range fs {
+		if f.ID != meta.FolderID {
+			bf = append(bf, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
+		}
+	}
+	conflicts := a.conflictCounts(bf)
 	out := make([]FolderView, 0, len(fs))
 	for _, f := range fs {
 		if f.ID == meta.FolderID {
 			continue
 		}
-		v := FolderView{ID: f.ID, Label: f.Label, Path: f.Path, Backup: !s.NoBackup[f.ID], Shared: len(f.Devices) - 1}
+		v := FolderView{ID: f.ID, Label: f.Label, Path: f.Path, Backup: !s.NoBackup[f.ID], Shared: len(f.Devices) - 1,
+			Conflicts: conflicts[f.ID]}
 		if v.Label == "" {
 			v.Label = f.ID
 		}
@@ -494,7 +514,8 @@ func (a *App) AddFolder(label, path string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := a.callCtx()
+	// Long enough for the safety snapshot of a big save folder.
+	ctx, cancel := context.WithTimeout(a.ctx, 35*time.Minute)
 	defer cancel()
 	id, err := addFolder(ctx, c, label, path)
 	if err != nil {

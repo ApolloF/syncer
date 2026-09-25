@@ -46,6 +46,9 @@ type BackupRun struct {
 // State is machine-written status.
 type State struct {
 	LastBackup *BackupRun `json:"lastBackup"`
+	// Protected: when the existing files of a folder (id|path) were saved as
+	// a restore point before it started syncing.
+	Protected map[string]time.Time `json:"protected,omitempty"`
 }
 
 var mu sync.Mutex
@@ -101,6 +104,17 @@ func LoadState() State {
 
 // SaveState writes run state atomically.
 func SaveState(st State) error { return save("state.json", st) }
+
+var stateMu sync.Mutex
+
+// UpdateState applies fn to the stored state under a lock and saves.
+func UpdateState(fn func(*State)) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	st := LoadState()
+	fn(&st)
+	_ = SaveState(st)
+}
 
 func load(name string, v any) {
 	b, err := os.ReadFile(filepath.Join(paths.AppDir(), name))
