@@ -38,6 +38,14 @@
     </div>
   </div>
   <div class="item">
+    <div class="grow"><div class="name">Start with Windows</div><div class="faint small">Syncer starts in the tray when you sign in, so new games and changes from your other PCs are picked up right away.</div></div>
+    <Toggle checked={o?.settings.startAtLogin} label="Start with Windows" onchange={(v) => save({ startAtLogin: v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Keep running in the tray</div><div class="faint small">Closing the window leaves Syncer running next to the clock. Quit from its tray menu.</div></div>
+    <Toggle checked={o?.settings.closeToTray} label="Keep running in the tray" onchange={(v) => save({ closeToTray: v })} />
+  </div>
+  <div class="item">
     <div class="grow"><div class="name">Sync new games automatically</div><div class="faint small">Games found on this PC start syncing and backing up without a click. Games you stop syncing stay off.</div></div>
     <Toggle checked={o?.settings.autoAdd} label="Sync new games automatically" onchange={(v) => save({ autoAdd: v })} />
   </div>
