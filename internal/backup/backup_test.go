@@ -146,3 +146,47 @@ func TestLockExclusive(t *testing.T) {
 		t.Fatal("still locked")
 	}
 }
+
+func TestSnapshot(t *testing.T) {
+	src := t.TempDir()
+	target := t.TempDir()
+	id := "snap-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	f := Folder{ID: id, Label: "Snap", Path: src}
+	ctx := context.Background()
+
+	if n, err := Snapshot(ctx, target, Folder{ID: id, Path: filepath.Join(src, "missing")}); n != 0 || err != nil {
+		t.Fatalf("missing folder: n=%d err=%v", n, err)
+	}
+
+	write(t, filepath.Join(src, "slot1.sav"), "mine")
+	write(t, filepath.Join(src, "sub", "slot2.sav"), "mine2")
+	write(t, filepath.Join(src, ".stversions", "old.sav"), "x")
+	n, err := Snapshot(ctx, target, f)
+	if err != nil || n != 2 {
+		t.Fatalf("snapshot: n=%d err=%v", n, err)
+	}
+	pts := Points(target, id)
+	if len(pts) != 1 {
+		t.Fatalf("want 1 restore point, got %d", len(pts))
+	}
+
+	// The other PC's save arrives and replaces ours; restoring to the
+	// snapshot brings ours back.
+	time.Sleep(1100 * time.Millisecond)
+	write(t, filepath.Join(src, "slot1.sav"), "theirs")
+	if _, err := Restore(target, f, pts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(src, "slot1.sav")) != "mine" || read(t, filepath.Join(src, "sub", "slot2.sav")) != "mine2" {
+		t.Fatal("snapshot not restored")
+	}
+
+	// Files already in the mirror unchanged aren't copied again.
+	if res, err := Run(ctx, []Folder{f}, Options{Target: target}); err != nil || !res.OK {
+		t.Fatalf("run: %v %v", err, res)
+	}
+	if n, err := Snapshot(ctx, target, f); n != 0 || err != nil {
+		t.Fatalf("unchanged snapshot: n=%d err=%v", n, err)
+	}
+}

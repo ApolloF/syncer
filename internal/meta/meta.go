@@ -169,8 +169,18 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	return rep, nil
 }
 
+// BeforeJoin, when set, runs before this PC starts syncing a folder that is
+// shared with other PCs, so the saves already at path can be protected first.
+// An error stops the folder from being added (it is retried later).
+var BeforeJoin func(ctx context.Context, id, label, path string) error
+
 // AddFolder creates a Syncthing folder shared with all devices, with versioning.
 func AddFolder(ctx context.Context, c *syncthing.Client, id, label, path, me string, others []string) error {
+	if BeforeJoin != nil && len(others) > 0 {
+		if err := BeforeJoin(ctx, id, label, path); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}

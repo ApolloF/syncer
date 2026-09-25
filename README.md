@@ -19,6 +19,7 @@ Syncer is a small desktop app built on two tools that already work well:
 - **Backs up with history.** Only changed files get copied. A file that changes or gets deleted is moved to `.versions\<game>\<time>\` and kept for 30 days by default. If a save folder suddenly turns up empty, Syncer won't wipe the backup.
 - **Restores any save.** You can restore the latest backup or any earlier point. Your current files are saved as a restore point first, so a restore can be undone.
 - **Runs without the window.** A scheduled task (`\Syncer-Background`) starts Syncthing if it isn't running, applies changes from your other PCs and runs the backup at logon and every few hours.
+- **Never picks a save behind your back.** Before a PC starts syncing a game it already has saves for, those saves are stored as a restore point in the backup (or in `%LOCALAPPDATA%\Syncer\snapshots` when no backup folder is available). When two PCs changed the same save, the game shows **2 versions**: pick which one to keep, and the other goes into the backup history instead of being deleted.
 - **Protects synced saves.** Every synced folder uses Syncthing's staggered versioning, so a corrupted save coming from another PC doesn't overwrite the good copy.
 - **Light and dark mode.** It follows your Windows setting (you can override it), and uses the Mica backdrop on Windows 11.
 
