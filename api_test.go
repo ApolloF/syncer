@@ -24,7 +24,9 @@ type fakeBackend struct {
 	opened int
 }
 
-func (f *fakeBackend) status(context.Context) apiStatus { return apiStatus{Syncthing: true, Games: len(f.fs)} }
+func (f *fakeBackend) status(context.Context) apiStatus {
+	return apiStatus{Syncthing: true, Games: len(f.fs)}
+}
 func (f *fakeBackend) folders(context.Context) ([]apiFolder, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
