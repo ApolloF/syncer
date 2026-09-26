@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 )
@@ -22,9 +23,20 @@ func TestAdoptable(t *testing.T) {
 	roaming := paths.Root(paths.Roaming)
 	synced := []string{filepath.Join(roaming, `Arrowhead\Helldivers2\saves`), filepath.Join(roaming, "Mobius")}
 	od := filepath.Join(roaming, "OneDriveHere")
-	old := inOneDrive
+	old, oldClassify := inOneDrive, classify
 	inOneDrive = func(p string) bool { return paths.Within(od, p) }
-	defer func() { inOneDrive = old }()
+	classify = func(label, p string) discover.Class {
+		switch label {
+		case "steam":
+			return discover.Class{SteamCloud: true}
+		case "copy":
+			return discover.Class{CopyOf: "Game"}
+		}
+		return discover.Class{}
+	}
+	defer func() { inOneDrive, classify = old, oldClassify }()
+	copied := with("bg3-rune", paths.Public, "Documents/Steam/RUNE/1086940")
+	copied.CopyOf = "Baldur's Gate 3"
 
 	cases := []struct {
 		name      string
@@ -52,6 +64,10 @@ func TestAdoptable(t *testing.T) {
 		{"same path as a synced folder", with("dup", paths.Roaming, "Arrowhead/Helldivers2/saves"), s, yes, SkipOverlap},
 		{"next to a synced folder", with("sib", paths.Roaming, "MobiusX"), s, yes, ""},
 		{"in OneDrive", with("od", paths.Roaming, "OneDriveHere/Game"), s, yes, SkipOneDrive},
+		{"Steam Cloud keeps it here", with("steam", paths.Roaming, "Steam/Saves"), s, yes, SkipSteamCloud},
+		{"not installed beats Steam Cloud", with("steam", paths.Roaming, "Steam/Saves"), only, no, SkipNotInstalled},
+		{"emulator copy, found here", with("copy", paths.Roaming, "Copy"), s, yes, SkipCopy},
+		{"emulator copy, says the other PC", copied, s, yes, SkipCopy},
 	}
 	for _, c := range cases {
 		if _, got := Adoptable(c.sf, c.s, c.installed, synced); got != c.want {

@@ -32,7 +32,9 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 	rels := map[string]string{} // rel(lower) -> rel (original case)
 	add := func(root string) {
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) {
+			// steam_autocloud.vdf names the account of the PC it was backed
+			// up on; this PC's Steam writes its own.
+			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) || strings.EqualFold(d.Name(), SteamMarker) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, p)
@@ -54,6 +56,7 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 	}
 
 	safety := filepath.Join(target, VersionsDir, f.ID, time.Now().Format(stampFmt))
+	kept := false
 	n := 0
 	for k, from := range src {
 		rel := rels[k]
@@ -63,6 +66,10 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 			_ = os.MkdirAll(filepath.Dir(keep), 0o755)
 			if err := copyFile(to, keep); err != nil {
 				return n, fmt.Errorf("could not save current %s: %w", rel, err)
+			}
+			if !kept {
+				keepPoint(safety) // the saves a restore replaced outlive the usual history
+				kept = true
 			}
 		}
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {

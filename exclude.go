@@ -28,6 +28,24 @@ func init() { meta.BeforeAdd = writeExclusions }
 
 const maxExclusions = 100
 
+// syncIgnores are never synced, in any folder. steam_autocloud.vdf belongs
+// to the PC it's on: Steam writes it for the account using that PC, and a
+// copy arriving from another PC names the wrong owner, to Steam and to
+// Syncer's Steam Cloud check alike.
+var syncIgnores = []string{backup.SteamMarker}
+
+// withSyncIgnores returns the lines of Syncer's .stignore block for a game
+// with the exclusions pats.
+func withSyncIgnores(pats []string) []string {
+	out := append([]string(nil), syncIgnores...)
+	for _, p := range pats {
+		if !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, p) }) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // cleanExclusions validates patterns typed by the user.
 func cleanExclusions(in []string) ([]string, error) {
 	seen := map[string]bool{}
@@ -96,32 +114,49 @@ func mergeIgnores(current, patterns []string) []string {
 	return out
 }
 
-// writeExclusions puts a game's exclusions into its folder's .stignore just
-// before Syncthing starts on the folder, so its first scan skips them.
+// writeExclusions puts Syncer's lines (the game's exclusions and
+// syncIgnores) into its folder's .stignore just before Syncthing starts on
+// the folder, so its first scan already skips them.
 func writeExclusions(_, path string) {
-	pats := store.LoadSettings().Exclude[dismissKey(path)]
 	p := filepath.Join(path, ".stignore")
-	b, err := os.ReadFile(p)
-	if err != nil && len(pats) == 0 {
-		return // nothing to write, nothing to clean up
-	}
-	var cur []string
-	if len(b) > 0 {
-		cur = strings.Split(strings.ReplaceAll(strings.TrimRight(string(b), "\r\n"), "\r\n", "\n"), "\n")
-	}
-	if len(pats) == 0 && !slices.ContainsFunc(cur, func(l string) bool { return strings.TrimSpace(l) == backup.IgnoreBegin }) {
-		return // the user's own file, nothing of Syncer's in it
-	}
-	next := mergeIgnores(cur, pats)
+	cur := readIgnores(p)
+	next := mergeIgnores(cur, withSyncIgnores(store.LoadSettings().Exclude[dismissKey(path)]))
 	if slices.Equal(cur, next) {
-		return
-	}
-	if len(next) == 0 {
-		_ = os.Remove(p)
 		return
 	}
 	if err := os.WriteFile(p, []byte(strings.Join(next, "\n")+"\n"), 0o644); err != nil {
 		logx.Printf("write exclusions for %s: %v", path, err)
+	}
+}
+
+// readIgnores reads a .stignore's lines (none if it doesn't exist).
+func readIgnores(p string) []string {
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		return nil
+	}
+	return strings.Split(strings.ReplaceAll(strings.TrimRight(string(b), "\r\n"), "\r\n", "\n"), "\n")
+}
+
+// ensureIgnores brings Syncer's .stignore lines up to date in every synced
+// folder, including ones added before a line existed.
+func ensureIgnores(ctx context.Context, c *syncthing.Client) {
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return
+	}
+	ex := store.LoadSettings().Exclude
+	failed := 0
+	for _, f := range fs {
+		if f.ID == meta.FolderID {
+			continue
+		}
+		if err := applyExclusions(ctx, c, f.ID, withSyncIgnores(ex[dismissKey(f.Path)])); err != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		logx.Printf("couldn't update the ignore list of %d synced folder(s)", failed)
 	}
 }
 
@@ -169,7 +204,7 @@ func (a *App) SetExclusions(id string, patterns []string) error {
 	if err == nil {
 		ctx, cancel := a.callCtx()
 		defer cancel()
-		err = applyExclusions(ctx, c, id, pats)
+		err = applyExclusions(ctx, c, id, withSyncIgnores(pats))
 	}
 	if c == nil || errors.Is(err, syncthing.ErrNotRunning) {
 		writeExclusions(id, f.Path) // Syncthing reads it when it starts

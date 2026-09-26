@@ -73,3 +73,50 @@ func WithinAny(roots []string, p string) bool {
 
 // InOneDrive reports whether OneDrive syncs p on this PC.
 func InOneDrive(p string) bool { return WithinAny(OneDriveRoots(), p) }
+
+// OneDriveTwin returns another copy of a Documents save folder, left on the
+// other side of OneDrive: OneDrive\Documents\<game> when this PC keeps
+// Documents locally (a PC that once had Documents in OneDrive, or another PC
+// that does, left it there), or the profile's own Documents\<game> when
+// Documents was moved into OneDrive. "" when there is none.
+func OneDriveTwin(p string) string {
+	docs := Root(Documents)
+	if docs == "" {
+		return ""
+	}
+	od := OneDriveRoots()
+	for _, c := range twinCandidates(docs, WithinAny(od, docs), od, Root(Home), p) {
+		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
+
+// twinCandidates lists where another copy of p may be (see OneDriveTwin).
+func twinCandidates(docs string, docsInOneDrive bool, oneDrive []string, home, p string) []string {
+	rel, ok := within(filepath.Clean(docs), filepath.Clean(p))
+	if !ok || rel == "." {
+		return nil
+	}
+	var out []string
+	add := func(c string) {
+		c = filepath.Clean(c)
+		if !strings.EqualFold(c, filepath.Clean(p)) {
+			out = append(out, c)
+		}
+	}
+	if docsInOneDrive {
+		if home != "" {
+			add(filepath.Join(home, "Documents", rel))
+		}
+		return out
+	}
+	for _, r := range oneDrive {
+		add(filepath.Join(r, "Documents", rel))
+		if b := filepath.Base(docs); !strings.EqualFold(b, "Documents") {
+			add(filepath.Join(r, b, rel))
+		}
+	}
+	return out
+}

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // steamID64 of account id 0; userdata folders are named by the 32-bit account id.
@@ -25,14 +26,16 @@ const (
 	ReasonModified     = "modified"      // crack or Steam emulator files in the game folder
 	ReasonNoCloudData  = "no-cloud-data" // the account has no cloud saves for the game
 	ReasonUntracked    = "untracked"     // Steam Cloud syncs other files of the game, not this folder
-	ReasonModSaves     = "mod-saves"     // mod co-saves Steam Cloud skips (SKSE, Seamless Co-op, …)
+	ReasonModSaves     = "mod-saves"     // mod co-saves Steam Cloud skips (SKSE, Seamless Co-op, â€¦)
 	ReasonOutside      = "outside-steam" // saves changed after Steam last synced them
+	ReasonOtherAccount = "other-account" // steam_autocloud.vdf names an account that isn't on this PC
 )
 
 // Verdict is the outcome of Check.
 type Verdict struct {
 	Covered bool
 	Reason  string // why not; "" when covered
+	Account uint32 // account named by the folder's steam_autocloud.vdf (0 = none)
 }
 
 // Host is what Steam's files don't say: which account is signed in right
@@ -50,19 +53,52 @@ type Cloud struct {
 	Found   bool // Steam and a logged-in account were found
 	Enabled bool // Steam Cloud is on for the account
 
+	// Stop, when set, says where the search for a save folder's
+	// steam_autocloud.vdf must stop going up (a known folder, or one that holds
+	// many games). Without it only the folder and its subfolders are searched.
+	Stop func(dir string) bool
+
 	dir      string
 	host     Host
-	accounts []string        // userdata folders of the account(s) checked
-	apps     map[int]string  // apps with cloud data -> account whose userdata holds it
-	off      map[int]bool    // apps whose cloud sync the user switched off
-	libs     map[int]App     // games Steam installed
-	mu       sync.Mutex      // guards the lazily filled caches below
-	tracked  map[int][]entry // remotecache.vdf per app
-	tampered map[int]string  // crack/emulator marker per app ("" = clean)
+	accounts []string            // userdata folders of the account(s) checked
+	users    map[uint32]userConf // every account with a userdata folder on this PC
+	apps     map[int]string      // apps with cloud data -> account whose userdata holds it
+	off      map[int]bool        // apps whose cloud sync the user switched off
+	libs     map[int]App         // games Steam installed
+	mu       sync.Mutex          // guards the lazily filled caches below
+	tracked  map[int][]entry     // remotecache.vdf per app
+	tampered map[int]string      // crack/emulator marker per app ("" = clean)
+	markers  map[string]marker   // steam_autocloud.vdf per save folder (lower case)
+}
+
+// userConf is one account's Steam Cloud settings.
+type userConf struct {
+	enabled bool         // "Enable Steam Cloud" is on
+	off     map[int]bool // games whose cloud sync is switched off
 }
 
 // Detect inspects the Steam installation on this PC.
 func Detect() *Cloud { return DetectIn(Dir(), hostInfo()) }
+
+var cached struct {
+	sync.Mutex
+	c  *Cloud
+	at time.Time
+}
+
+// Cached returns a Detect snapshot at most maxAge old, shared by callers that
+// ask often (every folder of the window's list, every reconcile). stop is set
+// on a fresh snapshot (see Cloud.Stop).
+func Cached(maxAge time.Duration, stop func(string) bool) *Cloud {
+	cached.Lock()
+	defer cached.Unlock()
+	if cached.c == nil || time.Since(cached.at) > maxAge {
+		c := Detect()
+		c.Stop = stop
+		cached.c, cached.at = c, time.Now()
+	}
+	return cached.c
+}
 
 // DetectIn inspects the Steam installation at dir (for tests).
 func DetectIn(dir string, h Host) *Cloud {
@@ -72,10 +108,15 @@ func DetectIn(dir string, h Host) *Cloud {
 	if h.Signed == nil {
 		h.Signed = func(string) bool { return true }
 	}
-	c := &Cloud{dir: dir, host: h, apps: map[int]string{}, off: map[int]bool{}, libs: map[int]App{},
-		tracked: map[int][]entry{}, tampered: map[int]string{}}
+	c := &Cloud{dir: dir, host: h, users: map[uint32]userConf{}, apps: map[int]string{}, off: map[int]bool{},
+		libs: map[int]App{}, tracked: map[int][]entry{}, tampered: map[int]string{}, markers: map[string]marker{}}
 	if dir == "" {
 		return c
+	}
+	for _, u := range userdataAccounts(dir) {
+		if id, err := strconv.ParseUint(u, 10, 32); err == nil {
+			c.users[uint32(id)] = readUserConf(filepath.Join(dir, "userdata", u))
+		}
 	}
 	c.accounts = accounts(dir, h)
 	if len(c.accounts) == 0 {
@@ -85,35 +126,17 @@ func DetectIn(dir string, h Host) *Cloud {
 	c.libs = Apps(dir)
 	for _, u := range c.accounts {
 		ud := filepath.Join(dir, "userdata", u)
-		// Top-level store name differs per file (UserLocalConfigStore,
-		// UserRoamingConfigStore), so look inside whatever the root holds.
-		var stores []*Node
-		for _, f := range []string{filepath.Join(ud, "config", "localconfig.vdf"), filepath.Join(ud, "7", "remote", "sharedconfig.vdf")} {
-			for _, n := range readVDF(f).Kids() {
-				stores = append(stores, n)
-			}
+		id, _ := strconv.ParseUint(u, 10, 32)
+		conf, ok := c.users[uint32(id)]
+		if !ok {
+			conf = readUserConf(ud)
 		}
-		enabled := true
-		for _, st := range stores {
-			// Global "Enable Steam Cloud" toggle.
-			if st.Value("CloudEnabled") == "0" || st.Get("system").Value("EnableCloud") == "0" ||
-				st.Get("Software", "Valve", "Steam").Value("CloudEnabled") == "0" {
-				enabled = false
-			}
-		}
-		if !enabled {
+		if !conf.enabled {
 			continue
 		}
 		c.Enabled = true
-		// Per-game "Keep game saves in the Steam Cloud" toggle.
-		for _, st := range stores {
-			for id, n := range st.Get("Software", "Valve", "Steam", "apps").Kids() {
-				if n.Value("cloudenabled") == "0" {
-					if i, err := strconv.Atoi(id); err == nil {
-						c.off[i] = true
-					}
-				}
-			}
+		for id := range conf.off {
+			c.off[id] = true
 		}
 		es, _ := os.ReadDir(ud)
 		for _, e := range es {
@@ -129,21 +152,92 @@ func DetectIn(dir string, h Host) *Cloud {
 	return c
 }
 
-// Check reports whether Steam Cloud really keeps the saves in saveDir for
-// appID on this PC. Everything must hold: Steam installed the game, its files
+// readUserConf reads an account's global and per-game Steam Cloud switches.
+func readUserConf(ud string) userConf {
+	conf := userConf{enabled: true, off: map[int]bool{}}
+	// Top-level store name differs per file (UserLocalConfigStore,
+	// UserRoamingConfigStore), so look inside whatever the root holds.
+	var stores []*Node
+	for _, f := range []string{filepath.Join(ud, "config", "localconfig.vdf"), filepath.Join(ud, "7", "remote", "sharedconfig.vdf")} {
+		for _, n := range readVDF(f).Kids() {
+			stores = append(stores, n)
+		}
+	}
+	for _, st := range stores {
+		// Global "Enable Steam Cloud" toggle.
+		if st.Value("CloudEnabled") == "0" || st.Get("system").Value("EnableCloud") == "0" ||
+			st.Get("Software", "Valve", "Steam").Value("CloudEnabled") == "0" {
+			conf.enabled = false
+		}
+		// Per-game "Keep game saves in the Steam Cloud" toggle.
+		for id, n := range st.Get("Software", "Valve", "Steam", "apps").Kids() {
+			if n.Value("cloudenabled") == "0" {
+				if i, err := strconv.Atoi(id); err == nil {
+					conf.off[i] = true
+				}
+			}
+		}
+	}
+	return conf
+}
+
+// Check reports whether Steam Cloud keeps the saves in saveDir for appID on
+// this PC.
+//
+// A steam_autocloud.vdf in the folder settles it: Steam wrote it there for an
+// account, and if that account uses this PC, Steam Cloud keeps the folder,
+// whichever account is signed in right now and even while the game isn't
+// installed here. Only hard evidence overrides it: the Steam copy of the
+// game was cracked, cloud sync is off for that account or game, or the folder
+// holds mod saves Steam skips. A marker naming an account this PC doesn't
+// know came along with a copy from another PC and proves nothing.
+//
+// Without a marker everything must hold: Steam installed the game, its files
 // weren't replaced by a crack or Steam emulator, the account has cloud saves
-// for it, Steam Cloud tracks files in this very folder, there are no mod
-// saves it skips, and Steam has seen the latest save.
+// for it, Steam Cloud tracks files in this very folder, there are no mod saves
+// it skips, and Steam has seen the latest save. A folder that doesn't exist yet
+// counts when Steam Cloud tracks files that belong in it.
 func (c *Cloud) Check(appID int, saveDir string) Verdict {
 	no := func(r string) Verdict { return Verdict{Reason: r} }
-	switch {
-	case c == nil || !c.Found || appID <= 0:
+	if c == nil || !c.Found || appID <= 0 {
 		return no(ReasonNoSteam)
+	}
+	app, steamCopy := c.libs[appID]
+	steamCopy = steamCopy && app.Installed
+	if m := c.marker(saveDir); m.found {
+		conf, local := c.users[m.account]
+		switch {
+		case !local:
+			// The checks below may still find Steam keeping it for the
+			// account here; otherwise the marker is what explains it.
+		case !conf.enabled || conf.off[appID]:
+			return Verdict{Reason: ReasonCloudOff, Account: m.account}
+		default:
+			if steamCopy {
+				if t := c.tamperedApp(app); t != "" {
+					return Verdict{Reason: ReasonModified + ":" + t, Account: m.account}
+				}
+			}
+			if ms := inspect(saveDir, nil).modSave; ms != "" {
+				return Verdict{Reason: ReasonModSaves + ":" + ms, Account: m.account}
+			}
+			return Verdict{Covered: true, Account: m.account}
+		}
+		if v := c.check(appID, saveDir, app, steamCopy); v.Covered {
+			return v
+		}
+		return no(ReasonOtherAccount)
+	}
+	return c.check(appID, saveDir, app, steamCopy)
+}
+
+// check is Check without a steam_autocloud.vdf to go by.
+func (c *Cloud) check(appID int, saveDir string, app App, steamCopy bool) Verdict {
+	no := func(r string) Verdict { return Verdict{Reason: r} }
+	switch {
 	case !c.Enabled || c.off[appID]:
 		return no(ReasonCloudOff)
-	}
-	app, ok := c.libs[appID]
-	if !ok || !app.Installed {
+	case !steamCopy:
 		return no(ReasonNotInstalled)
 	}
 	if m := c.tamperedApp(app); m != "" {
@@ -152,7 +246,14 @@ func (c *Cloud) Check(appID int, saveDir string) Verdict {
 	if _, ok := c.apps[appID]; !ok {
 		return no(ReasonNoCloudData)
 	}
-	st := inspect(saveDir, c.entries(appID))
+	es := c.entries(appID)
+	if !isDir(saveDir) {
+		if tracksInto(saveDir, es) {
+			return Verdict{Covered: true}
+		}
+		return no(ReasonUntracked)
+	}
+	st := inspect(saveDir, es)
 	if st.tracked == 0 {
 		return no(ReasonUntracked)
 	}
@@ -163,6 +264,31 @@ func (c *Cloud) Check(appID int, saveDir string) Verdict {
 		return no(ReasonOutside)
 	}
 	return Verdict{Covered: true}
+}
+
+// SteamInstalled reports whether Steam installed appID on this PC.
+func (c *Cloud) SteamInstalled(appID int) bool {
+	if c == nil {
+		return false
+	}
+	app, ok := c.libs[appID]
+	return ok && app.Installed
+}
+
+// marker returns the steam_autocloud.vdf that governs saveDir, cached.
+func (c *Cloud) marker(saveDir string) marker {
+	key := strings.ToLower(filepath.Clean(saveDir))
+	c.mu.Lock()
+	m, ok := c.markers[key]
+	c.mu.Unlock()
+	if ok {
+		return m
+	}
+	m = findMarker(saveDir, func(id uint32) bool { _, ok := c.users[id]; return ok }, c.Stop)
+	c.mu.Lock()
+	c.markers[key] = m
+	c.mu.Unlock()
+	return m
 }
 
 // entries returns the files Steam Cloud tracks for appID.
@@ -261,13 +387,19 @@ func accounts(dir string, h Host) []string {
 	if len(all) > 0 {
 		return all
 	}
+	return userdataAccounts(dir)
+}
+
+// userdataAccounts lists the accounts that have a userdata folder.
+func userdataAccounts(dir string) []string {
+	var out []string
 	es, _ := os.ReadDir(filepath.Join(dir, "userdata"))
 	for _, e := range es {
-		if _, err := strconv.Atoi(e.Name()); err == nil && e.IsDir() && e.Name() != "0" {
-			all = append(all, e.Name())
+		if _, err := strconv.ParseUint(e.Name(), 10, 32); err == nil && e.IsDir() && e.Name() != "0" {
+			out = append(out, e.Name())
 		}
 	}
-	return all
+	return out
 }
 
 func readVDF(p string) *Node {
@@ -282,6 +414,11 @@ func readVDF(p string) *Node {
 func isDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 func clean(p string) string {
