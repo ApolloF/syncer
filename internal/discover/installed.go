@@ -40,6 +40,7 @@ func LoadInstalled() *Installed {
 		i.add(filepath.Base(filepath.Clean(dir)), dir)
 	})
 	i.loadXbox()
+	var locations []string
 	for _, source := range []struct {
 		key  registry.Key
 		path string
@@ -50,8 +51,12 @@ func LoadInstalled() *Installed {
 	} {
 		registryGames(source.key, source.path, func(k registry.Key) {
 			i.add(registryString(k, "DisplayName"), "")
+			if loc := registryString(k, "InstallLocation"); filepath.IsAbs(loc) {
+				locations = append(locations, loc)
+			}
 		})
 	}
+	i.loadCracked(exeTraces(), locations)
 	return i
 }
 
@@ -168,6 +173,12 @@ func (i *Installed) add(name, dir string) {
 	if n := normalize(filepath.Base(dir)); n != "" {
 		i.dirNames[n] = true
 	}
+	i.addRoot(dir)
+}
+
+// addRoot records a game's install folder (see Running).
+func (i *Installed) addRoot(dir string) {
+	dir = filepath.Clean(dir)
 	for _, root := range i.roots {
 		if strings.EqualFold(root, dir) {
 			return
