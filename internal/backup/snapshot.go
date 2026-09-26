@@ -87,37 +87,18 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 		}
 		_ = os.Chtimes(dst, fi.ModTime(), fi.ModTime())
 	}
-	keepPoint(dir)
+	pin(target, f.ID, t)
 	return len(rels), nil
-}
-
-// A restore point holding a PC's own saves from before it started syncing
-// (or from before a restore replaced them) is kept for a year instead of the
-// usual history days: it may be the only copy left of those saves. The mark
-// is a file next to the point's folder, so restores never see it.
-const (
-	keepSuffix = ".keep"
-	keepFor    = 365 * 24 * time.Hour
-)
-
-func keepPoint(dir string) { _ = os.WriteFile(dir+keepSuffix, nil, 0o644) }
-
-// kept reports whether the restore point at dir is marked and less than
-// keepFor old.
-func kept(dir string, point time.Time) bool {
-	_, err := os.Stat(dir + keepSuffix)
-	return err == nil && time.Since(point) < keepFor
 }
 
 // Keep moves a file into the folder's history as a new restore point (it can
 // be brought back with "As it was before <now>").
-// It's a save the user chose against, so it is kept like a pre-sync snapshot.
 func Keep(target, id, src, rel string) error {
-	dir := filepath.Join(target, VersionsDir, id, time.Now().Format(stampFmt))
-	if err := moveTo(src, filepath.Join(dir, rel)); err != nil {
+	t := time.Now()
+	if err := moveTo(src, filepath.Join(target, VersionsDir, id, t.Format(stampFmt), rel)); err != nil {
 		return err
 	}
-	keepPoint(dir)
+	pin(target, id, t)
 	return nil
 }
 

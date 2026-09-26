@@ -1,6 +1,7 @@
 // Package backup mirrors save folders into a Google Drive for desktop folder.
-// Nothing is ever deleted outright: files that change or disappear locally are
-// moved to <target>\.versions\<folder>\<timestamp>\ and pruned after KeepDays.
+// Files that change or disappear locally are never deleted outright: they're
+// moved to <target>\.versions\<folder>\<timestamp>\, and that history is
+// thinned as it ages and pruned after KeepDays (see prune.go).
 package backup
 
 import (
@@ -111,7 +112,7 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 		}
 	}
 	if opts.KeepDays > 0 {
-		prune(opts.Target, opts.KeepDays)
+		prune(opts.Target, opts.KeepDays, time.Now())
 	}
 	res.Finished = time.Now()
 	res.OK = len(res.Errors) == 0
@@ -329,24 +330,6 @@ func Points(target, id string) []time.Time {
 	}
 	sort.Slice(ts, func(i, j int) bool { return ts[i].After(ts[j]) })
 	return ts
-}
-
-func prune(target string, keepDays int) {
-	cut := time.Now().AddDate(0, 0, -keepDays)
-	ids, _ := os.ReadDir(filepath.Join(target, VersionsDir))
-	for _, id := range ids {
-		if !id.IsDir() {
-			continue
-		}
-		for _, t := range Points(target, id.Name()) {
-			dir := filepath.Join(target, VersionsDir, id.Name(), t.Format(stampFmt))
-			if t.Before(cut) && !kept(dir, t) {
-				if err := os.RemoveAll(dir); err == nil {
-					_ = os.Remove(dir + keepSuffix)
-				}
-			}
-		}
-	}
 }
 
 // ---- index -------------------------------------------------------------------

@@ -300,37 +300,6 @@ func TestLockBlocksBackup(t *testing.T) {
 	}
 }
 
-// Pre-sync snapshots may be the only copy left of a PC's own saves: they
-// outlive the usual history.
-func TestPruneKeepsMarkedPoints(t *testing.T) {
-	target := t.TempDir()
-	id := "keep-test"
-	point := func(age time.Duration, mark bool) string {
-		dir := filepath.Join(target, VersionsDir, id, time.Now().Add(-age).Format(stampFmt))
-		write(t, filepath.Join(dir, "save.sav"), "x")
-		if mark {
-			keepPoint(dir)
-		}
-		return dir
-	}
-	old := point(40*24*time.Hour, false)
-	marked := point(41*24*time.Hour, true)
-	ancient := point(400*24*time.Hour, true)
-	fresh := point(time.Hour, false)
-	prune(target, 30)
-	for dir, want := range map[string]bool{old: false, marked: true, ancient: false, fresh: true} {
-		if _, err := os.Stat(dir); (err == nil) != want {
-			t.Errorf("%s: exists=%v, want %v", filepath.Base(dir), err == nil, want)
-		}
-	}
-	if _, err := os.Stat(ancient + keepSuffix); err == nil {
-		t.Error("mark of a pruned point left behind")
-	}
-	if n := len(Points(target, id)); n != 2 {
-		t.Errorf("marks must not show up as restore points: %d points", n)
-	}
-}
-
 // A backup of a Steam Cloud folder carries the backing-up PC's
 // steam_autocloud.vdf; restoring must not put it on this PC.
 func TestRestoreSkipsSteamMarker(t *testing.T) {
