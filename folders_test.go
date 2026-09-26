@@ -115,3 +115,26 @@ func TestOverlapsSynced(t *testing.T) {
 		}
 	}
 }
+
+// A .stignore Syncer wrote goes with the other markers; one with the user's
+// own lines stays.
+func TestCleanMarkersStignore(t *testing.T) {
+	dir := t.TempDir()
+	ig := filepath.Join(dir, ".stignore")
+	writeExclusions("x", dir)
+	if b, err := os.ReadFile(ig); err != nil || !strings.Contains(string(b), "steam_autocloud.vdf") {
+		t.Fatalf(".stignore without steam_autocloud.vdf: %q %v", b, err)
+	}
+	cleanMarkers(dir)
+	if _, err := os.Stat(ig); err == nil {
+		t.Error("Syncer's own .stignore left behind")
+	}
+	if err := os.WriteFile(ig, []byte("// mine\nTrainers/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExclusions("x", dir)
+	cleanMarkers(dir)
+	if b, err := os.ReadFile(ig); err != nil || !strings.HasPrefix(string(b), "// mine\nTrainers/\n") {
+		t.Errorf("user's .stignore changed: %q %v", b, err)
+	}
+}

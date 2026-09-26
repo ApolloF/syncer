@@ -52,6 +52,7 @@ func (a *App) startup(ctx context.Context) {
 			if _, err := meta.Reconcile(ctx, c); err == nil {
 				runtime.EventsEmit(ctx, "changed")
 			}
+			ensureIgnores(ctx, c)
 		}
 		go a.autoAddLoop(ctx)
 		go a.pauseLoop(ctx)

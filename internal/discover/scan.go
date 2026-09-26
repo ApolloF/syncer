@@ -3,7 +3,6 @@ package discover
 import (
 	"io/fs"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,12 +26,21 @@ type Found struct {
 	SteamCloudReason     string `json:"steamCloudReason"`
 	// Emulator names the Steam emulator (e.g. "RUNE") whose save folder this is.
 	Emulator string `json:"emulator"`
+	// CopyOf names the game whose own save folder this emulator folder copies:
+	// the game saves twice, once through the Steam Cloud API the emulator
+	// fakes. It isn't added automatically.
+	CopyOf  string `json:"copyOf"`
+	SteamID int    `json:"steamId"` // Steam app id, 0 if unknown
 	// OneDrive: the folder is in OneDrive, which already syncs it between PCs.
-	OneDrive bool      `json:"oneDrive"`
-	Known    bool      `json:"known"` // false = heuristic, not in the database
-	Size     int64     `json:"size"`
-	Files    int       `json:"files"`
-	Modified time.Time `json:"modified"`
+	OneDrive bool `json:"oneDrive"`
+	// OneDriveCopy is another copy of this folder on the other side of
+	// OneDrive (see paths.OneDriveTwin); OneDriveCopyNewer: it has newer saves.
+	OneDriveCopy      string    `json:"oneDriveCopy"`
+	OneDriveCopyNewer bool      `json:"oneDriveCopyNewer"`
+	Known             bool      `json:"known"` // false = heuristic, not in the database
+	Size              int64     `json:"size"`
+	Files             int       `json:"files"`
+	Modified          time.Time `json:"modified"`
 }
 
 var placeholders = map[string]string{
@@ -66,18 +74,17 @@ func tooBroad() map[string]bool {
 // Scan resolves every manifest entry against this PC and returns the games
 // found, plus unrecognised folders in Saved Games and Documents\My Games.
 func Scan(entries []Entry) []Found {
-	userName := ""
-	if u, err := user.Current(); err == nil {
-		userName = filepath.Base(u.Username)
-	}
+	userName := currentUserName()
 	broad := tooBroad()
 	ex := newExistCache()
-	sc := steam.Detect()
 	emuDirs := emulatorDirs()
 	for _, d := range emuDirs {
 		broad[strings.ToLower(d.path)] = true
 		broad[strings.ToLower(filepath.Dir(d.path))] = true
 	}
+	sc := steam.Detect()
+	sc.Stop = stopAt(broad)
+	inst := CachedInstalled(time.Minute)
 	emuSaves := emulatorSaves(emuDirs)
 	emuByApp := map[int]string{}
 	for _, s := range emuSaves {
@@ -88,6 +95,7 @@ func Scan(entries []Entry) []Found {
 
 	type hit struct {
 		name     string
+		steamID  int
 		dir      string
 		cloud    bool   // confirmed Steam Cloud
 		unverify bool   // supports Steam Cloud, not confirmed
@@ -107,13 +115,10 @@ func Scan(entries []Entry) []Found {
 						if broad[strings.ToLower(d)] {
 							continue
 						}
-						h := hit{name: e.Name, dir: d}
+						h := hit{name: e.Name, steamID: e.SteamID, dir: d}
 						if e.SteamCloud {
-							v := sc.Check(e.SteamID, d)
-							h.cloud, h.unverify, h.reason = v.Covered, !v.Covered, v.Reason
-							if g := emuByApp[e.SteamID]; !v.Covered && g != "" {
-								h.reason = "emulator:" + g
-							}
+							h.cloud, h.reason = cloudVerdict(e, d, sc, emuByApp[e.SteamID], inst)
+							h.unverify = !h.cloud
 						}
 						mu.Lock()
 						hits = append(hits, h)
@@ -158,7 +163,7 @@ func Scan(entries []Entry) []Found {
 		for _, g := range byParent {
 			parent := filepath.Dir(g[0].dir)
 			if len(g) > 1 && !broad[strings.ToLower(parent)] {
-				merged := hit{name: g[0].name, dir: parent, cloud: true}
+				merged := hit{name: g[0].name, steamID: g[0].steamID, dir: parent, cloud: true}
 				for _, k := range g {
 					// The parent is only in Steam Cloud if every slot is.
 					merged.cloud = merged.cloud && k.cloud
@@ -178,16 +183,23 @@ func Scan(entries []Entry) []Found {
 				continue
 			}
 			seenDir[key] = true
-			out = append(out, Found{Name: name, Path: k.dir, SteamCloud: k.cloud, SteamCloudUnverified: k.unverify,
-				SteamCloudReason: k.reason, Known: true})
+			out = append(out, Found{Name: name, Path: k.dir, SteamID: k.steamID, SteamCloud: k.cloud,
+				SteamCloudUnverified: k.unverify, SteamCloudReason: k.reason, Known: true})
 		}
 	}
 
 	// Saves a Steam emulator keeps for a cracked copy: "Game (RUNE saves)".
+	// When the game also keeps them in a folder of its own, this is a copy.
 	names := map[int]string{}
 	for _, e := range entries {
 		if _, ok := names[e.SteamID]; !ok && e.SteamID > 0 {
 			names[e.SteamID] = e.Name
+		}
+	}
+	own := map[int][]string{}
+	for _, f := range out {
+		if f.SteamID > 0 {
+			own[f.SteamID] = append(own[f.SteamID], f.Path)
 		}
 	}
 	for _, s := range emuSaves {
@@ -197,7 +209,11 @@ func Scan(entries []Entry) []Found {
 			continue
 		}
 		seenDir[key] = true
-		out = append(out, Found{Name: name + " (" + s.group + " saves)", Path: s.dir, Emulator: s.group, Known: true})
+		f := Found{Name: name + " (" + s.group + " saves)", Path: s.dir, Emulator: s.group, SteamID: s.appID, Known: true}
+		if mirrorOf(s.dir, own[s.appID]) {
+			f.CopyOf = name
+		}
+		out = append(out, f)
 	}
 
 	// Heuristic: anything else in the classic save containers.
@@ -233,6 +249,9 @@ func Scan(entries []Entry) []Found {
 		go func(f *Found) {
 			defer wg2.Done()
 			f.Size, f.Files, f.Modified = measure(f.Path)
+			if twin := paths.OneDriveTwin(f.Path); twin != "" {
+				f.OneDriveCopy, f.OneDriveCopyNewer = twin, newerCopy(twin, f.Modified)
+			}
 			<-sem
 		}(&out[i])
 	}

@@ -14,7 +14,14 @@ type Matcher struct {
 	res []*regexp.Regexp
 }
 
-var builtin = []string{".stfolder", ".stversions", ".stignore", "~syncthing~*", ".syncthing.*.tmp", "*.syncer-tmp", "desktop.ini", "Thumbs.db"}
+// steam_autocloud.vdf belongs to the PC it's on: Steam writes it for the
+// account that uses that PC, and a copy of it on another PC tells Steam (and
+// Syncer) the wrong owner.
+var builtin = []string{".stfolder", ".stversions", ".stignore", "~syncthing~*", ".syncthing.*.tmp", "*.syncer-tmp", "desktop.ini", "Thumbs.db",
+	SteamMarker}
+
+// SteamMarker is the file Steam Cloud writes into the save folders it keeps.
+const SteamMarker = "steam_autocloud.vdf"
 
 // The lines Syncer writes into a synced folder's .stignore (a game's
 // exclusions) sit between these markers; the user's own lines are kept.

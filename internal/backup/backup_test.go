@@ -30,16 +30,17 @@ func read(t *testing.T, p string) string {
 func TestMatcher(t *testing.T) {
 	m := NewMatcher(append(builtin, "Trainers/", "// comment", "/root-only.txt", "*.log", "(?d)cache", "!keep.log"))
 	cases := map[string]bool{
-		".stfolder":              true,
-		"Trainers":               true,
-		`Trainers\x\y.exe`:       true,
-		"root-only.txt":          true,
-		"sub/root-only.txt":      false,
-		"a/b/debug.LOG":          true,
-		"cache/x":                true,
-		"saves/slot1.sav":        false,
-		"~syncthing~foo.tmp":     true,
-		"x/.syncthing.a.sav.tmp": true,
+		".stfolder":                 true,
+		"Trainers":                  true,
+		`Trainers\x\y.exe`:          true,
+		"root-only.txt":             true,
+		"sub/root-only.txt":         false,
+		"a/b/debug.LOG":             true,
+		"cache/x":                   true,
+		"saves/slot1.sav":           false,
+		"~syncthing~foo.tmp":        true,
+		"x/.syncthing.a.sav.tmp":    true,
+		"Saves/steam_autocloud.vdf": true,
 	}
 	for p, want := range cases {
 		if got := m.Ignored(p); got != want {
@@ -296,5 +297,23 @@ func TestLockBlocksBackup(t *testing.T) {
 	defer u()
 	if _, err := Run(context.Background(), nil, Options{Target: t.TempDir()}); err != ErrBusy {
 		t.Fatalf("got %v, want ErrBusy", err)
+	}
+}
+
+// A backup of a Steam Cloud folder carries the backing-up PC's
+// steam_autocloud.vdf; restoring must not put it on this PC.
+func TestRestoreSkipsSteamMarker(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "marker-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	f := Folder{ID: id, Label: "M", Path: src}
+	write(t, filepath.Join(target, id, "save.sav"), "x")
+	write(t, filepath.Join(target, id, "steam_autocloud.vdf"), "other PC")
+	n, err := Restore(target, f, time.Time{})
+	if err != nil || n != 1 {
+		t.Fatalf("restore: n=%d err=%v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(src, "steam_autocloud.vdf")); err == nil {
+		t.Error("steam_autocloud.vdf restored")
 	}
 }

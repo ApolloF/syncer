@@ -244,6 +244,8 @@ func (f fakeSteam) detect(h Host) *Cloud {
 func TestCheck(t *testing.T) {
 	f := newFakeSteam(t)
 	c := f.detect(Host{})
+	plain := filepath.Join(f.roaming, "Plain", "Saves") // no steam_autocloud.vdf
+	write(t, filepath.Join(plain, "save.sav"), "x")
 	for _, tt := range []struct {
 		app  int
 		dir  string
@@ -252,10 +254,10 @@ func TestCheck(t *testing.T) {
 		{222, f.saves, ""},
 		{222, filepath.Join(f.saves, "slot1"), ""},
 		{222, filepath.Join(f.roaming, "Game", "Config"), ReasonUntracked},
-		{333, f.saves, ReasonNoCloudData}, // cloud data belongs to the other account
+		{333, plain, ReasonNoCloudData}, // cloud data belongs to the other account
 		{444, f.saves, ReasonCloudOff},
-		{555, f.saves, ReasonNoCloudData},
-		{666, f.saves, ReasonNotInstalled}, // e.g. a repack: no appmanifest
+		{555, plain, ReasonNoCloudData},
+		{666, plain, ReasonNotInstalled}, // e.g. a repack: no appmanifest
 		{0, f.saves, ReasonNoSteam},
 	} {
 		v := c.Check(tt.app, tt.dir)
@@ -323,11 +325,117 @@ func TestCheckFreshness(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFakeSteam(t)
+			// These heuristics apply to folders without a steam_autocloud.vdf.
+			if err := os.Remove(filepath.Join(f.saves, "steam_autocloud.vdf")); err != nil {
+				t.Fatal(err)
+			}
 			tt.setup(f)
 			v := f.detect(Host{Running: func(int) bool { return tt.running }}).Check(222, f.saves)
 			if v.Reason != tt.want || v.Covered != (tt.want == "") {
 				t.Errorf("got %+v, want reason %q", v, tt.want)
 			}
 		})
+	}
+}
+
+// steam_autocloud.vdf settles whether Steam Cloud keeps a folder, for any
+// account that uses this PC, signed in or not.
+func TestCheckMarker(t *testing.T) {
+	f := newFakeSteam(t)
+	old := time.Now().Add(-time.Hour)
+	marked := func(dir string, acc int) string {
+		write(t, filepath.Join(dir, "save.sav"), "x")
+		touch(t, filepath.Join(dir, "save.sav"), old)
+		write(t, filepath.Join(dir, "steam_autocloud.vdf"), fmt.Sprintf(`"steam_autocloud.vdf" { "accountid" "%d" }`, acc))
+		return dir
+	}
+	other := marked(filepath.Join(f.roaming, "Other", "Saves"), 1) // the account that isn't signed in
+	foreign := marked(filepath.Join(f.roaming, "Copied", "Saves"), 99)
+	perUser := filepath.Join(f.roaming, "PerUser", "Saves")
+	marked(filepath.Join(perUser, "76561197960265729"), 1)
+	parent := filepath.Join(f.roaming, "Parent", "Saves")
+	marked(parent, 2)
+	below := filepath.Join(parent, "Default")
+	write(t, filepath.Join(below, "slot.sav"), "x")
+	mods := marked(filepath.Join(f.roaming, "Mods", "Saves"), 2)
+	write(t, filepath.Join(mods, "save.skse"), "x")
+	touch(t, filepath.Join(f.saves, "slot1", "save.sav"), old) // changed after Steam last synced it
+
+	c := f.detect(Host{})
+	for _, tt := range []struct {
+		name string
+		app  int
+		dir  string
+		want string
+		acc  uint32
+	}{
+		{"other local account, installed", 333, other, "", 1},
+		{"not installed here", 666, other, "", 1},
+		{"account not on this PC", 666, foreign, ReasonOtherAccount, 0},
+		{"per-account subfolder", 666, perUser, "", 1},
+		{"marker above, parents not searched", 666, below, ReasonNotInstalled, 0},
+		{"cloud off for the game", 444, parent, ReasonCloudOff, 2},
+		{"cloud off for another account only", 444, other, "", 1},
+		{"mod co-saves", 666, mods, ReasonModSaves + ":.skse", 2},
+		{"played outside Steam is no reason", 222, f.saves, "", 2},
+	} {
+		v := c.Check(tt.app, tt.dir)
+		if v.Reason != tt.want || v.Covered != (tt.want == "") || v.Account != tt.acc {
+			t.Errorf("%s: got %+v, want reason %q account %d", tt.name, v, tt.want, tt.acc)
+		}
+	}
+
+	// Steam puts the marker in the Auto-Cloud root, above the found folder.
+	c = f.detect(Host{})
+	c.Stop = func(d string) bool { return strings.EqualFold(d, f.roaming) }
+	if v := c.Check(666, below); !v.Covered || v.Account != 2 {
+		t.Errorf("marker in a parent: %+v", v)
+	}
+
+	// A marker from a foreign account doesn't hide what Steam tracks here.
+	write(t, filepath.Join(f.saves, "steam_autocloud.vdf"), `"steam_autocloud.vdf" { "accountid" "99" }`)
+	touch(t, filepath.Join(f.saves, "slot1", "save.sav"), f.synced)
+	if v := f.detect(Host{}).Check(222, f.saves); !v.Covered {
+		t.Errorf("tracked folder with a foreign marker: %+v", v)
+	}
+
+	// A crack in the Steam install still wins over the marker.
+	write(t, filepath.Join(f.install, "steam_emu.ini"), "x")
+	if v := f.detect(Host{}).Check(333, other); !v.Covered {
+		t.Errorf("333 isn't cracked: %+v", v)
+	}
+	if v := f.detect(Host{}).Check(222, parent); v.Reason != ReasonModified+":steam_emu.ini" {
+		t.Errorf("cracked Steam copy with a marker: %+v", v)
+	}
+}
+
+// A folder Steam Cloud will fill counts before it exists, so another PC's
+// copy isn't synced into it; API-only games (Baldur's Gate 3 keeps its own
+// PlayerProfiles next to Steam's _SAVE_Public copy) still sync.
+func TestTracksInto(t *testing.T) {
+	es := []entry{{rel: `game\saves\slot1\save.sav`}, {rel: "remote.sav"}}
+	for dir, want := range map[string]bool{
+		`C:\Users\u\AppData\Roaming\Game\Saves`:       true,
+		`C:\Users\u\AppData\Roaming\Game\Saves\slot1`: true,
+		`C:\Users\u\AppData\Roaming\Game`:             true,
+		`C:\Users\u\AppData\Roaming\Other\Saves`:      false,
+		`C:\Users\u\AppData\Roaming\Game\Config`:      false,
+	} {
+		if got := tracksInto(dir, es); got != want {
+			t.Errorf("tracksInto(%s) = %v, want %v", dir, got, want)
+		}
+	}
+	bg3 := []entry{{rel: `_save_public\savegames\story\a__b\a__b.lsv`}}
+	if tracksInto(`C:\Users\u\AppData\Local\Larian Studios\Baldur's Gate 3\PlayerProfiles\Public\Savegames\Story`, bg3) {
+		t.Error("Baldur's Gate 3's own folder isn't Steam's")
+	}
+
+	f := newFakeSteam(t)
+	missing := filepath.Join(t.TempDir(), "Game", "Saves")
+	if v := f.detect(Host{}).Check(222, missing); !v.Covered {
+		t.Errorf("folder Steam Cloud will fill: %+v", v)
+	}
+	if v := f.detect(Host{}).Check(222, filepath.Join(t.TempDir(), "Elsewhere")); v.Covered {
+		t.Errorf("unrelated missing folder: %+v", v)
 	}
 }
