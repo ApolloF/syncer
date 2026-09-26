@@ -151,6 +151,15 @@ func (a *App) deviceNames() map[string]string {
 // history (Google Drive backup, or the folder's .stversions), never deleted.
 // The result syncs to the other PCs.
 func (a *App) ResolveConflict(id, copyRel string, useCopy bool) error {
+	if err := a.resolveConflict(id, copyRel, useCopy); err != nil {
+		return err
+	}
+	runtime.EventsEmit(a.ctx, "changed")
+	return nil
+}
+
+// resolveConflict is ResolveConflict without telling the window.
+func (a *App) resolveConflict(id, copyRel string, useCopy bool) error {
 	f, err := folderByID(id)
 	if err != nil {
 		return err
@@ -169,6 +178,5 @@ func (a *App) ResolveConflict(id, copyRel string, useCopy bool) error {
 	logx.Printf("conflict in %s: kept the %s version of %s, other one moved to %s", f.Label,
 		map[bool]string{true: "other", false: "current"}[useCopy], copyRel, where)
 	a.forgetConflicts()
-	runtime.EventsEmit(a.ctx, "changed")
 	return nil
 }

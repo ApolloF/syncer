@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"os"
 
@@ -28,6 +29,9 @@ func main() {
 		case "--background", "--backup":
 			runBackground()
 			return
+		case "--api": // the launcher API without a window (see api.go)
+			runAPI()
+			return
 		case "--resume": // a pause ran out (\Syncer-Resume task)
 			runResume()
 			return
@@ -51,9 +55,12 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
 		StartHidden:      startHidden,
-		OnStartup:        app.startup,
-		OnBeforeClose:    app.beforeClose,
-		OnShutdown:       app.shutdown,
+		OnStartup: func(ctx context.Context) {
+			app.startup(ctx)
+			go serveAPI(ctx, app)
+		},
+		OnBeforeClose: app.beforeClose,
+		OnShutdown:    app.shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "b1c9c8a4-syncer-apollof",
 			// Opening Syncer again just brings the existing window forward.

@@ -5,6 +5,8 @@ go 1.26.0
 toolchain go1.26.6
 
 require (
+	github.com/ApolloF/gamekit v0.1.0
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/energye/systray v1.0.3
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/wailsapp/wails/v2 v2.16.0
@@ -13,7 +15,6 @@ require (
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/ApolloF/gamekit v0.1.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
