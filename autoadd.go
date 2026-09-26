@@ -25,7 +25,8 @@ var autoAddMu sync.Mutex
 // database, not already synced, not one the user stopped syncing, installed
 // here when "only installed games" is on, and not already in Steam Cloud
 // (unless IncludeSteamCloud is on). Games that support Steam Cloud but can't
-// be confirmed to use it here are added too. Games whose saves are in OneDrive
+// be confirmed to use it here are added too, while a Steam emulator's copy of
+// saves the game keeps in its own folder is not. Games whose saves are in OneDrive
 // are backed up only: OneDrive already syncs them, and two sync tools on the
 // same files make conflicting copies. It returns the games synced and the
 // games backed up only.
@@ -117,6 +118,10 @@ func wantAuto(g discover.Found, s store.Settings, installed func(string) bool) b
 	if g.SteamCloud && !s.IncludeSteamCloud {
 		return false
 	}
+	// The game's own save folder already holds these saves.
+	if g.CopyOf != "" {
+		return false
+	}
 	if s.Dismissed[dismissKey(g.Path)] {
 		return false
 	}
@@ -180,9 +185,19 @@ func addFolder(ctx context.Context, c *syncthing.Client, label, path string) (st
 	if label == "" {
 		label = filepath.Base(path)
 	}
-	id := meta.NewID(label, taken)
+	id := syncID(st.MyID, label, path, taken)
 	if err := meta.AddFolder(ctx, c, id, label, path, st.MyID, others); err != nil {
 		return "", err
 	}
 	return id, nil
+}
+
+// syncID picks the id a folder syncs under: the one another PC already uses
+// for the same saves, so both PCs share one folder (a new id there would make
+// each PC skip the other's copy as overlapping), else a new one from label.
+func syncID(me, label, path string, taken map[string]bool) string {
+	if sf, ok := meta.PeerFolderAt(me, path); ok && !taken[sf.ID] {
+		return sf.ID
+	}
+	return meta.NewID(label, taken)
 }

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/ApolloF/syncer/internal/paths"
 )
@@ -94,4 +95,73 @@ func hasFiles(dir string) bool {
 		return nil
 	})
 	return found
+}
+
+// emulatorApp reports whether dir is an emulator's per-game folder
+// (…\Steam\RUNE\<appid>) and for which app.
+func emulatorApp(dir string) (appID int, group string, ok bool) {
+	parent := filepath.Dir(filepath.Clean(dir))
+	id, err := strconv.Atoi(filepath.Base(dir))
+	if err != nil || id <= 0 {
+		return 0, "", false
+	}
+	for _, d := range emulatorDirs() {
+		if strings.EqualFold(filepath.Clean(d.path), parent) {
+			return id, d.group, true
+		}
+	}
+	return 0, "", false
+}
+
+// A save file name must show up in both places this often before an emulator
+// folder counts as a copy of the game's own saves.
+const (
+	mirrorMin   = 3
+	mirrorFiles = 5000
+)
+
+// mirrorOf reports whether an emulator folder only holds a copy of saves the
+// game also keeps in one of gameDirs. Games using Steam Cloud through its API
+// (Baldur's Gate 3) write every save twice: into their own save folder and
+// through Steam, which an emulator redirects into its remote\ folder, often
+// with the names lowercased. Emulator folders that hold the game's only
+// saves have (almost) no names in common with any other folder.
+func mirrorOf(emuDir string, gameDirs []string) bool {
+	emu := baseNames(filepath.Join(emuDir, "remote"))
+	if len(emu) < mirrorMin {
+		return false
+	}
+	for _, d := range gameDirs {
+		own := baseNames(d)
+		n := 0
+		for k := range emu {
+			if own[k] {
+				n++
+			}
+		}
+		// A quarter of the smaller set: the emulator's copy keeps saves the
+		// game has since deleted, and a game folder may hold more than saves.
+		if n >= mirrorMin && 4*n >= min(len(emu), len(own)) {
+			return true
+		}
+	}
+	return false
+}
+
+// baseNames returns the lower-case file names below dir (capped).
+func baseNames(dir string) map[string]bool {
+	out := map[string]bool{}
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if len(out) >= mirrorFiles {
+			return filepath.SkipAll
+		}
+		if n := strings.ToLower(d.Name()); n != "steam_autocloud.vdf" && n != "desktop.ini" {
+			out[n] = true
+		}
+		return nil
+	})
+	return out
 }

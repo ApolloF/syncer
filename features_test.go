@@ -150,3 +150,29 @@ func TestRecordFolders(t *testing.T) {
 		t.Error("year-old entry not pruned")
 	}
 }
+
+// A Steam emulator's copy of saves the game keeps in its own folder (Baldur's
+// Gate 3 on RUNE) isn't synced on its own; an emulator folder that is the
+// game's only save is.
+func TestWantAutoSkipsEmulatorCopies(t *testing.T) {
+	s := store.Settings{AutoAddMaxGB: 1, Dismissed: map[string]bool{}, Ignored: map[string]bool{}}
+	yes := func(string) bool { return true }
+	g := discover.Found{Name: "Baldur's Gate 3 (RUNE saves)", Path: `C:\Users\Public\Documents\Steam\RUNE\1086940`,
+		Emulator: "RUNE", Known: true, Files: 3, Size: 10}
+	if !wantAuto(g, s, yes) {
+		t.Error("emulator saves with no other copy weren't added")
+	}
+	g.CopyOf = "Baldur's Gate 3"
+	if wantAuto(g, s, yes) {
+		t.Error("copy of the game's own saves added")
+	}
+}
+
+func TestWithSyncIgnores(t *testing.T) {
+	if got := withSyncIgnores(nil); !slices.Equal(got, []string{"steam_autocloud.vdf"}) {
+		t.Errorf("no exclusions: %v", got)
+	}
+	if got := withSyncIgnores([]string{"*.log", "STEAM_AUTOCLOUD.VDF"}); !slices.Equal(got, []string{"steam_autocloud.vdf", "*.log"}) {
+		t.Errorf("with exclusions: %v", got)
+	}
+}

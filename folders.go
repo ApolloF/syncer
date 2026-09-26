@@ -52,6 +52,11 @@ type FolderView struct {
 
 	Inside   string `json:"inside"`   // id of another synced folder that holds this one (synced twice)
 	OneDrive bool   `json:"oneDrive"` // OneDrive syncs this folder too
+
+	SteamCloud        bool   `json:"steamCloud"`        // Steam Cloud keeps this folder on this PC
+	CopyOf            string `json:"copyOf"`            // a Steam emulator's copy of this game's own saves
+	OneDriveCopy      string `json:"oneDriveCopy"`      // another copy on the other side of OneDrive
+	OneDriveCopyNewer bool   `json:"oneDriveCopyNewer"` // … with newer saves than this one
 }
 
 // Folders lists synced folders plus this PC's backup-only ones. Backup-only
@@ -103,6 +108,9 @@ func (a *App) Folders() ([]FolderView, error) {
 	od := paths.OneDriveRoots()
 	for i := range out {
 		out[i].OneDrive = paths.WithinAny(od, out[i].Path)
+		c := discover.Classify(out[i].Label, out[i].Path)
+		out[i].SteamCloud, out[i].CopyOf = c.SteamCloud, c.CopyOf
+		out[i].OneDriveCopy, out[i].OneDriveCopyNewer = c.OneDriveCopy, c.OneDriveCopyNewer
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
 	a.addDetails(out, s)
@@ -144,6 +152,7 @@ type GameView struct {
 	discover.Found
 	SyncedBy  string `json:"syncedBy"`  // label of the synced or backup-only folder covering this path
 	Installed bool   `json:"installed"` // the game is installed on this PC (as far as Syncer can tell)
+	Dismissed bool   `json:"dismissed"` // the user removed it or stopped syncing it: never added on its own
 }
 
 func (a *App) annotate(found []discover.Found) []GameView {
@@ -159,12 +168,13 @@ func (a *App) annotate(found []discover.Found) []GameView {
 			}
 		}
 	}
-	for _, lf := range store.LoadSettings().BackupOnly {
+	s := store.LoadSettings()
+	for _, lf := range s.BackupOnly {
 		covering[lf.Path] = lf.Label
 	}
 	out := make([]GameView, 0, len(found))
 	for _, f := range found {
-		g := GameView{Found: f, Installed: inst.Has(f.Name)}
+		g := GameView{Found: f, Installed: inst.Has(f.Name), Dismissed: s.Dismissed[dismissKey(f.Path)]}
 		for p, label := range covering {
 			if paths.Within(p, f.Path) {
 				g.SyncedBy = label
@@ -463,15 +473,19 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		if err != nil {
 			return err
 		}
-		syncID := lf.SyncID
-		if syncID == "" {
+		sid := lf.SyncID
+		if sid == "" {
 			taken := map[string]bool{}
 			for _, f := range fs {
 				taken[f.ID] = true
 			}
-			syncID = meta.NewID(lf.Label, taken)
+			me := ""
+			if st, err := c.Status(ctx); err == nil {
+				me = st.MyID
+			}
+			sid = syncID(me, lf.Label, lf.Path, taken)
 		}
-		if err := a.share(ctx, c, syncID, lf.Label, lf.Path, s.NoBackup[id]); err != nil {
+		if err := a.share(ctx, c, sid, lf.Label, lf.Path, s.NoBackup[id]); err != nil {
 			return err
 		}
 		_ = forgetBackup(id, false) // backups continue under the synced id
@@ -655,9 +669,13 @@ func forgetBackup(id string, deleteBackup bool) error {
 }
 
 // cleanMarkers removes what Syncthing adds to a synced folder, when that is
-// safe: the .stfolder marker, and .stversions only if it's empty. It returns
-// the .stversions path when older versions were kept.
+// safe: the .stfolder marker, .stversions only if it's empty, and .stignore
+// if it holds nothing but Syncer's own lines. It returns the .stversions path
+// when older versions were kept.
 func cleanMarkers(dir string) string {
+	if ig := filepath.Join(dir, ".stignore"); len(mergeIgnores(readIgnores(ig), nil)) == 0 {
+		_ = os.Remove(ig)
+	}
 	marker := filepath.Join(dir, ".stfolder")
 	if ms, _ := filepath.Glob(filepath.Join(marker, "syncthing-folder-*.txt")); len(ms) > 0 {
 		for _, m := range ms {
@@ -689,6 +707,43 @@ func (a *App) SetFolderBackup(id string, on bool) error {
 	return err
 }
 
+// LeaveToSteamCloud stops syncing every game Steam Cloud also keeps on this
+// PC: with two sync tools on the same saves Steam asks which copy to keep,
+// and the wrong pick overwrites a save. They stay backed up (or off, if
+// their backup was off), and aren't synced here again on their own.
+func (a *App) LeaveToSteamCloud() (int, error) {
+	c, err := a.client()
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := joinCtx(a.ctx)
+	defer cancel()
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	var firstErr error
+	for _, f := range fs {
+		if f.ID == meta.FolderID || !discover.Classify(cmpOr(f.Label, f.ID), f.Path).SteamCloud {
+			continue
+		}
+		if _, err := a.stopSync(ctx, c, f.ID); err != nil {
+			logx.Printf("leave %s to Steam Cloud: %v", cmpOr(f.Label, f.ID), err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", cmpOr(f.Label, f.ID), err)
+			}
+			continue
+		}
+		n++
+	}
+	if n > 0 {
+		logx.Printf("left %d game(s) to Steam Cloud", n)
+		runtime.EventsEmit(a.ctx, "changed")
+	}
+	return n, firstErr
+}
+
 // ---- other PCs ---------------------------------------------------------------
 
 type AvailableView struct {
@@ -696,7 +751,7 @@ type AvailableView struct {
 	Label  string `json:"label"`
 	Path   string `json:"path"`
 	From   string `json:"from"`
-	Reason string `json:"reason"` // removed | not-installed
+	Reason string `json:"reason"` // a meta.Skip* reason, or meta.Pending
 }
 
 // Available lists games your other PCs sync that this PC doesn't.

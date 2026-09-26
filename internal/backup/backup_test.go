@@ -30,16 +30,17 @@ func read(t *testing.T, p string) string {
 func TestMatcher(t *testing.T) {
 	m := NewMatcher(append(builtin, "Trainers/", "// comment", "/root-only.txt", "*.log", "(?d)cache", "!keep.log"))
 	cases := map[string]bool{
-		".stfolder":              true,
-		"Trainers":               true,
-		`Trainers\x\y.exe`:       true,
-		"root-only.txt":          true,
-		"sub/root-only.txt":      false,
-		"a/b/debug.LOG":          true,
-		"cache/x":                true,
-		"saves/slot1.sav":        false,
-		"~syncthing~foo.tmp":     true,
-		"x/.syncthing.a.sav.tmp": true,
+		".stfolder":                 true,
+		"Trainers":                  true,
+		`Trainers\x\y.exe`:          true,
+		"root-only.txt":             true,
+		"sub/root-only.txt":         false,
+		"a/b/debug.LOG":             true,
+		"cache/x":                   true,
+		"saves/slot1.sav":           false,
+		"~syncthing~foo.tmp":        true,
+		"x/.syncthing.a.sav.tmp":    true,
+		"Saves/steam_autocloud.vdf": true,
 	}
 	for p, want := range cases {
 		if got := m.Ignored(p); got != want {
@@ -296,5 +297,54 @@ func TestLockBlocksBackup(t *testing.T) {
 	defer u()
 	if _, err := Run(context.Background(), nil, Options{Target: t.TempDir()}); err != ErrBusy {
 		t.Fatalf("got %v, want ErrBusy", err)
+	}
+}
+
+// Pre-sync snapshots may be the only copy left of a PC's own saves: they
+// outlive the usual history.
+func TestPruneKeepsMarkedPoints(t *testing.T) {
+	target := t.TempDir()
+	id := "keep-test"
+	point := func(age time.Duration, mark bool) string {
+		dir := filepath.Join(target, VersionsDir, id, time.Now().Add(-age).Format(stampFmt))
+		write(t, filepath.Join(dir, "save.sav"), "x")
+		if mark {
+			keepPoint(dir)
+		}
+		return dir
+	}
+	old := point(40*24*time.Hour, false)
+	marked := point(41*24*time.Hour, true)
+	ancient := point(400*24*time.Hour, true)
+	fresh := point(time.Hour, false)
+	prune(target, 30)
+	for dir, want := range map[string]bool{old: false, marked: true, ancient: false, fresh: true} {
+		if _, err := os.Stat(dir); (err == nil) != want {
+			t.Errorf("%s: exists=%v, want %v", filepath.Base(dir), err == nil, want)
+		}
+	}
+	if _, err := os.Stat(ancient + keepSuffix); err == nil {
+		t.Error("mark of a pruned point left behind")
+	}
+	if n := len(Points(target, id)); n != 2 {
+		t.Errorf("marks must not show up as restore points: %d points", n)
+	}
+}
+
+// A backup of a Steam Cloud folder carries the backing-up PC's
+// steam_autocloud.vdf; restoring must not put it on this PC.
+func TestRestoreSkipsSteamMarker(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "marker-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	f := Folder{ID: id, Label: "M", Path: src}
+	write(t, filepath.Join(target, id, "save.sav"), "x")
+	write(t, filepath.Join(target, id, "steam_autocloud.vdf"), "other PC")
+	n, err := Restore(target, f, time.Time{})
+	if err != nil || n != 1 {
+		t.Fatalf("restore: n=%d err=%v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(src, "steam_autocloud.vdf")); err == nil {
+		t.Error("steam_autocloud.vdf restored")
 	}
 }

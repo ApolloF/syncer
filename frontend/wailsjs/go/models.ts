@@ -316,6 +316,10 @@ export namespace main {
 	    newerAt: any;
 	    inside: string;
 	    oneDrive: boolean;
+	    steamCloud: boolean;
+	    copyOf: string;
+	    oneDriveCopy: string;
+	    oneDriveCopyNewer: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderView(source);
@@ -346,6 +350,10 @@ export namespace main {
 	        this.newerAt = this.convertValues(source["newerAt"], null);
 	        this.inside = source["inside"];
 	        this.oneDrive = source["oneDrive"];
+	        this.steamCloud = source["steamCloud"];
+	        this.copyOf = source["copyOf"];
+	        this.oneDriveCopy = source["oneDriveCopy"];
+	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -373,7 +381,11 @@ export namespace main {
 	    steamCloudUnverified: boolean;
 	    steamCloudReason: string;
 	    emulator: string;
+	    copyOf: string;
+	    steamId: number;
 	    oneDrive: boolean;
+	    oneDriveCopy: string;
+	    oneDriveCopyNewer: boolean;
 	    known: boolean;
 	    size: number;
 	    files: number;
@@ -381,6 +393,7 @@ export namespace main {
 	    modified: any;
 	    syncedBy: string;
 	    installed: boolean;
+	    dismissed: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new GameView(source);
@@ -394,13 +407,18 @@ export namespace main {
 	        this.steamCloudUnverified = source["steamCloudUnverified"];
 	        this.steamCloudReason = source["steamCloudReason"];
 	        this.emulator = source["emulator"];
+	        this.copyOf = source["copyOf"];
+	        this.steamId = source["steamId"];
 	        this.oneDrive = source["oneDrive"];
+	        this.oneDriveCopy = source["oneDriveCopy"];
+	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
 	        this.known = source["known"];
 	        this.size = source["size"];
 	        this.files = source["files"];
 	        this.modified = this.convertValues(source["modified"], null);
 	        this.syncedBy = source["syncedBy"];
 	        this.installed = source["installed"];
+	        this.dismissed = source["dismissed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

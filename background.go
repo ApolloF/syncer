@@ -61,6 +61,7 @@ func runBackground() {
 				if _, _, err := autoAdd(ctx, c); err != nil {
 					logx.Printf("auto-add: %v", err)
 				}
+				ensureIgnores(ctx, c)
 			}
 		}
 	}

@@ -22,6 +22,7 @@
     Folders, ScanGames, AddFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
+    LeaveToSteamCloud,
   } from '../../wailsjs/go/main/App'
   import type { conflict, store } from '../../wailsjs/go/models'
 
@@ -86,7 +87,10 @@
     }
   }
   let stoppingUninstalled = $state(false)
+  let leavingCloud = $state(false)
   let syncingId = $state('')
+  // Syncing a game Steam Cloud keeps too is asked first (see askCloud).
+  let cloudAsk = $state<{ name: string; go: () => void } | null>(null)
 
   const o = $derived(ui.overview)
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
@@ -142,6 +146,7 @@
   const others = $derived((cache.others ?? []).filter(b => matches(b.label, b.path)))
   const elsewhereCount = $derived(cache.available && cache.others ? cache.available.length + cache.others.length : null)
   const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
+  const syncedCloud = $derived(cache.folders.filter(f => f.sync && f.steamCloud))
   // Synced folders inside another synced folder, grouped by the outer one.
   const overlaps = $derived.by(() => {
     const m = new Map<string, { outer: main.FolderView; inner: main.FolderView[] }>()
@@ -181,7 +186,12 @@
     return parts.join(' · ') || b.id
   }
 
-  async function add(name: string, path: string) {
+  // Two sync tools on the same saves: Steam asks which copy to keep, and the
+  // wrong pick overwrites a save. Syncing such a game is the user's call.
+  function askCloud(name: string, go: () => void) { cloudAsk = { name, go } }
+
+  async function add(name: string, path: string, cloud = false) {
+    if (cloud) return askCloud(name, () => add(name, path))
     adding = path
     const ok = await attempt(() => AddFolder(name, path), `Now syncing ${name}`)
     adding = ''
@@ -235,7 +245,8 @@
     else f.backup = !on
   }
 
-  async function toggleSync(f: main.FolderView, on: boolean) {
+  async function toggleSync(f: main.FolderView, on: boolean, asked = false) {
+    if (on && f.steamCloud && !asked) return askCloud(f.label, () => toggleSync(f, on, true))
     f.sync = on
     if (await attempt(() => SetFolderSync(f.id, on))) { load(); refresh() }
     else f.sync = !on
@@ -346,11 +357,23 @@
     stoppingUninstalled = false
   }
 
+  async function leaveToCloud() {
+    leavingCloud = true
+    try {
+      const n = await LeaveToSteamCloud()
+      toast(`Left ${plural(n, 'game')} to Steam Cloud. Syncer keeps backing them up.`, 'ok')
+      cache.found = null
+      load(); refresh()
+    } catch (e) { fail(e); load() }
+    leavingCloud = false
+  }
+
   async function showCloudGames() {
     if (o && await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: true } as store.Settings))) refresh()
   }
 
-  async function syncHere(a: main.AvailableView) {
+  async function syncHere(a: main.AvailableView, asked = false) {
+    if (a.reason === 'steam-cloud' && !asked) return askCloud(a.label, () => syncHere(a, true))
     syncingId = a.id
     if (await attempt(() => SyncAvailable(a.id), `Now syncing ${a.label}`)) {
       cache.available = cache.available?.filter(x => x.id !== a.id) ?? null
@@ -416,8 +439,20 @@
       case 'untracked': return { text: 'Folder not in Steam Cloud', tip: `Steam Cloud keeps other files of this game, not this folder. ${covers}` }
       case 'no-cloud-data': return { text: 'Not in your Steam Cloud', tip: `Your Steam account on this PC has no cloud saves for this game (another account owns it, or it never synced). ${covers}` }
       case 'cloud-off': return { text: 'Steam Cloud off', tip: `Steam Cloud is switched off for your account or this game. ${covers}` }
+      case 'other-account': return { text: 'From another Steam account', tip: `This folder's steam_autocloud.vdf names a Steam account that doesn't use this PC, so these saves were copied here from another PC. Steam Cloud doesn't keep them here. ${covers}` }
       default: return { text: 'Steam Cloud not in use', tip: `This game supports Steam Cloud, but Steam or a signed-in account wasn't found on this PC. ${covers}` }
     }
+  }
+
+  // "Not installed through Steam" adds nothing to "Not installed" when the
+  // game isn't installed at all.
+  const cloudNoted = (g: main.GameView) => g.steamCloudUnverified && !(g.steamCloudReason === 'not-installed' && !g.installed)
+
+  // A Steam emulator folder holding a copy of the game's own saves.
+  function copyTip(game: string, found: boolean): string {
+    const why = `${game} writes every save twice: into its own save folder and through the Steam Cloud API, which this Steam emulator keeps here. Its own folder has the same saves, so `
+    return why + (found ? "Syncer doesn't add this copy automatically."
+      : "your other PCs don't add this copy on their own. Turn off Sync to stop syncing it here; Syncer keeps backing it up.")
   }
 
   function stateOf(f: main.FolderView): { kind: string; text: string } {
@@ -433,6 +468,15 @@
     }
   }
 </script>
+
+{#snippet driveCopy(path: string, newer: boolean)}
+  {#if path}
+    <button class="pill linkish" class:warn={newer} onclick={() => OpenPath(path)}
+      title="{newer ? 'This copy has newer saves than the folder the game uses here. ' : ''}Another copy of this save folder is in OneDrive, left there by a PC that keeps (or kept) Documents in OneDrive: {path}. Click to open it.">
+      {newer ? 'Newer copy in OneDrive' : 'Copy in OneDrive'}
+    </button>
+  {/if}
+{/snippet}
 
 {#snippet folderRow(f: main.FolderView)}
   {@const s = stateOf(f)}
@@ -458,6 +502,12 @@
       {#if f.sync}<span class="pill warn" title="OneDrive syncs this folder too. Two sync tools on the same saves can make conflicting copies. Turn off Sync to leave syncing to OneDrive; Syncer keeps backing it up.">Also in OneDrive</span>
       {:else}<span class="pill" title="OneDrive syncs these saves between your PCs; Syncer backs them up.">In OneDrive</span>{/if}
     {/if}
+    {#if f.steamCloud}
+      {#if f.sync}<span class="pill warn" title="Steam Cloud keeps this folder on this PC too. With two sync tools on the same saves, Steam asks which copy to keep, and the wrong pick overwrites a save. Turn off Sync to leave it to Steam Cloud; Syncer keeps backing it up.">Also in Steam Cloud</span>
+      {:else}<span class="pill" title="Steam Cloud syncs these saves between your PCs; Syncer backs them up.">Steam Cloud</span>{/if}
+    {/if}
+    {#if f.copyOf}<span class="pill" title={copyTip(f.copyOf, false)}>Copy of {f.copyOf}</span>{/if}
+    {@render driveCopy(f.oneDriveCopy, f.oneDriveCopyNewer)}
     {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
     {#if f.sync}<span class="pill {s.kind}">{s.text}</span>
     {:else if !f.exists}<span class="pill" title="The save folder isn't on this PC. Restore it from the backup to bring it back.">Not on this PC</span>
@@ -528,6 +578,17 @@
       <button class="btn sm" onclick={() => openRemove(v.outer)}>Stop syncing {base(v.outer.path)}…</button>
     </div>
   {/each}
+  {#if syncedCloud.length}
+    <div class="card notice row">
+      <Icon name="alert" size={16} />
+      <span class="grow">
+        <b>{names(syncedCloud)}</b> {syncedCloud.length === 1 ? 'is' : 'are'} also kept by Steam Cloud on this PC. With two sync tools on the same saves, Steam asks which copy to keep, and the wrong pick overwrites a save.
+      </span>
+      <button class="btn sm" disabled={leavingCloud} onclick={leaveToCloud} title="Stops syncing them on this PC. Syncer keeps backing them up.">
+        {#if leavingCloud}<Icon name="refresh" size={14} class="spin" />{/if} Leave {syncedCloud.length === 1 ? 'it' : 'them'} to Steam Cloud
+      </button>
+    </div>
+  {/if}
   {#if o?.settings.installedOnly && uninstalledCount > 0}
     <div class="card notice row">
       <span class="grow">{plural(uninstalledCount, 'synced game')} {uninstalledCount === 1 ? "isn't" : "aren't"} installed on this PC.</span>
@@ -566,11 +627,14 @@
             <div class="row name-row">
               <span class="name ellipsis">{g.name}</span>
               {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
-              {:else if g.steamCloudUnverified}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
-              {#if g.emulator}<span class="pill warn" title="Saves a Steam emulator ({g.emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud">{g.emulator} saves</span>{/if}
+              {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
+              {#if g.copyOf}<span class="pill" title={copyTip(g.copyOf, true)}>Copy of {g.copyOf}</span>
+              {:else if g.emulator}<span class="pill warn" title="Saves a Steam emulator ({g.emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud">{g.emulator} saves</span>{/if}
               {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
               {#if !g.installed}<span class="pill" title="Syncer didn't find this game installed on this PC">Not installed</span>{/if}
               {#if g.oneDrive}<span class="pill" title="These saves are in OneDrive, which already syncs them between your PCs, so Syncer backs them up instead of syncing them. Sync them only if OneDrive isn't on your other PCs.">In OneDrive</span>{/if}
+              {@render driveCopy(g.oneDriveCopy, g.oneDriveCopyNewer)}
+              {#if g.dismissed}<span class="pill" title="You removed this game or stopped syncing it on this PC, so Syncer doesn't add it by itself.">Removed</span>{/if}
             </div>
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>
           </div>
@@ -578,7 +642,7 @@
           <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
             Back up only
           </button>
-          <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path)}>
+          <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path, g.steamCloud)}>
             {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync
           </button>
@@ -609,6 +673,9 @@
           <span class="meta faint">from {a.from}</span>
           {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
           {:else if a.reason === 'onedrive'}<span class="pill warn" title="On this PC this folder is in OneDrive, which may already sync it. Sync it here only if OneDrive doesn't.">In OneDrive</span>
+          {:else if a.reason === 'steam-cloud'}<span class="pill" title="Steam Cloud keeps this folder on this PC, so it isn't synced here as well.">Steam Cloud here</span>
+          {:else if a.reason === 'copy'}<span class="pill" title="A Steam emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
+          {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
           {:else}<span class="pill">Removed here</span>{/if}
           <button class="btn sm" disabled={syncingId === a.id} onclick={() => syncHere(a)}>
             {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
@@ -650,6 +717,7 @@
   <Modal title="Restore {restoreFor.label}" onclose={() => (restoreFor = null)}>
     {#if restoreFor.backup || restoreFor.points}<p class="faint small">{backupLine(restoreFor)}</p>{/if}
     <p>Close the game first. Your current files are kept as a restore point, so this can be undone.</p>
+    {#if restoreFor.steamCloud}<p class="small">Steam Cloud keeps these saves too: the next time the game starts through Steam, Steam uploads the restored files over its cloud copy (or asks which to keep).</p>{/if}
     <div class="points">
       <label class="pt"><input type="radio" bind:group={point} value={0} /> Latest backup</label>
       {#each points as p}
@@ -824,6 +892,18 @@
       <button class="btn danger" disabled={dropping || !sameName(dropTyped, b.label)} onclick={doDrop}>
         {#if dropping}<Icon name="refresh" size={15} class="spin" />{:else}<Icon name="trash" size={15} />{/if} Delete backup
       </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if cloudAsk}
+  {@const c = cloudAsk}
+  <Modal title="Sync {c.name} anyway?" onclose={() => (cloudAsk = null)}>
+    <p>Steam Cloud already keeps these saves on this PC. With Syncer syncing them too, Steam asks which copy to keep when the two differ, and the wrong pick overwrites a save.</p>
+    <p class="small">Sync them only if Steam Cloud doesn't reach your other PCs, for example where the game isn't a Steam copy.</p>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (cloudAsk = null)}>Cancel</button>
+      <button class="btn primary" onclick={() => { cloudAsk = null; c.go() }}>Sync anyway</button>
     {/snippet}
   </Modal>
 {/if}

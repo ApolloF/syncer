@@ -39,6 +39,22 @@ func readRemoteCache(p string) []entry {
 	return out
 }
 
+// tracksInto reports whether some file Steam Cloud tracks belongs inside dir,
+// even when dir doesn't exist yet: dir ends with the leading folders of the
+// file's path below its Steam Cloud root ("…\Saves" for "saves\slot1\a.sav").
+func tracksInto(dir string, tracked []entry) bool {
+	d := strings.ToLower(filepath.Clean(dir))
+	for _, e := range tracked {
+		parts := strings.Split(e.rel, `\`)
+		for k := len(parts) - 1; k >= 1; k-- {
+			if strings.HasSuffix(d, `\`+strings.Join(parts[:k], `\`)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // modSaveExts are files mods keep next to the game's saves that Steam Cloud
 // doesn't sync: script extender co-saves and Seamless Co-op saves.
 var modSaveExts = map[string]bool{

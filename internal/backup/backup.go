@@ -339,8 +339,11 @@ func prune(target string, keepDays int) {
 			continue
 		}
 		for _, t := range Points(target, id.Name()) {
-			if t.Before(cut) {
-				_ = os.RemoveAll(filepath.Join(target, VersionsDir, id.Name(), t.Format(stampFmt)))
+			dir := filepath.Join(target, VersionsDir, id.Name(), t.Format(stampFmt))
+			if t.Before(cut) && !kept(dir, t) {
+				if err := os.RemoveAll(dir); err == nil {
+					_ = os.Remove(dir + keepSuffix)
+				}
 			}
 		}
 	}

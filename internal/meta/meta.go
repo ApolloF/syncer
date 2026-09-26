@@ -32,6 +32,9 @@ type SharedFolder struct {
 	Label string `json:"label"`
 	Root  string `json:"root"`
 	Rel   string `json:"rel"`
+	// CopyOf: the publishing PC found this to be a Steam emulator's copy of
+	// the named game's own saves, which other PCs don't add on their own.
+	CopyOf string `json:"copyOf,omitempty"`
 }
 
 // DeviceFile is what one PC publishes.
@@ -103,7 +106,8 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			continue
 		}
 		if root, rel, ok := paths.Portable(f.Path); ok {
-			mine.Folders = append(mine.Folders, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel})
+			mine.Folders = append(mine.Folders, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel,
+				CopyOf: classify(f.Label, f.Path).CopyOf})
 		}
 	}
 	sort.Slice(mine.Folders, func(i, j int) bool { return mine.Folders[i].ID < mine.Folders[j].ID })
@@ -202,10 +206,20 @@ const (
 	SkipNotInstalled = "not-installed" // "only installed games" is on and it isn't
 	SkipOverlap      = "overlap"       // holds, or sits in, a folder already synced here
 	SkipOneDrive     = "onedrive"      // OneDrive already syncs that folder on this PC
+	SkipSteamCloud   = "steam-cloud"   // Steam Cloud keeps that folder on this PC
+	SkipCopy         = "copy"          // a Steam emulator's copy of saves the game keeps itself
+
+	// Pending: nothing stops adding it, it just hasn't happened yet (syncing
+	// is paused or off here, or the next reconcile hasn't run).
+	Pending = "pending"
 )
 
-// inOneDrive is a variable so tests don't depend on this PC's OneDrive.
-var inOneDrive = paths.InOneDrive
+// inOneDrive and classify are variables so tests don't depend on this PC's
+// OneDrive, Steam or game database.
+var (
+	inOneDrive = paths.InOneDrive
+	classify   = discover.Classify
+)
 
 // Adoptable resolves a folder published by another PC to a local path and
 // says why it must not be added here ("" = add it). Peers' metadata is
@@ -236,10 +250,36 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 		return p, SkipRemoved
 	case inOneDrive(p):
 		return p, SkipOneDrive
+	case sf.CopyOf != "":
+		return p, SkipCopy
 	case s.InstalledOnly && !installed(sf.Label):
 		return p, SkipNotInstalled
 	}
+	// Two sync tools on the same saves make Steam ask which copy to keep, and
+	// the wrong pick overwrites a save. Asked last: it reads the disk.
+	switch c := classify(sf.Label, p); {
+	case c.SteamCloud:
+		return p, SkipSteamCloud
+	case c.CopyOf != "":
+		return p, SkipCopy
+	}
 	return p, ""
+}
+
+// PeerFolderAt returns the folder another PC syncs at path (resolved on this
+// PC; me is this PC's device id), so this PC joins it under the same id
+// instead of creating a second folder for the same saves.
+func PeerFolderAt(me, path string) (SharedFolder, bool) {
+	want := filepath.Clean(path)
+	for _, sf := range readOthers(me) {
+		if !paths.ValidID(sf.ID) {
+			continue
+		}
+		if p, ok := paths.Resolve(sf.Root, sf.Rel); ok && strings.EqualFold(filepath.Clean(p), want) {
+			return sf, true
+		}
+	}
+	return SharedFolder{}, false
 }
 
 // syncedPaths lists the paths of the game folders Syncthing has.
@@ -323,7 +363,7 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 				continue
 			}
 			if reason == "" {
-				reason = SkipRemoved // not adopted yet, e.g. syncing is off here
+				reason = Pending
 			}
 			have[sf.ID] = true
 			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})

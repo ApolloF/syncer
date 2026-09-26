@@ -39,6 +39,8 @@ export function Folders():Promise<Array<main.FolderView>>;
 
 export function InstallSyncthing():Promise<void>;
 
+export function LeaveToSteamCloud():Promise<number>;
+
 export function Log():Promise<Array<string>>;
 
 export function ManifestUpdated():Promise<number>;
