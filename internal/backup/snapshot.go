@@ -87,13 +87,19 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 		}
 		_ = os.Chtimes(dst, fi.ModTime(), fi.ModTime())
 	}
+	pin(target, f.ID, t)
 	return len(rels), nil
 }
 
 // Keep moves a file into the folder's history as a new restore point (it can
 // be brought back with "As it was before <now>").
 func Keep(target, id, src, rel string) error {
-	return moveTo(src, filepath.Join(target, VersionsDir, id, time.Now().Format(stampFmt), rel))
+	t := time.Now()
+	if err := moveTo(src, filepath.Join(target, VersionsDir, id, t.Format(stampFmt), rel)); err != nil {
+		return err
+	}
+	pin(target, id, t)
+	return nil
 }
 
 // waitLock takes the backup lock, waiting for a running backup to finish.

@@ -18,7 +18,7 @@ Syncer is a small desktop app built on two tools that already work well:
 - **Leaves OneDrive's folders to OneDrive.** Saves inside a OneDrive folder (for example when Documents is moved into OneDrive) are already synced by OneDrive, and two sync tools on the same files make conflicting copies. New games found there are backed up only and marked *In OneDrive*. A game you do sync from there shows *Also in OneDrive*, and your other PCs' games aren't added into OneDrive automatically (*Games → Elsewhere* still offers them).
 - **Finds cracked games' saves.** Steam emulators keep what Steam would put in Steam Cloud in folders of their own (`Public\Documents\Steam\CODEX|RUNE\<appid>`, `Goldberg SteamEmu Saves`, `GSE Saves`, EMPRESS, SmartSteamEmu). Syncer finds them and lists them as, for example, *Baldur's Gate 3 (RUNE saves)*.
 - **Links PCs with one ID.** Paste the other PC's device ID (or accept its request) and every synced game shows up there at the correct local path, even if the user name or Documents location is different.
-- **Backs up with history.** Only changed files get copied. A file that changes or gets deleted is moved to `.versions\<game>\<time>\` and kept for 30 days by default. If a save folder suddenly turns up empty, Syncer won't wipe the backup.
+- **Backs up with history.** Only changed files get copied. A file that changes or gets deleted is moved to `.versions\<game>\<time>\` and kept for 30 days by default. Older history is thinned: everything from the last day, then one restore point per day for a week, then one per week. Restoring to any point that's left still gives exactly the saves of that time. Restore points Syncer makes to protect your saves (before a PC starts syncing a game, before a restore, the losing copy of a conflict) are never thinned. A restore skips files that already match. If a save folder suddenly turns up empty, Syncer won't wipe the backup.
 - **Restores any save.** You can restore the latest backup or any earlier point. Your current files are saved as a restore point first, so a restore can be undone.
 - **Lives in the tray if you want.** Settings can start Syncer with Windows (straight into the tray) and keep it running there when you close the window. The tray menu opens it, starts a backup, pauses or resumes, or quits.
 - **Pause for a while.** *Settings* (or the tray) pauses syncing and automatic backups for 1 hour, 4 hours or until tomorrow morning. Every Syncthing folder is paused, and it all resumes on its own through a one-off scheduled task (`\Syncer-Resume`). *Back up now* still works while paused.
@@ -64,7 +64,7 @@ That's all. Folders are published through a small shared folder (`syncer-meta`),
         │ Syncer.exe --background (Task Scheduler)
         ▼
  G:\My Drive\GameSaveBackup\<game>\…      ← mirror
- G:\My Drive\GameSaveBackup\.versions\…   ← replaced/deleted files, pruned after N days
+ G:\My Drive\GameSaveBackup\.versions\…   ← replaced/deleted files, thinned, pruned after N days
         │ Google Drive for desktop
         ▼
    Google Drive
