@@ -144,6 +144,14 @@
     <Toggle checked={o?.settings.installedOnly} label="Only sync installed games" onchange={(v) => save({ installedOnly: v })} />
   </div>
   <div class="item">
+    <div class="grow"><div class="name">Take newer saves from other PCs' backups</div><div class="faint small">When a PC that played later is off, its saves come from its Google Drive backup — only if nothing here changed since this PC's last backup and no game is running. The saves here are kept as a restore point first.</div></div>
+    <Toggle checked={!o?.settings.noCloudPull} label="Take newer saves from other PCs' backups" onchange={(v) => save({ noCloudPull: !v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Hold syncing while playing</div><div class="faint small">While a game runs, saves from your other PCs wait until it exits, so nothing changes under the running game.</div></div>
+    <Toggle checked={!o?.settings.noHoldWhilePlaying} label="Hold syncing while playing" onchange={(v) => save({ noHoldWhilePlaying: !v })} />
+  </div>
+  <div class="item">
     <div class="grow"><div class="name">Notify me about problems</div><div class="faint small">A Windows notification when a backup fails, no backup has worked for 3 days, a save has two versions, or a new Syncer is out.</div></div>
     <Toggle checked={o?.settings.notify} label="Notify me about problems" onchange={(v) => save({ notify: v })} />
   </div>

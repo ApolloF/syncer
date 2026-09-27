@@ -235,7 +235,7 @@ func TestCancelledRunKeepsBackup(t *testing.T) {
 			cancel()
 		}
 	}
-	_, _, _, _, _, _ = mirror(ctx, Folder{ID: id, Label: "C", Path: src}, Options{Target: target, Pause: pause}, "x", &Progress{})
+	_, _, _, _, _, _, _ = mirror(ctx, Folder{ID: id, Label: "C", Path: src}, Options{Target: target, Pause: pause}, "x", &Progress{})
 	for _, n := range []string{"a.sav", "b.sav"} {
 		if _, err := os.Stat(filepath.Join(target, id, n)); err != nil {
 			t.Errorf("%s retired by a cancelled run", n)

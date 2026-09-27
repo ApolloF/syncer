@@ -49,8 +49,9 @@ func (f *fakeBackend) conflicts(id string) ([]conflict.Conflict, error) {
 	}
 	return []conflict.Conflict{{Rel: "save.dat", Copy: "save.sync-conflict-1.dat"}}, nil
 }
-func (f *fakeBackend) resolveConflict(string, string, bool) error { return nil }
-func (f *fakeBackend) open() error                                { f.opened++; return nil }
+func (f *fakeBackend) resolveConflict(string, string, bool) error    { return nil }
+func (f *fakeBackend) getNewer(context.Context, string) (int, error) { return 2, nil }
+func (f *fakeBackend) open() error                                   { f.opened++; return nil }
 
 type client struct {
 	t  *testing.T

@@ -66,6 +66,10 @@ export function Folders() {
   return window['go']['main']['App']['Folders']();
 }
 
+export function GetNewer(arg1) {
+  return window['go']['main']['App']['GetNewer'](arg1);
+}
+
 export function InstallSyncthing() {
   return window['go']['main']['App']['InstallSyncthing']();
 }

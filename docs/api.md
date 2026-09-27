@@ -35,15 +35,16 @@ Errors use the standard codes (`-32700` parse error, `-32600` invalid request, `
 | `backupNow` | `{wait?, timeoutMs?}` (default 2 min, at most 30 min) | `{started, finished, ok, at?, copied, errors?}` |
 | `conflicts` | `{id}` | `[{rel, copy, device, deviceName, size, modified, missing, copySize, copyModified}]` |
 | `resolveConflict` | `{id, copy, useCopy}` | `true` |
+| `getNewer` | `{id}` | `{files}` |
 | `open` | – | `true` (shows the Syncer window, starting it if needed) |
 | `registerGames` | `{games: [{title, dir?, steamAppId?, gogId?}]}` (at most 20,000) | `{games: n}` |
 | `subscribe` | – | `true`, then `changed` notifications on this connection |
 
-**Folder:** `{id, label, path, sync, backup, state, needBytes, errors, conflicts, exists, modified?, backedUp?, newerOn?, newerAt?}`.
+**Folder:** `{id, label, path, sync, backup, state, needBytes, errors, conflicts, exists, modified?, backedUp?, newerOn?, newerAt?, newerCanGet?}`.
 
 - `sync`: synced with other PCs; `false` means only backed up.
 - `state`: Syncthing's state (`idle`, `scanning`, `syncing`, …), or `backup-only`, `off`, `paused`.
-- `newerOn`: another PC backed up a newer save that hasn't arrived here yet.
+- `newerOn`: another PC backed up a newer save that hasn't arrived here yet. Syncer takes it from that PC's backup by itself when it safely can (the saves here are exactly what this PC last backed up, no game runs, and that PC's whole backup has arrived through Google Drive). `newerCanGet`: it wasn't, but `getNewer` can take it now.
 
 ### Notes
 
@@ -51,5 +52,6 @@ Errors use the standard codes (`-32700` parse error, `-32600` invalid request, `
 - **syncNow** asks Syncthing to rescan each synced folder and waits until the folder is idle with nothing left to fetch. `done: false` after the timeout means it's still catching up (for example, the other PC is offline). Backup-only folders report `done: true, state: "not-synced"`; paused folders report `state: "paused"`.
 - **backupNow** runs the same incremental backup as *Back up now*. With `wait`, it returns once the backup has finished or the timeout has passed (`finished: false`).
 - **resolveConflict** keeps one version: with `useCopy` the conflict copy replaces the file, otherwise the current file stays. The other version goes to backup history, never deleted.
+- **getNewer** takes a game's newer save from the other PC's backup (see `newerCanGet`), after keeping the saves here as a restore point. `files` is how many files changed. A launcher can call it before starting the game.
 - **registerGames** replaces the previous list. Syncer keeps it in `%APPDATA%\Syncer\launcher-games.json`.
 - **subscribe:** Syncer checks folder states every 3 seconds while someone is subscribed and sends `{"jsonrpc":"2.0","method":"changed","params":{}}` when something changed. Call `games` or `gameStatus` again for the details.

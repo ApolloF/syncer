@@ -197,6 +197,7 @@ export namespace main {
 	    name: string;
 	    connected: boolean;
 	    address: string;
+	    via: string;
 	    completion: number;
 	    needBytes: number;
 	
@@ -210,6 +211,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.connected = source["connected"];
 	        this.address = source["address"];
+	        this.via = source["via"];
 	        this.completion = source["completion"];
 	        this.needBytes = source["needBytes"];
 	    }
@@ -314,6 +316,8 @@ export namespace main {
 	    newerOn: string;
 	    // Go type: time
 	    newerAt: any;
+	    newerCanGet: boolean;
+	    newerWhy: string;
 	    inside: string;
 	    oneDrive: boolean;
 	    steamCloud: boolean;
@@ -349,6 +353,8 @@ export namespace main {
 	        this.exclude = source["exclude"];
 	        this.newerOn = source["newerOn"];
 	        this.newerAt = this.convertValues(source["newerAt"], null);
+	        this.newerCanGet = source["newerCanGet"];
+	        this.newerWhy = source["newerWhy"];
 	        this.inside = source["inside"];
 	        this.oneDrive = source["oneDrive"];
 	        this.steamCloud = source["steamCloud"];
@@ -692,6 +698,8 @@ export namespace store {
 	    pausedUntil: any;
 	    notify: boolean;
 	    noUpdateCheck: boolean;
+	    noCloudPull: boolean;
+	    noHoldWhilePlaying: boolean;
 	    exclude?: Record<string, Array<string>>;
 	
 	    static createFrom(source: any = {}) {
@@ -722,6 +730,8 @@ export namespace store {
 	        this.pausedUntil = this.convertValues(source["pausedUntil"], null);
 	        this.notify = source["notify"];
 	        this.noUpdateCheck = source["noUpdateCheck"];
+	        this.noCloudPull = source["noCloudPull"];
+	        this.noHoldWhilePlaying = source["noHoldWhilePlaying"];
 	        this.exclude = source["exclude"];
 	    }
 	

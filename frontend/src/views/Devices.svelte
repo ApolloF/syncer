@@ -7,6 +7,9 @@
   import { Devices, AddDevice, DismissDevice, RemoveDevice, CopyText, PasteText } from '../../wailsjs/go/main/App'
   import type { main } from '../../wailsjs/go/models'
 
+  // How a linked PC is reached (DeviceView.via).
+  const viaText: Record<string, string> = { lan: 'on this network', direct: 'over the internet', relay: 'through a Syncthing relay (encrypted)' }
+
   let v = $state<main.DevicesView | null>(null)
   let id = $state('')
   let name = $state('')
@@ -108,7 +111,7 @@
           <div class="grow">
             <div class="name">{d.name || d.id.slice(0, 7)}</div>
             <div class="faint small ellipsis">
-              {#if d.connected}Online{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on{/if}
+              {#if d.connected}Online · {viaText[d.via] ?? 'connected'}{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on; newer saves it backed up still come from Google Drive{/if}
             </div>
           </div>
           {#if d.connected}

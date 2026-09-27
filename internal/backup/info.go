@@ -35,8 +35,13 @@ type Info struct {
 	Host     string    `json:"host"`     // the PC's name
 	Newest   time.Time `json:"newest"`   // the newest save file at its last backup
 	BackedUp time.Time `json:"backedUp"` // its last backup without errors
+	// Device is the PC's Syncthing device id; Files the hash of the list of
+	// files its last backup left in the backup (see ReadFiles).
+	Device string `json:"device,omitempty"`
+	Files  string `json:"files,omitempty"`
 
 	mine bool
+	key  string // the PC's file name
 }
 
 // Mine reports whether this PC wrote it.
@@ -80,15 +85,17 @@ func infoPath(target, id, key string) string {
 
 // writeInfo records this PC's view of f after a backup. It's rewritten only
 // when something changed or once a day, so Drive doesn't upload it every run.
-func writeInfo(target string, f Folder, newest time.Time) {
+func writeInfo(target string, f Folder, newest time.Time, device, files string) {
 	if !paths.ValidID(f.ID) {
 		return
 	}
 	root, rel, _ := paths.Portable(f.Path)
-	in := Info{ID: f.ID, Label: f.Label, Root: root, Rel: rel, Host: hostName, Newest: newest.UTC().Round(time.Second), BackedUp: time.Now().UTC()}
+	in := Info{ID: f.ID, Label: f.Label, Root: root, Rel: rel, Host: hostName, Newest: newest.UTC().Round(time.Second), BackedUp: time.Now().UTC(),
+		Device: device, Files: files}
 	p := infoPath(target, f.ID, hostKey)
 	if old, err := readInfo(p); err == nil && old.Label == in.Label && old.Root == in.Root && old.Rel == in.Rel &&
-		old.Host == in.Host && old.Newest.Equal(in.Newest) && time.Since(old.BackedUp) < 24*time.Hour {
+		old.Host == in.Host && old.Newest.Equal(in.Newest) && old.Device == in.Device && old.Files == in.Files &&
+		time.Since(old.BackedUp) < 24*time.Hour {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
@@ -131,7 +138,8 @@ func ReadInfos(target, id string) []Info {
 			continue
 		}
 		in.Label, in.Host = cleanText(in.Label, 120), cleanText(in.Host, 64)
-		in.mine = strings.TrimSuffix(name, ".json") == hostKey
+		in.key = strings.TrimSuffix(name, ".json")
+		in.mine = in.key == hostKey
 		out = append(out, in)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].BackedUp.After(out[j].BackedUp) })
@@ -143,6 +151,8 @@ func forgetInfo(target, id string) {
 	if target == "" || !paths.ValidID(id) {
 		return
 	}
+	_ = os.Remove(filesPath(target, id, hostKey))
+	_ = os.Remove(filepath.Join(target, InfoDir, id, filesDir)) // only if no other PC's list is left
 	if err := os.Remove(infoPath(target, id, hostKey)); err == nil || errors.Is(err, fs.ErrNotExist) {
 		_ = os.Remove(filepath.Join(target, InfoDir, id)) // only if no other PC's file is left
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/conflict"
+	"github.com/ApolloF/syncer/internal/fsx"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -84,7 +85,11 @@ func (a *App) conflictCounts(fs []backup.Folder) map[string]int {
 	}
 	m := map[string]int{}
 	for _, f := range fs {
-		if n := conflict.Count(f.Path); n > 0 {
+		n := conflict.Count(f.Path)
+		if n > 0 && conflict.DropIdentical(f.Path, fsx.SameContent) > 0 {
+			n = conflict.Count(f.Path) // nothing to choose between identical copies
+		}
+		if n > 0 {
 			m[f.ID] = n
 		}
 	}

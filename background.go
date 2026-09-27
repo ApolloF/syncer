@@ -52,6 +52,7 @@ func runBackground() {
 			if err := syncPause(ctx, c); err != nil {
 				logx.Printf("pause: %v", err)
 			}
+			releaseStaleHold(ctx, c)
 			if !s.Paused() {
 				if rep, err := meta.Reconcile(ctx, c); err != nil {
 					logx.Printf("reconcile: %v", err)
@@ -62,6 +63,10 @@ func runBackground() {
 					logx.Printf("auto-add: %v", err)
 				}
 				ensureIgnores(ctx, c)
+				// Before the backup: saves another PC made while this one was
+				// off come from its backup, if nothing here is newer.
+				inst := cachedInstalled()
+				pullNewer(ctx, func() bool { return playing(inst) })
 			}
 		}
 	}
@@ -149,7 +154,7 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 			fs = append(fs, f)
 		}
 	}
-	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause})
+	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause, Device: myDevice()})
 	if err != nil {
 		if !errors.Is(err, backup.ErrBusy) {
 			record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Target: target, Errors: []string{err.Error()}})
@@ -361,4 +366,19 @@ func migrateLegacy() {
 	}
 	_, _ = store.UpdateSettings(func(s *store.Settings) { s.Migrated = true })
 	logx.Printf("migrate: legacy setup replaced")
+}
+
+// myDevice is this PC's Syncthing device id ("" when Syncthing isn't running).
+func myDevice() string {
+	c, err := syncthing.New()
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := c.Status(ctx)
+	if err != nil {
+		return ""
+	}
+	return st.MyID
 }

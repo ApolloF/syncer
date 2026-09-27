@@ -269,7 +269,21 @@ type Connection struct {
 	Connected     bool   `json:"connected"`
 	Address       string `json:"address"`
 	ClientVersion string `json:"clientVersion"`
-	Type          string `json:"type"`
+	Type          string `json:"type"`    // e.g. tcp-client, quic-server, relay-client
+	IsLocal       bool   `json:"isLocal"` // on the local network
+}
+
+// Via says how a connection reaches the other PC: "lan", "relay" (through a
+// public Syncthing relay, end-to-end encrypted) or "direct" (over the
+// internet).
+func (cn Connection) Via() string {
+	switch {
+	case strings.HasPrefix(cn.Type, "relay"):
+		return "relay"
+	case cn.IsLocal:
+		return "lan"
+	}
+	return "direct"
 }
 
 type Connections struct {

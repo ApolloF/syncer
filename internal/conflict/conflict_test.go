@@ -177,3 +177,25 @@ func TestFromDevice(t *testing.T) {
 		t.Error("copies from a PC that made none")
 	}
 }
+
+func TestDropIdentical(t *testing.T) {
+	d := t.TempDir()
+	write(t, filepath.Join(d, "a.sav"), "same")
+	write(t, filepath.Join(d, "a.sync-conflict-20260925-143012-ABCDEFG.sav"), "same")
+	write(t, filepath.Join(d, "b.sav"), "mine")
+	write(t, filepath.Join(d, "b.sync-conflict-20260925-143012-ABCDEFG.sav"), "else")
+	same := func(a, b string) (bool, error) {
+		x, err := os.ReadFile(a)
+		if err != nil {
+			return false, err
+		}
+		y, err := os.ReadFile(b)
+		return string(x) == string(y), err
+	}
+	if n := DropIdentical(d, same); n != 1 {
+		t.Errorf("dropped %d, want 1", n)
+	}
+	if cs := Find(d); len(cs) != 1 || cs[0].Rel != "b.sav" {
+		t.Errorf("left: %+v", cs)
+	}
+}

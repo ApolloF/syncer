@@ -37,6 +37,8 @@ export function DismissDevice(arg1:string):Promise<void>;
 
 export function Folders():Promise<Array<main.FolderView>>;
 
+export function GetNewer(arg1:string):Promise<number>;
+
 export function InstallSyncthing():Promise<void>;
 
 export function LeaveToSteamCloud():Promise<number>;

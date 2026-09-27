@@ -16,7 +16,7 @@ func TestInfoRoundTripAndForget(t *testing.T) {
 	docs := paths.Root(paths.Documents)
 	f := Folder{ID: "hollow-knight", Label: "Hollow Knight", Path: filepath.Join(docs, "Hollow Knight")}
 	newest := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	writeInfo(target, f, newest)
+	writeInfo(target, f, newest, "", "")
 
 	ins := ReadInfos(target, f.ID)
 	if len(ins) != 1 {

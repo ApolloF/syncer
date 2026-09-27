@@ -71,6 +71,11 @@ func ForegroundPath() string {
 	if _, err := windows.GetWindowThreadProcessId(hwnd, &pid); err != nil || pid == 0 {
 		return ""
 	}
+	return processPath(pid)
+}
+
+// processPath returns the executable path of a process, or "".
+func processPath(pid uint32) string {
 	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 	if err != nil {
 		return ""
@@ -82,6 +87,27 @@ func ForegroundPath() string {
 		return ""
 	}
 	return windows.UTF16ToString(buf[:n])
+}
+
+// ProcessPaths returns the executable paths of the running processes this
+// user can see.
+func ProcessPaths() []string {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(snap)
+	var out []string
+	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		if e.ProcessID == 0 {
+			continue
+		}
+		if p := processPath(e.ProcessID); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // System32 resolves a filename in the system directory, or returns "" on failure.

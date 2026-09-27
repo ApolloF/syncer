@@ -24,6 +24,7 @@
     Conflicts, ResolveConflict, ResolveConflicts, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
     LeaveToSteamCloud,
     StopSyncingCopies,
+    GetNewer,
   } from '../../wailsjs/go/main/App'
   import type { conflict, store } from '../../wailsjs/go/models'
 
@@ -391,6 +392,17 @@
     leavingCloud = false
   }
 
+  let gettingId = $state('')
+  async function getNewer(f: main.FolderView) {
+    gettingId = f.id
+    try {
+      const n = await GetNewer(f.id)
+      toast(`Took the newer save of ${f.label} from ${f.newerOn} (${plural(n, 'file')})`, 'ok')
+      load(); refresh()
+    } catch (e) { fail(e) }
+    gettingId = ''
+  }
+
   async function stopCopies() {
     stoppingCopies = true
     try {
@@ -533,7 +545,14 @@
       </button>
     {/if}
     {#if f.sync && f.newerOn && !f.needBytes}
-      <span class="pill warn" title="{f.newerOn} saved this game on {new Date(f.newerAt).toLocaleString()}, but that save hasn't reached this PC yet. Turn {f.newerOn} on and let it sync before you play here.">Newer on {f.newerOn}</span>
+      {#if f.newerCanGet}
+        <button class="pill warn linkish" disabled={gettingId === f.id} onclick={() => getNewer(f)}
+          title="{f.newerOn} saved this game on {new Date(f.newerAt).toLocaleString()}. It wasn't taken from its backup by itself: {f.newerWhy}. Get it now; the saves here are kept as a restore point first.">
+          {#if gettingId === f.id}<Icon name="refresh" size={12} class="spin" />{/if} Newer on {f.newerOn} · Get it
+        </button>
+      {:else}
+        <span class="pill warn" title="{f.newerOn} saved this game on {new Date(f.newerAt).toLocaleString()}, but that save hasn't reached this PC yet{f.newerWhy ? ` (${f.newerWhy})` : ''}. Let it arrive before you play here.">Newer on {f.newerOn}</span>
+      {/if}
     {/if}
     {#if outerIds.has(f.id)}
       <span class="pill warn" title="This folder holds another synced save folder, so those files sync and back up twice">Synced twice</span>

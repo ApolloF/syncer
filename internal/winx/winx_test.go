@@ -1,7 +1,9 @@
 package winx
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -33,4 +35,17 @@ func TestBackgroundThread(t *testing.T) {
 	end := BackgroundThread()
 	defer end()
 	end()
+}
+
+func TestProcessPaths(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ProcessPaths() {
+		if strings.EqualFold(p, self) {
+			return
+		}
+	}
+	t.Errorf("own process %s not listed", self)
 }

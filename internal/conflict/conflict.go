@@ -190,3 +190,21 @@ func FromDevice(cs []Conflict, device string) []Conflict {
 	}
 	return out
 }
+
+// DropIdentical removes the conflict copies in dir that hold exactly what the
+// real file holds: two PCs made the same change (for example one took the
+// other's save from the backup while it was offline), so there is nothing to
+// choose. It returns how many went.
+func DropIdentical(dir string, same func(a, b string) (bool, error)) int {
+	n := 0
+	for _, c := range Find(dir) {
+		if c.Missing || c.Size != c.CopySize {
+			continue
+		}
+		cp, real := filepath.Join(dir, c.Copy), filepath.Join(dir, c.Rel)
+		if ok, err := same(cp, real); err == nil && ok && os.Remove(cp) == nil {
+			n++
+		}
+	}
+	return n
+}

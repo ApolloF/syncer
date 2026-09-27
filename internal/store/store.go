@@ -41,6 +41,11 @@ type Settings struct {
 	PausedUntil   time.Time `json:"pausedUntil,omitzero"` // syncing and automatic backups are paused until then
 	Notify        bool      `json:"notify"`               // Windows notifications about problems
 	NoUpdateCheck bool      `json:"noUpdateCheck"`        // don't look for new Syncer releases
+	// NoCloudPull: don't take newer saves from another PC's backup by
+	// yourself (see cloudpull.go); "Get it" still does.
+	NoCloudPull bool `json:"noCloudPull"`
+	// NoHoldWhilePlaying: keep syncing while a game runs (see session.go).
+	NoHoldWhilePlaying bool `json:"noHoldWhilePlaying"`
 
 	// Exclude lists, per save folder (keyed like Dismissed, so it survives a
 	// game switching between synced and backup-only), file patterns that are
@@ -91,7 +96,12 @@ type State struct {
 	// PausedFolders are the Syncthing folders a pause stopped, so resuming
 	// leaves folders paused by hand alone.
 	PausedFolders []string `json:"pausedFolders,omitempty"`
-	Update        *Update  `json:"update,omitempty"` // newest release seen
+	// GamePaused are the Syncthing folders paused while a game runs, so they
+	// resume when it exits (or when Syncer next starts, if it quit first).
+	GamePaused []string `json:"gamePaused,omitempty"`
+	// GameHeld is when the window last confirmed it holds them.
+	GameHeld time.Time `json:"gameHeld,omitzero"`
+	Update   *Update   `json:"update,omitempty"` // newest release seen
 	// Notified remembers which problems were already reported (key -> when).
 	Notified map[string]time.Time `json:"notified,omitempty"`
 	// FolderBackups is when each folder (by id) was last backed up without errors.

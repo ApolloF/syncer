@@ -49,6 +49,8 @@ type FolderView struct {
 	Exclude     []string  `json:"exclude"`     // file patterns skipped on this PC
 	NewerOn     string    `json:"newerOn"`     // another PC backed up a newer save that isn't here yet
 	NewerAt     time.Time `json:"newerAt"`
+	NewerCanGet bool      `json:"newerCanGet"` // … and it can be taken from that PC's backup ("Get it")
+	NewerWhy    string    `json:"newerWhy"`    // why it wasn't taken by itself
 
 	Inside   string `json:"inside"`   // id of another synced folder that holds this one (synced twice)
 	OneDrive bool   `json:"oneDrive"` // OneDrive syncs this folder too
