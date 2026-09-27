@@ -97,12 +97,14 @@ type apiFolder struct {
 	BackedUp  time.Time `json:"backedUp,omitzero"`
 	NewerOn   string    `json:"newerOn,omitempty"` // another PC backed up a newer save that isn't here yet
 	NewerAt   time.Time `json:"newerAt,omitzero"`
+	// NewerCanGet: getNewer can take it from that PC's backup now.
+	NewerCanGet bool `json:"newerCanGet,omitempty"`
 }
 
 func folderFromView(v FolderView) apiFolder {
 	return apiFolder{ID: v.ID, Label: v.Label, Path: v.Path, Sync: v.Sync, Backup: v.Backup, State: v.State,
 		NeedBytes: v.NeedBytes, Errors: v.Errors, Conflicts: v.Conflicts, Exists: v.Exists, Modified: v.Modified,
-		BackedUp: v.BackedUp, NewerOn: v.NewerOn, NewerAt: v.NewerAt}
+		BackedUp: v.BackedUp, NewerOn: v.NewerOn, NewerAt: v.NewerAt, NewerCanGet: v.NewerCanGet}
 }
 
 type apiSyncResult struct {
@@ -137,6 +139,7 @@ type apiBackend interface {
 	backupNow(ctx context.Context, wait bool) (apiBackupResult, error)
 	conflicts(id string) ([]conflict.Conflict, error)
 	resolveConflict(id, copyRel string, useCopy bool) error
+	getNewer(ctx context.Context, id string) (int, error)
 	open() error
 }
 
@@ -400,6 +403,22 @@ func (s *apiServer) call(ctx context.Context, ac *apiConn, method string, raw js
 			return nil, failed(err)
 		}
 		return true, nil
+
+	case "getNewer":
+		p, perr := rpcParams[struct {
+			ID string `json:"id"`
+		}](raw)
+		if perr != nil {
+			return nil, perr
+		}
+		if p.ID == "" {
+			return nil, &rpcError{rpcInvalidParams, "give the folder id"}
+		}
+		n, err := s.b.getNewer(ctx, p.ID)
+		if err != nil {
+			return nil, failed(err)
+		}
+		return map[string]int{"files": n}, nil
 
 	case "open":
 		if err := s.b.open(); err != nil {
@@ -716,6 +735,13 @@ func (b appBackend) resolveConflict(id, copyRel string, useCopy bool) error {
 		return b.a.ResolveConflict(id, copyRel, useCopy)
 	}
 	return b.a.resolveConflict(id, copyRel, useCopy)
+}
+
+func (b appBackend) getNewer(ctx context.Context, id string) (int, error) {
+	if b.window {
+		return b.a.GetNewer(id)
+	}
+	return b.a.getNewer(ctx, id)
 }
 
 func (b appBackend) open() error {

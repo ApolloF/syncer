@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ApolloF/syncer/internal/paths"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -224,4 +225,103 @@ func exeTraces() []string {
 		}
 	}
 	return out
+}
+
+// ubisoftEmuFiles are the ini files of Ubisoft Connect emulators (upc_r2 and
+// the older uplay_r1/r2), next to a cracked Ubisoft game's exe.
+var ubisoftEmuFiles = []string{"upc_r2.ini", "uplay_r2.ini", "uplay_r1.ini"}
+
+// savePathLine matches the ini's "SavePath = D:\Saves" (empty: the
+// emulator's default folder, %APPDATA%\Goldberg UplayEmu Saves).
+var savePathLine = regexp.MustCompile(`(?i)^\s*save_?path\s*=\s*(.*)$`)
+
+// ubisoftEmuNear looks for a Ubisoft Connect emulator's ini in dir and up to
+// levels folders above it. It returns the folder the ini is in and the save
+// folder it sets ("" for the default).
+func ubisoftEmuNear(dir string, levels int) (found, savePath string) {
+	dir = filepath.Clean(dir)
+	for i := 0; i <= levels; i++ {
+		if filepath.Dir(dir) == dir {
+			break
+		}
+		for _, n := range ubisoftEmuFiles {
+			if p := filepath.Join(dir, n); isFile(p) {
+				return dir, savePathIn(p, dir)
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return "", ""
+}
+
+// savePathIn reads the save folder a Ubisoft emulator's ini sets, relative
+// paths being relative to the ini's folder.
+func savePathIn(ini, dir string) string {
+	f, err := os.Open(ini)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for n := 0; sc.Scan() && n < 500; n++ {
+		m := savePathLine.FindStringSubmatch(sc.Text())
+		if m == nil {
+			continue
+		}
+		v := strings.Trim(strings.TrimSpace(m[1]), `"'`)
+		if v == "" {
+			return ""
+		}
+		if !filepath.IsAbs(v) {
+			v = filepath.Join(dir, v)
+		}
+		return filepath.Clean(v)
+	}
+	return ""
+}
+
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+// loadUbisoftCracked adds cracked Ubisoft games found from remembered exes:
+// the game counts as installed under its folder's name, and a save folder
+// its emulator's ini sets is remembered for the scan.
+func (i *Installed) loadUbisoftCracked(exes []string) {
+	for _, exe := range exes {
+		if base := strings.ToLower(filepath.Base(exe)); strings.HasPrefix(base, "setup") || strings.HasPrefix(base, "unins") {
+			continue
+		}
+		if !isFile(exe) {
+			continue
+		}
+		dir, save := ubisoftEmuNear(filepath.Dir(exe), crackedLevels)
+		if dir == "" {
+			continue
+		}
+		i.add(filepath.Base(dir), dir)
+		if save == "" {
+			continue
+		}
+		if _, _, ok := paths.Portable(save); !ok {
+			continue // only folders every PC can find are of use
+		}
+		dup := false
+		for _, s := range i.ubisoftSaves {
+			dup = dup || strings.EqualFold(s, save)
+		}
+		if !dup {
+			i.ubisoftSaves = append(i.ubisoftSaves, save)
+		}
+	}
+}
+
+// UbisoftSavePaths returns the save folders cracked Ubisoft games' emulators
+// were set to use instead of their default one.
+func (i *Installed) UbisoftSavePaths() []string {
+	if i == nil {
+		return nil
+	}
+	return append([]string(nil), i.ubisoftSaves...)
 }

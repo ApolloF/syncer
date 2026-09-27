@@ -66,6 +66,10 @@ export function Folders() {
   return window['go']['main']['App']['Folders']();
 }
 
+export function GetNewer(arg1) {
+  return window['go']['main']['App']['GetNewer'](arg1);
+}
+
 export function InstallSyncthing() {
   return window['go']['main']['App']['InstallSyncthing']();
 }
@@ -138,6 +142,10 @@ export function ResolveConflict(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveConflict'](arg1, arg2, arg3);
 }
 
+export function ResolveConflicts(arg1, arg2) {
+  return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
+}
+
 export function Restore(arg1, arg2) {
   return window['go']['main']['App']['Restore'](arg1, arg2);
 }
@@ -170,8 +178,20 @@ export function SetFolderSync(arg1, arg2) {
   return window['go']['main']['App']['SetFolderSync'](arg1, arg2);
 }
 
+export function SignInGoogle() {
+  return window['go']['main']['App']['SignInGoogle']();
+}
+
+export function SignOutGoogle() {
+  return window['go']['main']['App']['SignOutGoogle']();
+}
+
 export function StartSyncthing() {
   return window['go']['main']['App']['StartSyncthing']();
+}
+
+export function StopSyncingCopies() {
+  return window['go']['main']['App']['StopSyncingCopies']();
 }
 
 export function SyncAvailable(arg1) {

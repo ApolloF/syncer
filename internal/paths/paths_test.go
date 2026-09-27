@@ -110,3 +110,17 @@ func TestCheckSyncable(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckSyncableUbisoft(t *testing.T) {
+	// Not below Temp, which is never syncable; nothing here touches the disk.
+	defer SetRootForTest(Ubisoft, `C:\Ubisoft Test\savegames`)()
+	for rel, ok := range map[string]bool{"": false, "0a1b2c": false, "0a1b2c/5092": true, "0a1b2c/5092/sub": true} {
+		p, _ := Resolve(Ubisoft, rel)
+		if err := CheckSyncable(p); (err == nil) != ok {
+			t.Errorf("CheckSyncable(%q) = %v, want ok=%v", p, err, ok)
+		}
+	}
+	if !Known(Ubisoft) || Known("system32") {
+		t.Error("Known")
+	}
+}

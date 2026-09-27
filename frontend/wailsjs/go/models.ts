@@ -197,6 +197,7 @@ export namespace main {
 	    name: string;
 	    connected: boolean;
 	    address: string;
+	    via: string;
 	    completion: number;
 	    needBytes: number;
 	
@@ -210,6 +211,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.connected = source["connected"];
 	        this.address = source["address"];
+	        this.via = source["via"];
 	        this.completion = source["completion"];
 	        this.needBytes = source["needBytes"];
 	    }
@@ -314,9 +316,12 @@ export namespace main {
 	    newerOn: string;
 	    // Go type: time
 	    newerAt: any;
+	    newerCanGet: boolean;
+	    newerWhy: string;
 	    inside: string;
 	    oneDrive: boolean;
 	    steamCloud: boolean;
+	    ubisoftCloud: boolean;
 	    copyOf: string;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
@@ -348,9 +353,12 @@ export namespace main {
 	        this.exclude = source["exclude"];
 	        this.newerOn = source["newerOn"];
 	        this.newerAt = this.convertValues(source["newerAt"], null);
+	        this.newerCanGet = source["newerCanGet"];
+	        this.newerWhy = source["newerWhy"];
 	        this.inside = source["inside"];
 	        this.oneDrive = source["oneDrive"];
 	        this.steamCloud = source["steamCloud"];
+	        this.ubisoftCloud = source["ubisoftCloud"];
 	        this.copyOf = source["copyOf"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
@@ -384,6 +392,7 @@ export namespace main {
 	    copyOf: string;
 	    steamId: number;
 	    oneDrive: boolean;
+	    ubisoftCloud: boolean;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
 	    known: boolean;
@@ -410,6 +419,7 @@ export namespace main {
 	        this.copyOf = source["copyOf"];
 	        this.steamId = source["steamId"];
 	        this.oneDrive = source["oneDrive"];
+	        this.ubisoftCloud = source["ubisoftCloud"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
 	        this.known = source["known"];
@@ -419,6 +429,45 @@ export namespace main {
 	        this.syncedBy = source["syncedBy"];
 	        this.installed = source["installed"];
 	        this.dismissed = source["dismissed"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class GoogleView {
+	    available: boolean;
+	    signedIn: boolean;
+	    account: string;
+	    // Go type: time
+	    synced: any;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GoogleView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.signedIn = source["signedIn"];
+	        this.account = source["account"];
+	        this.synced = this.convertValues(source["synced"], null);
+	        this.error = source["error"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -498,6 +547,7 @@ export namespace main {
 	    conflicts: number;
 	    overlaps: number;
 	    drive: backup.DriveInfo;
+	    google: GoogleView;
 	    target: string;
 	    lastBackup?: store.BackupRun;
 	    backingUp: boolean;
@@ -523,6 +573,7 @@ export namespace main {
 	        this.conflicts = source["conflicts"];
 	        this.overlaps = source["overlaps"];
 	        this.drive = this.convertValues(source["drive"], backup.DriveInfo);
+	        this.google = this.convertValues(source["google"], GoogleView);
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);
 	        this.backingUp = source["backingUp"];
@@ -605,6 +656,7 @@ export namespace store {
 	    versions: number;
 	    bytes: number;
 	    errors: string[];
+	    held?: string[];
 	    target: string;
 	
 	    static createFrom(source: any = {}) {
@@ -621,6 +673,7 @@ export namespace store {
 	        this.versions = source["versions"];
 	        this.bytes = source["bytes"];
 	        this.errors = source["errors"];
+	        this.held = source["held"];
 	        this.target = source["target"];
 	    }
 	
@@ -667,6 +720,7 @@ export namespace store {
 	    backupEnabled: boolean;
 	    backupRoot: string;
 	    driveRoot: string;
+	    backupBackend?: string;
 	    intervalHours: number;
 	    keepDays: number;
 	    noBackup: Record<string, boolean>;
@@ -686,6 +740,8 @@ export namespace store {
 	    pausedUntil: any;
 	    notify: boolean;
 	    noUpdateCheck: boolean;
+	    noCloudPull: boolean;
+	    noHoldWhilePlaying: boolean;
 	    exclude?: Record<string, Array<string>>;
 	
 	    static createFrom(source: any = {}) {
@@ -698,6 +754,7 @@ export namespace store {
 	        this.backupEnabled = source["backupEnabled"];
 	        this.backupRoot = source["backupRoot"];
 	        this.driveRoot = source["driveRoot"];
+	        this.backupBackend = source["backupBackend"];
 	        this.intervalHours = source["intervalHours"];
 	        this.keepDays = source["keepDays"];
 	        this.noBackup = source["noBackup"];
@@ -716,6 +773,8 @@ export namespace store {
 	        this.pausedUntil = this.convertValues(source["pausedUntil"], null);
 	        this.notify = source["notify"];
 	        this.noUpdateCheck = source["noUpdateCheck"];
+	        this.noCloudPull = source["noCloudPull"];
+	        this.noHoldWhilePlaying = source["noHoldWhilePlaying"];
 	        this.exclude = source["exclude"];
 	    }
 	

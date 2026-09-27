@@ -9,11 +9,28 @@
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
   import { ago, bytes } from '../lib/fmt'
-  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings } from '../../wailsjs/go/main/App'
+  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import type { store } from '../../wailsjs/go/models'
 
   const o = $derived(ui.overview)
+  const google = $derived(o?.settings.backupBackend === 'google')
+  let signingIn = $state(false)
+
+  async function signIn() {
+    signingIn = true
+    toast('Sign in to Google in your browser…', 'ok')
+    try {
+      const account = await SignInGoogle()
+      toast(`Signed in as ${account}. Backing up to its Google Drive.`, 'ok')
+    } catch (e) { toast(String(e), 'err') }
+    signingIn = false
+    refresh()
+  }
+
+  async function signOut() {
+    if (await attempt(SignOutGoogle)) refresh()
+  }
   const lb = $derived(o?.lastBackup)
   let showErrors = $state(false)
 
@@ -80,32 +97,57 @@
 <section class="grid">
   <div class="card kv">
     <h2>Google Drive</h2>
-    <div class="line"><span class="muted">Status</span>
-      <span class="pill {o?.settings.backupRoot || o?.drive.running ? 'ok' : o?.drive.found ? 'warn' : 'err'}">{driveLabel}</span></div>
-    {#if !o?.settings.backupRoot && ((o?.drive.drives?.length ?? 0) > 1 || o?.settings.driveRoot)}
-      <div class="line"><span class="muted">Account</span>
-        <select value={o?.settings.driveRoot ?? ''} onchange={(e) => save({ driveRoot: e.currentTarget.value })}>
-          <option value="">Automatic ({o?.drive.drives?.[0]?.myDrive ?? 'none'})</option>
-          {#each o?.drive.drives ?? [] as d}
-            <option value={d.myDrive}>{d.myDrive}{d.label ? ` · ${d.label}` : ''}</option>
-          {/each}
-          {#if o?.settings.driveRoot && !o.drive.drives?.some(d => d.myDrive.toLowerCase() === o.settings.driveRoot.toLowerCase())}
-            <option value={o.settings.driveRoot}>{o.settings.driveRoot} (not found)</option>
-          {/if}
-        </select></div>
+    {#if google}
+      <div class="line"><span class="muted">Account</span><span class="ellipsis">{o?.google.account || '—'}</span></div>
+      <div class="line"><span class="muted">Status</span>
+        {#if !o?.google.signedIn}<span class="pill err">Signed out</span>
+        {:else if o.google.error}<span class="pill warn" title={o.google.error}>Can't reach Google Drive</span>
+        {:else}<span class="pill ok">Signed in</span>{/if}</div>
+      <div class="line"><span class="muted">Synced</span><span>{ago(o?.google.synced)}</span></div>
+      <p class="faint small">Syncer signs in to Google itself and keeps a copy of the backup on this PC, synced with <span class="mono">My Drive\GameSaveBackup</span>. Your other PCs share these backups when they sign in this way too.</p>
+      <div class="row btns">
+        {#if !o?.google.signedIn}
+          <button class="btn primary sm" disabled={signingIn} onclick={signIn}>{#if signingIn}<Icon name="refresh" size={14} class="spin" />{/if} Sign in again</button>
+        {/if}
+        <button class="btn sm" disabled={!o?.target} onclick={() => OpenBackupFolder()}><Icon name="folder" size={14} /> Open</button>
+        <button class="btn ghost sm" onclick={signOut}>Sign out</button>
+      </div>
+    {:else}
+      <div class="line"><span class="muted">Status</span>
+        <span class="pill {o?.settings.backupRoot || o?.drive.running ? 'ok' : o?.drive.found ? 'warn' : 'err'}">{driveLabel}</span></div>
+      {#if !o?.settings.backupRoot && ((o?.drive.drives?.length ?? 0) > 1 || o?.settings.driveRoot)}
+        <div class="line"><span class="muted">Account</span>
+          <select value={o?.settings.driveRoot ?? ''} onchange={(e) => save({ driveRoot: e.currentTarget.value })}>
+            <option value="">Automatic ({o?.drive.drives?.[0]?.myDrive ?? 'none'})</option>
+            {#each o?.drive.drives ?? [] as d}
+              <option value={d.myDrive}>{d.myDrive}{d.label ? ` · ${d.label}` : ''}</option>
+            {/each}
+            {#if o?.settings.driveRoot && !o.drive.drives?.some(d => d.myDrive.toLowerCase() === o.settings.driveRoot.toLowerCase())}
+              <option value={o.settings.driveRoot}>{o.settings.driveRoot} (not found)</option>
+            {/if}
+          </select></div>
+      {/if}
+      <div class="line"><span class="muted">Folder</span>
+        <span class="ellipsis mono path" title={o?.target}>{o?.target || '—'}</span></div>
+      <div class="row btns">
+        {#if !o?.drive.found && !o?.settings.backupRoot}
+          <button class="btn primary sm" onclick={() => BrowserOpenURL('https://www.google.com/drive/download/')}><Icon name="external" size={14} /> Get Google Drive</button>
+        {/if}
+        <button class="btn sm" disabled={!o?.target} onclick={() => OpenBackupFolder()}><Icon name="folder" size={14} /> Open</button>
+        <button class="btn ghost sm" onclick={async () => { await attempt(PickBackupFolder); refresh() }}>Change…</button>
+        {#if o?.settings.backupRoot}
+          <button class="btn ghost sm" onclick={() => save({ backupRoot: '' })}>Use Google Drive</button>
+        {/if}
+      </div>
+      {#if o?.google.available && !o.settings.backupRoot}
+        <p class="faint small">{o.drive.found ? 'Or let Syncer sign in to Google itself, without Google Drive for desktop.' : "No Google Drive app? Syncer can sign in to Google itself."}</p>
+        <div class="row btns">
+          <button class="btn sm {o.drive.found ? '' : 'primary'}" disabled={signingIn} onclick={signIn}>
+            {#if signingIn}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="cloud" size={14} />{/if} Sign in with Google
+          </button>
+        </div>
+      {/if}
     {/if}
-    <div class="line"><span class="muted">Folder</span>
-      <span class="ellipsis mono path" title={o?.target}>{o?.target || '—'}</span></div>
-    <div class="row btns">
-      {#if !o?.drive.found && !o?.settings.backupRoot}
-        <button class="btn primary sm" onclick={() => BrowserOpenURL('https://www.google.com/drive/download/')}><Icon name="external" size={14} /> Get Google Drive</button>
-      {/if}
-      <button class="btn sm" disabled={!o?.target} onclick={() => OpenBackupFolder()}><Icon name="folder" size={14} /> Open</button>
-      <button class="btn ghost sm" onclick={async () => { await attempt(PickBackupFolder); refresh() }}>Change…</button>
-      {#if o?.settings.backupRoot}
-        <button class="btn ghost sm" onclick={() => save({ backupRoot: '' })}>Use Google Drive</button>
-      {/if}
-    </div>
   </div>
 
   <div class="card kv">
@@ -118,6 +160,11 @@
       {:else}<button class="pill err linkish" onclick={() => (showErrors = !showErrors)}>{lb.errors?.length} issue{lb.errors?.length === 1 ? '' : 's'}</button>{/if}
     </div>
     <div class="line"><span class="muted">Uploaded</span><span>{bytes(lb?.bytes ?? 0)}</span></div>
+    {#if lb?.held?.length}
+      <div class="line"><span class="muted">Left as is</span>
+        <span class="pill" title="Another PC backed up newer saves of {lb.held.join('; ')}. This PC doesn't have them yet, so its older files didn't replace them. They're backed up once they've synced here.">Newer from another PC</span>
+      </div>
+    {/if}
   </div>
 </section>
 

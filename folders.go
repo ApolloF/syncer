@@ -49,12 +49,15 @@ type FolderView struct {
 	Exclude     []string  `json:"exclude"`     // file patterns skipped on this PC
 	NewerOn     string    `json:"newerOn"`     // another PC backed up a newer save that isn't here yet
 	NewerAt     time.Time `json:"newerAt"`
+	NewerCanGet bool      `json:"newerCanGet"` // … and it can be taken from that PC's backup ("Get it")
+	NewerWhy    string    `json:"newerWhy"`    // why it wasn't taken by itself
 
 	Inside   string `json:"inside"`   // id of another synced folder that holds this one (synced twice)
 	OneDrive bool   `json:"oneDrive"` // OneDrive syncs this folder too
 
 	SteamCloud        bool   `json:"steamCloud"`        // Steam Cloud keeps this folder on this PC
-	CopyOf            string `json:"copyOf"`            // a Steam emulator's copy of this game's own saves
+	UbisoftCloud      bool   `json:"ubisoftCloud"`      // Ubisoft Connect's own save folder, in its cloud
+	CopyOf            string `json:"copyOf"`            // an emulator's copy of this game's own saves
 	OneDriveCopy      string `json:"oneDriveCopy"`      // another copy on the other side of OneDrive
 	OneDriveCopyNewer bool   `json:"oneDriveCopyNewer"` // … with newer saves than this one
 }
@@ -109,7 +112,7 @@ func (a *App) Folders() ([]FolderView, error) {
 	for i := range out {
 		out[i].OneDrive = paths.WithinAny(od, out[i].Path)
 		c := discover.Classify(out[i].Label, out[i].Path)
-		out[i].SteamCloud, out[i].CopyOf = c.SteamCloud, c.CopyOf
+		out[i].SteamCloud, out[i].CopyOf, out[i].UbisoftCloud = c.SteamCloud, c.CopyOf, c.UbisoftCloud
 		out[i].OneDriveCopy, out[i].OneDriveCopyNewer = c.OneDriveCopy, c.OneDriveCopyNewer
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
@@ -712,6 +715,27 @@ func (a *App) SetFolderBackup(id string, on bool) error {
 // and the wrong pick overwrites a save. They stay backed up (or off, if
 // their backup was off), and aren't synced here again on their own.
 func (a *App) LeaveToSteamCloud() (int, error) {
+	n, err := a.stopSyncWhere("leave to Steam Cloud", func(c discover.Class) bool { return c.SteamCloud })
+	if n > 0 {
+		logx.Printf("left %d game(s) to Steam Cloud", n)
+	}
+	return n, err
+}
+
+// StopSyncingCopies stops syncing every emulator folder that only copies
+// saves the game keeps in its own folder, which is synced already: the
+// same saves would sync twice. They stay backed up (or off, if their backup
+// was off), and aren't synced here again on their own.
+func (a *App) StopSyncingCopies() (int, error) {
+	n, err := a.stopSyncWhere("stop syncing copy", func(c discover.Class) bool { return c.CopyOf != "" })
+	if n > 0 {
+		logx.Printf("stopped syncing %d emulator copies", n)
+	}
+	return n, err
+}
+
+// stopSyncWhere stops syncing every folder whose classification matches.
+func (a *App) stopSyncWhere(what string, match func(discover.Class) bool) (int, error) {
 	c, err := a.client()
 	if err != nil {
 		return 0, err
@@ -725,11 +749,11 @@ func (a *App) LeaveToSteamCloud() (int, error) {
 	n := 0
 	var firstErr error
 	for _, f := range fs {
-		if f.ID == meta.FolderID || !discover.Classify(cmpOr(f.Label, f.ID), f.Path).SteamCloud {
+		if f.ID == meta.FolderID || !match(discover.Classify(cmpOr(f.Label, f.ID), f.Path)) {
 			continue
 		}
 		if _, err := a.stopSync(ctx, c, f.ID); err != nil {
-			logx.Printf("leave %s to Steam Cloud: %v", cmpOr(f.Label, f.ID), err)
+			logx.Printf("%s %s: %v", what, cmpOr(f.Label, f.ID), err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", cmpOr(f.Label, f.ID), err)
 			}
@@ -738,7 +762,6 @@ func (a *App) LeaveToSteamCloud() (int, error) {
 		n++
 	}
 	if n > 0 {
-		logx.Printf("left %d game(s) to Steam Cloud", n)
 		runtime.EventsEmit(a.ctx, "changed")
 	}
 	return n, firstErr

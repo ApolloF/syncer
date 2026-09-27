@@ -1,15 +1,14 @@
 package backup
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/fsx"
 	"github.com/ApolloF/syncer/internal/paths"
 )
 
@@ -40,7 +39,7 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 		rel := rels[k]
 		to := filepath.Join(f.Path, rel)
 		if fi, err := os.Stat(to); err == nil && !fi.IsDir() {
-			if same, err := sameContent(to, from); err == nil && same {
+			if same, err := fsx.SameContent(to, from); err == nil && same {
 				n++ // already as it was: nothing to save or write
 				continue
 			}
@@ -106,46 +105,4 @@ func sources(target, id string, point time.Time) (src, rels map[string]string) {
 		}
 	}
 	return src, rels
-}
-
-// sameContent reports whether files a and b hold the same bytes.
-func sameContent(a, b string) (bool, error) {
-	ai, err := os.Stat(a)
-	if err != nil {
-		return false, err
-	}
-	bi, err := os.Stat(b)
-	if err != nil {
-		return false, err
-	}
-	if ai.Size() != bi.Size() {
-		return false, nil
-	}
-	fa, err := os.Open(a)
-	if err != nil {
-		return false, err
-	}
-	defer fa.Close()
-	fb, err := os.Open(b)
-	if err != nil {
-		return false, err
-	}
-	defer fb.Close()
-	ba, bb := make([]byte, 64<<10), make([]byte, 64<<10)
-	for {
-		na, ea := io.ReadFull(fa, ba)
-		nb, eb := io.ReadFull(fb, bb)
-		if na != nb || !bytes.Equal(ba[:na], bb[:nb]) {
-			return false, nil
-		}
-		if ea == io.EOF || ea == io.ErrUnexpectedEOF {
-			return eb == ea, nil
-		}
-		if ea != nil {
-			return false, ea
-		}
-		if eb != nil {
-			return false, eb
-		}
-	}
 }

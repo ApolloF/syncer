@@ -37,6 +37,8 @@ export function DismissDevice(arg1:string):Promise<void>;
 
 export function Folders():Promise<Array<main.FolderView>>;
 
+export function GetNewer(arg1:string):Promise<number>;
+
 export function InstallSyncthing():Promise<void>;
 
 export function LeaveToSteamCloud():Promise<number>;
@@ -73,6 +75,8 @@ export function RemoveUninstalled():Promise<number>;
 
 export function ResolveConflict(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function ResolveConflicts(arg1:string,arg2:string):Promise<number>;
+
 export function Restore(arg1:string,arg2:number):Promise<number>;
 
 export function RestorePoints(arg1:string):Promise<Array<number>>;
@@ -89,7 +93,13 @@ export function SetFolderBackup(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetFolderSync(arg1:string,arg2:boolean):Promise<void>;
 
+export function SignInGoogle():Promise<string>;
+
+export function SignOutGoogle():Promise<void>;
+
 export function StartSyncthing():Promise<void>;
+
+export function StopSyncingCopies():Promise<number>;
 
 export function SyncAvailable(arg1:string):Promise<void>;
 

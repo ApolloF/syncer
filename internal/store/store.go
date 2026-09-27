@@ -15,10 +15,13 @@ import (
 
 // Settings are user choices local to this PC.
 type Settings struct {
-	Theme         string          `json:"theme"`         // system | light | dark
-	BackupEnabled bool            `json:"backupEnabled"` // scheduled Drive backup on/off
-	BackupRoot    string          `json:"backupRoot"`    // override for the Drive folder; "" = auto-detect
-	DriveRoot     string          `json:"driveRoot"`     // chosen "My Drive" when several accounts are signed in; "" = first found
+	Theme         string `json:"theme"`         // system | light | dark
+	BackupEnabled bool   `json:"backupEnabled"` // scheduled Drive backup on/off
+	BackupRoot    string `json:"backupRoot"`    // override for the Drive folder; "" = auto-detect
+	DriveRoot     string `json:"driveRoot"`     // chosen "My Drive" when several accounts are signed in; "" = first found
+	// BackupBackend is "google" when Syncer signs in to Google itself and
+	// syncs the backup with Drive (no Google Drive for desktop needed).
+	BackupBackend string          `json:"backupBackend,omitempty"`
 	IntervalHours int             `json:"intervalHours"` // backup schedule
 	KeepDays      int             `json:"keepDays"`      // how long old versions are kept
 	NoBackup      map[string]bool `json:"noBackup"`      // folder ids excluded from backup
@@ -41,6 +44,11 @@ type Settings struct {
 	PausedUntil   time.Time `json:"pausedUntil,omitzero"` // syncing and automatic backups are paused until then
 	Notify        bool      `json:"notify"`               // Windows notifications about problems
 	NoUpdateCheck bool      `json:"noUpdateCheck"`        // don't look for new Syncer releases
+	// NoCloudPull: don't take newer saves from another PC's backup by
+	// yourself (see cloudpull.go); "Get it" still does.
+	NoCloudPull bool `json:"noCloudPull"`
+	// NoHoldWhilePlaying: keep syncing while a game runs (see session.go).
+	NoHoldWhilePlaying bool `json:"noHoldWhilePlaying"`
 
 	// Exclude lists, per save folder (keyed like Dismissed, so it survives a
 	// game switching between synced and backup-only), file patterns that are
@@ -74,8 +82,11 @@ type BackupRun struct {
 	Versions int       `json:"versions"`
 	Bytes    int64     `json:"bytes"`
 	Errors   []string  `json:"errors"`
-	Target   string    `json:"target"`
-	Backed   []string  `json:"-"` // ids of the folders backed up without errors
+	// Held: files left as they are in the backup because another PC backed
+	// up newer saves there (see backup.mirror), per game.
+	Held   []string `json:"held,omitempty"`
+	Target string   `json:"target"`
+	Backed []string `json:"-"` // ids of the folders backed up without errors
 }
 
 // State is machine-written status.
@@ -88,7 +99,16 @@ type State struct {
 	// PausedFolders are the Syncthing folders a pause stopped, so resuming
 	// leaves folders paused by hand alone.
 	PausedFolders []string `json:"pausedFolders,omitempty"`
-	Update        *Update  `json:"update,omitempty"` // newest release seen
+	// GamePaused are the Syncthing folders paused while a game runs, so they
+	// resume when it exits (or when Syncer next starts, if it quit first).
+	GamePaused []string `json:"gamePaused,omitempty"`
+	// GameHeld is when the window last confirmed it holds them.
+	GameHeld time.Time `json:"gameHeld,omitzero"`
+	// GoogleSynced is when the backup was last synced with Google Drive
+	// through Syncer's own sign-in; GoogleError why the last try failed.
+	GoogleSynced time.Time `json:"googleSynced,omitzero"`
+	GoogleError  string    `json:"googleError,omitempty"`
+	Update       *Update   `json:"update,omitempty"` // newest release seen
 	// Notified remembers which problems were already reported (key -> when).
 	Notified map[string]time.Time `json:"notified,omitempty"`
 	// FolderBackups is when each folder (by id) was last backed up without errors.

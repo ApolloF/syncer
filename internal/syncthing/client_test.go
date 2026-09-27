@@ -108,3 +108,19 @@ func TestCertPinnedTransport(t *testing.T) {
 		t.Error("TLS on, pem missing, non-loopback: want error, got nil")
 	}
 }
+
+func TestConnectionVia(t *testing.T) {
+	for _, tt := range []struct {
+		c    Connection
+		want string
+	}{
+		{Connection{Type: "tcp-client", IsLocal: true}, "lan"},
+		{Connection{Type: "quic-server"}, "direct"},
+		{Connection{Type: "relay-client"}, "relay"},
+		{Connection{Type: "relay-server", IsLocal: true}, "relay"},
+	} {
+		if got := tt.c.Via(); got != tt.want {
+			t.Errorf("%+v: %q, want %q", tt.c, got, tt.want)
+		}
+	}
+}

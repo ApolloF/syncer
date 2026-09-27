@@ -33,6 +33,7 @@ type App struct {
 	conflicts *conflictCache
 	details   map[string]backupDetail // per folder id, see addDetails
 	newer     map[string]newerSave    // synced folder id -> newer save on another PC
+	session   sessionTracker          // the game running, see session.go
 	others    *othersCache            // backups in Drive no game here uses
 	quitting  bool                    // quit from the tray: really exit
 	tray      trayItems
@@ -59,6 +60,7 @@ func (a *App) startup(ctx context.Context) {
 		go a.updateLoop(ctx)
 		go a.notifyLoop(ctx)
 		go a.newerLoop(ctx)
+		go a.sessionLoop(ctx)
 		a.watch(ctx)
 	}()
 }
@@ -159,6 +161,7 @@ type Overview struct {
 	Conflicts  int              `json:"conflicts"` // conflict copies across all folders
 	Overlaps   int              `json:"overlaps"`  // synced folders inside another synced folder
 	Drive      backup.DriveInfo `json:"drive"`
+	Google     GoogleView       `json:"google"`
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
@@ -174,6 +177,7 @@ func (a *App) Overview() Overview {
 	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup,
 		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
+	o.Google = googleView(s)
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -279,6 +283,7 @@ type DeviceView struct {
 	Name       string  `json:"name"`
 	Connected  bool    `json:"connected"`
 	Address    string  `json:"address"`
+	Via        string  `json:"via"` // lan, direct or relay (see syncthing.Connection.Via)
 	Completion float64 `json:"completion"`
 	NeedBytes  int64   `json:"needBytes"`
 }
@@ -331,6 +336,9 @@ func (a *App) Devices() (DevicesView, error) {
 		}
 		if cn, ok := conns.Connections[d.DeviceID]; ok {
 			dv.Connected, dv.Address = cn.Connected, cn.Address
+			if cn.Connected {
+				dv.Via = cn.Via()
+			}
 		}
 		if comp, err := c.Completion(ctx, d.DeviceID); err == nil {
 			dv.Completion, dv.NeedBytes = comp.Completion, comp.NeedBytes
@@ -527,7 +535,7 @@ func (a *App) PickBackupFolder() (string, error) {
 	if err != nil || p == "" {
 		return "", err
 	}
-	_, err = store.UpdateSettings(func(s *store.Settings) { s.BackupRoot = p })
+	_, err = store.UpdateSettings(func(s *store.Settings) { s.BackupRoot, s.BackupBackend = p, "" })
 	return p, err
 }
 
@@ -543,6 +551,7 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
 		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
 		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
+		s.NoCloudPull, s.NoHoldWhilePlaying = in.NoCloudPull, in.NoHoldWhilePlaying
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}

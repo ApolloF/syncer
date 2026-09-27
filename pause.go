@@ -145,10 +145,17 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 	for _, f := range fs {
 		exists[f.ID] = true
 	}
+	// A game is running and holds these too: they resume when it exits.
+	game := map[string]bool{}
+	if st := store.LoadState(); time.Since(st.GameHeld) < staleHold {
+		for _, id := range st.GamePaused {
+			game[id] = true
+		}
+	}
 	var left []string
 	for _, id := range held {
-		if !exists[id] {
-			continue // removed meanwhile
+		if !exists[id] || game[id] {
+			continue // removed meanwhile, or the game's hold takes it over
 		}
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
 			errs = append(errs, err)

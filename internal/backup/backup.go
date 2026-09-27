@@ -29,6 +29,9 @@ const (
 	tmpSuffix   = ".syncer-tmp"
 )
 
+// Stamp names a restore point made at t (a folder in .versions\<id>).
+func Stamp(t time.Time) string { return t.Format(stampFmt) }
+
 // ErrBusy means another backup is already running.
 var ErrBusy = errors.New("a backup is already running")
 
@@ -38,6 +41,9 @@ type Folder struct {
 	Label   string   `json:"label"`
 	Path    string   `json:"path"`
 	Exclude []string `json:"exclude,omitempty"` // the game's exclusions (ignore patterns)
+	// Solo: only this PC backs it up (backed up only, not synced), so every
+	// file in its backup is this PC's.
+	Solo bool `json:"-"`
 }
 
 // Progress is reported while a backup runs.
@@ -58,6 +64,9 @@ type Options struct {
 	// Pause is called before each folder and every few seconds while copying;
 	// it may block (e.g. while a game is running) until the run may continue.
 	Pause func(ctx context.Context)
+	// Device is this PC's Syncthing device id, recorded in the info files so
+	// other PCs can tell whether this PC is online.
+	Device string
 }
 
 var pauseEvery = 2 * time.Second // var so tests can pause on every file
@@ -101,14 +110,27 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 			continue // game not present on this PC
 		}
 		res.Folders++
-		c, v, b, newest, errs := mirror(ctx, f, opts, stamp, &p)
+		c, v, b, newest, held, files, errs := mirror(ctx, f, opts, stamp, &p)
+		if held > 0 {
+			res.Held = append(res.Held, fmt.Sprintf("%s: %d file(s)", f.Label, held))
+		}
 		res.Copied += c
 		res.Versions += v
 		res.Bytes += b
 		res.Errors = append(res.Errors, errs...)
 		if len(errs) == 0 && ctx.Err() == nil {
 			res.Backed = append(res.Backed, f.ID)
-			writeInfo(opts.Target, f, newest)
+			// A backup that left another PC's newer files in place isn't
+			// this PC's saves: no file list then (other PCs don't take
+			// from it), only how new the saves here are.
+			hash := ""
+			if held == 0 {
+				var err error
+				if hash, err = writeFiles(opts.Target, f.ID, files); err != nil {
+					res.Errors = append(res.Errors, f.Label+": file list: "+err.Error())
+				}
+			}
+			writeInfo(opts.Target, f, newest, opts.Device, hash)
 		}
 	}
 	if opts.KeepDays > 0 {
@@ -129,7 +151,16 @@ func stopReason(ctx context.Context) string {
 }
 
 // mirror backs up one folder. newest is the newest save file's time.
-func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progress) (copied, versioned int, bytes int64, newest time.Time, errs []string) {
+//
+// Every PC that syncs a folder backs it up into the same place, so the backup
+// may hold a file another PC wrote. A PC that hasn't caught up yet (it was
+// off while another one played, and backs up at logon before Syncthing has
+// brought the new saves over) must not put its older saves over the newer
+// ones there, nor move away files it never had. Such files are held: left as
+// they are and counted in held. A file this PC wrote itself (the backup
+// holds what its index says) is still replaced, also by an older one, as
+// after restoring an older save.
+func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progress) (copied, versioned int, bytes int64, newest time.Time, held int, files []FileEntry, errs []string) {
 	target, onProg := opts.Target, opts.OnProg
 	lastPause := time.Now()
 	dst := filepath.Join(target, f.ID)
@@ -138,6 +169,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}
 	seen := map[string]bool{}
+	names := map[string]string{} // key -> rel as named
 	errf := func(format string, a ...any) { errs = append(errs, f.Label+": "+fmt.Sprintf(format, a...)) }
 
 	_ = filepath.WalkDir(f.Path, func(path string, d fs.DirEntry, err error) error {
@@ -174,17 +206,28 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		}
 		key := strings.ToLower(filepath.ToSlash(rel))
 		seen[key] = true
+		names[key] = rel
 		if info.ModTime().After(newest) {
 			newest = info.ModTime()
 		}
 		cur := indexEntry{Size: info.Size(), MTime: info.ModTime().UnixNano()}
 		out := filepath.Join(dst, rel)
 		old, known := idx[key]
-		if ti, err := os.Stat(out); err == nil && ti.Size() == cur.Size &&
-			((known && old == cur) || (!known && sameTime(ti.ModTime(), info.ModTime()))) {
-			newIdx[key] = cur
-			p.FilesDone++
-			return nil
+		if ti, err := os.Stat(out); err == nil {
+			if ti.Size() == cur.Size && ((known && old == cur) || sameTime(ti.ModTime(), info.ModTime())) {
+				newIdx[key] = cur // already there
+				p.FilesDone++
+				return nil
+			}
+			ours := f.Solo || (known && ti.Size() == old.Size && sameTime(ti.ModTime(), time.Unix(0, old.MTime)))
+			if !ours && ti.ModTime().After(info.ModTime().Add(2*time.Second)) {
+				held++ // another PC's newer save
+				if known {
+					newIdx[key] = old
+				}
+				p.FilesDone++
+				return nil
+			}
 		}
 		v, err := copyVersioned(path, out, filepath.Join(verRoot, rel), info.ModTime())
 		if err != nil {
@@ -222,7 +265,12 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 				_ = os.Remove(path)
 				return nil
 			}
-			if seen[strings.ToLower(filepath.ToSlash(rel))] || m.Ignored(rel) {
+			key := strings.ToLower(filepath.ToSlash(rel))
+			if seen[key] || m.Ignored(rel) {
+				return nil
+			}
+			if _, known := idx[key]; !known && !f.Solo {
+				held++ // another PC's file this PC hasn't had yet
 				return nil
 			}
 			if err := moveTo(path, filepath.Join(verRoot, rel)); err != nil {
@@ -236,6 +284,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	}
 	if ctx.Err() == nil {
 		saveIndex(f.ID, newIdx)
+		files = indexFiles(newIdx, names)
 	}
 	if onProg != nil {
 		onProg(*p)

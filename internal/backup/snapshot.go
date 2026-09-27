@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/paths"
 )
 
 // Snapshot saves the files currently in f.Path as a restore point, so the
@@ -91,16 +93,46 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 	return len(rels), nil
 }
 
-// Keep moves a file into the folder's history as a new restore point (it can
-// be brought back with "As it was before <now>").
-func Keep(target, id, src, rel string) error {
-	t := time.Now()
-	if err := moveTo(src, filepath.Join(target, VersionsDir, id, t.Format(stampFmt), rel)); err != nil {
+// Keep puts a file into the folder's history as a new restore point (it can
+// be brought back with "As it was before <now>"). With move the file goes
+// there, otherwise a copy does. It waits up to a minute for a running backup,
+// which would otherwise be thinning the same history, and returns ErrBusy
+// after that.
+func Keep(target, id, src, rel string, move bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), keepWait)
+	defer cancel()
+	unlock, err := waitLock(ctx)
+	if err != nil {
 		return err
 	}
+	defer unlock()
+	t := time.Now()
+	dir := filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
+	for isDir(dir) {
+		t = t.Add(time.Second)
+		dir = filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
+	}
+	// Pinned first: a restore point that's only half there is still kept.
 	pin(target, id, t)
-	return nil
+	dst := filepath.Join(dir, rel)
+	if move {
+		return moveTo(src, dst)
+	}
+	fi, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := copyFile(src, dst); err != nil {
+		return err
+	}
+	return os.Chtimes(dst, fi.ModTime(), fi.ModTime())
 }
+
+// keepWait is how long Keep waits for a running backup.
+var keepWait = time.Minute
 
 // waitLock takes the backup lock, waiting for a running backup to finish.
 func waitLock(ctx context.Context) (func(), error) {
@@ -114,4 +146,27 @@ func waitLock(ctx context.Context) (func(), error) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// MergeHistory moves the restore points kept in src (a local folder used
+// while no backup folder was available) into target's history, where they
+// can be restored and are pruned like the rest. Points already in target are
+// kept as they are. It does nothing while a backup runs; the next call
+// retries.
+func MergeHistory(src, target string) error {
+	from := filepath.Join(src, VersionsDir)
+	if !isDir(from) || paths.Within(src, target) || paths.Within(target, src) {
+		return nil
+	}
+	unlock, err := lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := merge(from, filepath.Join(target, VersionsDir)); err != nil {
+		return err
+	}
+	removeEmptyDirs(src)
+	_ = os.Remove(src) // only if empty
+	return nil
 }

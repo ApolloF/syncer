@@ -19,8 +19,10 @@ type Class struct {
 	// "emulator:<group>").
 	SteamCloud bool
 	Reason     string
-	// CopyOf names the game whose own saves this Steam emulator folder copies.
+	// CopyOf names the game whose own saves this emulator folder copies.
 	CopyOf string
+	// UbisoftCloud: the folder is Ubisoft Connect's own save folder.
+	UbisoftCloud bool
 	// OneDriveCopy is another copy of the folder on the other side of
 	// OneDrive; OneDriveCopyNewer: its newest save is newer than this one's.
 	OneDriveCopy      string
@@ -85,19 +87,23 @@ type manifestIndex struct {
 	src    []Entry
 	byName map[string]Entry
 	byApp  map[int][]Entry
+	byUbi  map[int][]Entry // by Ubisoft game id
 }
 
 func indexFor(es []Entry) *manifestIndex {
 	if i := classCache.idx; i != nil && len(i.src) == len(es) && (len(es) == 0 || &i.src[0] == &es[0]) {
 		return i
 	}
-	i := &manifestIndex{src: es, byName: map[string]Entry{}, byApp: map[int][]Entry{}}
+	i := &manifestIndex{src: es, byName: map[string]Entry{}, byApp: map[int][]Entry{}, byUbi: map[int][]Entry{}}
 	for _, e := range es {
 		if _, ok := i.byName[strings.ToLower(e.Name)]; !ok {
 			i.byName[strings.ToLower(e.Name)] = e
 		}
 		if e.SteamID > 0 {
 			i.byApp[e.SteamID] = append(i.byApp[e.SteamID], e)
+		}
+		for _, id := range e.UbisoftIDs {
+			i.byUbi[id] = append(i.byUbi[id], e)
 		}
 	}
 	classCache.idx = i
@@ -135,17 +141,21 @@ func Classify(label, path string) Class {
 }
 
 func classify(idx *manifestIndex, label, path string) Class {
-	var c Class
+	c := Class{UbisoftCloud: InUbisoftConnect(path)}
 	if twin := paths.OneDriveTwin(path); twin != "" {
 		_, _, mod := measure(path)
 		c.OneDriveCopy, c.OneDriveCopyNewer = twin, newerCopy(twin, mod)
 	}
-	if app, _, ok := emulatorApp(path); ok {
+	if app, emu, ok := emulatorApp(path); ok {
+		games := idx.byApp[app]
+		if emu.ubisoft {
+			games = idx.byUbi[app]
+		}
 		var own []string
 		ex := newExistCache()
 		userName := currentUserName()
 		broad := tooBroad()
-		for _, e := range idx.byApp[app] {
+		for _, e := range games {
 			for _, raw := range e.Paths {
 				for _, d := range resolve(raw, userName, ex) {
 					if !broad[strings.ToLower(d)] {
@@ -154,8 +164,8 @@ func classify(idx *manifestIndex, label, path string) Class {
 				}
 			}
 		}
-		if len(own) > 0 && mirrorOf(path, own) {
-			c.CopyOf = idx.byApp[app][0].Name
+		if len(own) > 0 && mirrorIn(emu.saves(path), own) {
+			c.CopyOf = games[0].Name
 		}
 		return c
 	}
@@ -167,7 +177,7 @@ func classify(idx *manifestIndex, label, path string) Class {
 	sc := steam.Cached(classifyTTL, stopAt(broad))
 	group := ""
 	for _, s := range emulatorSaves(emulatorDirs()) {
-		if s.appID == e.SteamID {
+		if !s.ubisoft && s.appID == e.SteamID {
 			group = s.group
 			break
 		}

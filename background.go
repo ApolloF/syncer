@@ -13,6 +13,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
+	"github.com/ApolloF/syncer/internal/gdrive"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -52,6 +53,7 @@ func runBackground() {
 			if err := syncPause(ctx, c); err != nil {
 				logx.Printf("pause: %v", err)
 			}
+			releaseStaleHold(ctx, c)
 			if !s.Paused() {
 				if rep, err := meta.Reconcile(ctx, c); err != nil {
 					logx.Printf("reconcile: %v", err)
@@ -62,6 +64,10 @@ func runBackground() {
 					logx.Printf("auto-add: %v", err)
 				}
 				ensureIgnores(ctx, c)
+				// Before the backup: saves another PC made while this one was
+				// off come from its backup, if nothing here is newer.
+				inst := cachedInstalled()
+				pullNewer(ctx, func() bool { return playing(inst) })
 			}
 		}
 	}
@@ -131,6 +137,9 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 	target, ok := backupTarget(s)
 	if !ok {
 		err := errors.New("Google Drive for desktop not found — install it and sign in, or choose a backup folder")
+		if s.BackupBackend == backendGoogle {
+			err = gdrive.ErrSignedOut
+		}
 		record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Errors: []string{err.Error()}})
 		return nil, err
 	}
@@ -138,14 +147,22 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 	if listErr != nil && len(all) == 0 {
 		return nil, listErr
 	}
+	// Signed in to Google: bring in what other PCs backed up first.
+	if err := googleSync(ctx, 0); err != nil {
+		logx.Printf("Google Drive before the backup: %v", err)
+	}
 	seedHistory(ctx, s, target)
+	// Restore points saved on this PC while there was no backup folder.
+	if err := backup.MergeHistory(snapshotDir(), target); err != nil && !errors.Is(err, backup.ErrBusy) {
+		logx.Printf("move local restore points into the backup: %v", err)
+	}
 	var fs []backup.Folder
 	for _, f := range all {
 		if !s.NoBackup[f.ID] {
 			fs = append(fs, f)
 		}
 	}
-	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause})
+	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause, Device: myDevice()})
 	if err != nil {
 		if !errors.Is(err, backup.ErrBusy) {
 			record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Target: target, Errors: []string{err.Error()}})
@@ -154,6 +171,10 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 	}
 	if listErr != nil {
 		res.Errors = append(res.Errors, "synced games were skipped: "+listErr.Error())
+		res.OK = false
+	}
+	if err := googleSync(ctx, 0); err != nil {
+		res.Errors = append(res.Errors, "upload to Google Drive: "+err.Error())
 		res.OK = false
 	}
 	record(res)
@@ -188,7 +209,12 @@ func seedHistory(ctx context.Context, s store.Settings, target string) {
 
 // backupTarget is where backups go: a custom folder, or the chosen Google
 // account's My Drive.
-func backupTarget(s store.Settings) (string, bool) { return backup.Target(s.BackupRoot, s.DriveRoot) }
+func backupTarget(s store.Settings) (string, bool) {
+	if s.BackupBackend == backendGoogle {
+		return googleDir(), gdrive.HasToken()
+	}
+	return backup.Target(s.BackupRoot, s.DriveRoot)
+}
 
 func record(r *store.BackupRun) {
 	store.UpdateState(func(st *store.State) {
@@ -269,7 +295,7 @@ next:
 				continue next
 			}
 		}
-		extra = append(extra, backup.Folder{ID: lf.ID, Label: lf.Label, Path: lf.Path})
+		extra = append(extra, backup.Folder{ID: lf.ID, Label: lf.Label, Path: lf.Path, Solo: true})
 	}
 	sort.Slice(extra, func(i, j int) bool { return extra[i].ID < extra[j].ID })
 	return append(out, extra...)
@@ -357,4 +383,19 @@ func migrateLegacy() {
 	}
 	_, _ = store.UpdateSettings(func(s *store.Settings) { s.Migrated = true })
 	logx.Printf("migrate: legacy setup replaced")
+}
+
+// myDevice is this PC's Syncthing device id ("" when Syncthing isn't running).
+func myDevice() string {
+	c, err := syncthing.New()
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := c.Status(ctx)
+	if err != nil {
+		return ""
+	}
+	return st.MyID
 }

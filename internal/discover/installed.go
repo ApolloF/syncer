@@ -22,6 +22,8 @@ type Installed struct {
 	roots    []string
 	once     sync.Once
 	entries  map[string]Entry
+	// ubisoftSaves are save folders set in cracked Ubisoft games' emulator ini.
+	ubisoftSaves []string
 }
 
 // LoadInstalled reads local store metadata and uninstall names, skipping errors.
@@ -56,7 +58,9 @@ func LoadInstalled() *Installed {
 			}
 		})
 	}
-	i.loadCracked(exeTraces(), locations)
+	exes := exeTraces()
+	i.loadCracked(exes, locations)
+	i.loadUbisoftCracked(exes)
 	return i
 }
 

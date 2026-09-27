@@ -27,9 +27,10 @@ var autoAddMu sync.Mutex
 // (unless IncludeSteamCloud is on). Games that support Steam Cloud but can't
 // be confirmed to use it here are added too, while a Steam emulator's copy of
 // saves the game keeps in its own folder is not. Games whose saves are in OneDrive
-// are backed up only: OneDrive already syncs them, and two sync tools on the
-// same files make conflicting copies. It returns the games synced and the
-// games backed up only.
+// or in Ubisoft Connect's own save folder are backed up only: OneDrive and
+// Ubisoft Connect's cloud already sync them, and two sync tools on the same
+// files make conflicting copies. It returns the games synced and the games
+// backed up only.
 func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string, err error) {
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
@@ -52,7 +53,7 @@ func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string
 		if !wantAuto(g, s, installed) {
 			continue
 		}
-		if g.OneDrive {
+		if g.OneDrive || g.UbisoftCloud {
 			id, err := addBackupOnly(g.Name, g.Path, currentSynced())
 			if err != nil {
 				var ce coveredError
@@ -62,7 +63,7 @@ func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string
 				continue
 			}
 			backedUp = append(backedUp, g.Name)
-			logx.Printf("auto-added %s (%s) as %s, backed up only: it's in OneDrive", g.Name, g.Path, id)
+			logx.Printf("auto-added %s (%s) as %s, backed up only: %s already syncs it", g.Name, g.Path, id, syncedBy(g))
 			continue
 		}
 		id, err := addFolder(ctx, c, g.Name, g.Path)
@@ -101,7 +102,7 @@ func (a *App) runAutoAdd() {
 		runtime.EventsEmit(a.ctx, "toast", "Now syncing new games: "+strings.Join(added, ", "))
 	}
 	if len(backedUp) > 0 {
-		runtime.EventsEmit(a.ctx, "toast", "Backing up new games OneDrive already syncs: "+strings.Join(backedUp, ", "))
+		runtime.EventsEmit(a.ctx, "toast", "Backing up new games OneDrive or Ubisoft Connect already syncs: "+strings.Join(backedUp, ", "))
 	}
 	if len(added)+len(backedUp) > 0 {
 		runtime.EventsEmit(a.ctx, "changed")
@@ -200,4 +201,12 @@ func syncID(me, label, path string, taken map[string]bool) string {
 		return sf.ID
 	}
 	return meta.NewID(label, taken)
+}
+
+// syncedBy names what already syncs a game's saves between PCs.
+func syncedBy(g discover.Found) string {
+	if g.UbisoftCloud {
+		return "Ubisoft Connect"
+	}
+	return "OneDrive"
 }

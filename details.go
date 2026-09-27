@@ -30,7 +30,7 @@ func (a *App) addDetails(fs []FolderView, s store.Settings) {
 		f.BackedUp = st.FolderBackups[f.ID]
 		f.Exclude = s.Exclude[dismissKey(f.Path)]
 		if n, found := newer[f.ID]; found && f.Sync {
-			f.NewerOn, f.NewerAt = n.Host, n.At
+			f.NewerOn, f.NewerAt, f.NewerCanGet, f.NewerWhy = n.Host, n.At, n.CanGet, n.Why
 		}
 		d, cached := cache[f.ID]
 		if !cached || time.Since(d.at) > time.Minute {

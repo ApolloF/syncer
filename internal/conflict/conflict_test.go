@@ -3,7 +3,10 @@ package conflict
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func write(t *testing.T, p, s string) {
@@ -47,11 +50,14 @@ func TestFindResolve(t *testing.T) {
 	d := t.TempDir()
 	hist := t.TempDir()
 	var kept []string
-	keep := func(abs, rel string) error {
+	keep := func(abs, rel string, move bool) error {
 		kept = append(kept, rel)
 		dst := filepath.Join(hist, rel)
 		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
 		_ = os.Remove(dst)
+		if !move {
+			return CopyFile(abs, dst)
+		}
 		return os.Rename(abs, dst)
 	}
 	write(t, filepath.Join(d, "sub", "save.dat"), "active")
@@ -101,5 +107,117 @@ func TestFindResolve(t *testing.T) {
 	es, _ := os.ReadDir(filepath.Join(d, ".stversions"))
 	if len(es) != 2 { // x.sync-conflict… + a~<time>.sav
 		t.Fatalf("stversions: %v", es)
+	}
+}
+
+// "Use this one" while the game holds the save open: the swap fails, and the
+// current save must still be there (not moved into history, which Syncthing
+// would pass on to the other PCs as a delete).
+func TestResolveLockedKeepsOriginal(t *testing.T) {
+	d := t.TempDir()
+	orig := filepath.Join(d, "save.dat")
+	copyName := "save.sync-conflict-20260925-143012-ABCDEFG.dat"
+	write(t, orig, "active")
+	write(t, filepath.Join(d, copyName), "other")
+	h, err := windows.CreateFile(windows.StringToUTF16Ptr(orig), windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			windows.CloseHandle(h)
+		}
+	}()
+	hist := filepath.Join(t.TempDir(), "save.dat")
+	var moved []bool
+	keep := func(abs, rel string, move bool) error {
+		moved = append(moved, move)
+		if move {
+			return os.Rename(abs, hist)
+		}
+		// The game only blocks writers and deleters; reading for a copy works
+		// in real life. Here the lock blocks reads too, so fake the copy.
+		return os.WriteFile(hist, []byte("active"), 0o644)
+	}
+	if err := Resolve(d, copyName, true, keep); err == nil {
+		t.Fatal("swap over a locked file should fail")
+	}
+	windows.CloseHandle(h)
+	locked = false
+	if len(moved) != 1 || moved[0] {
+		t.Errorf("current file should be copied, not moved: %v", moved)
+	}
+	if read(t, orig) != "active" || read(t, filepath.Join(d, copyName)) != "other" {
+		t.Error("files changed although the swap failed")
+	}
+	if err := Resolve(d, copyName, true, keep); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, orig) != "other" || read(t, hist) != "active" {
+		t.Error("use copy after unlocking: wrong files")
+	}
+}
+
+func TestFromDevice(t *testing.T) {
+	cs := []Conflict{
+		{Rel: "slot1.sav", Copy: "slot1.sync-conflict-20260925-143012-AAAAAAA.sav", Device: "AAAAAAA"},
+		{Rel: "index.dat", Copy: "index.sync-conflict-20260925-143012-AAAAAAA.dat", Device: "AAAAAAA"},
+		{Rel: "slot2.sav", Copy: "slot2.sync-conflict-20260925-143012-AAAAAAA.sav", Device: "AAAAAAA"},
+		{Rel: "SLOT2.sav", Copy: "SLOT2.sync-conflict-20260925-150000-BBBBBBB.sav", Device: "BBBBBBB"},
+	}
+	var got []string
+	for _, c := range FromDevice(cs, "AAAAAAA") {
+		got = append(got, c.Rel)
+	}
+	if want := "slot1.sav index.dat"; strings.Join(got, " ") != want {
+		t.Errorf("FromDevice = %q, want %q (slot2 has versions from two PCs)", got, want)
+	}
+	if len(FromDevice(cs, "CCCCCCC")) != 0 {
+		t.Error("copies from a PC that made none")
+	}
+}
+
+func TestDropIdentical(t *testing.T) {
+	d := t.TempDir()
+	write(t, filepath.Join(d, "a.sav"), "same")
+	write(t, filepath.Join(d, "a.sync-conflict-20260925-143012-ABCDEFG.sav"), "same")
+	write(t, filepath.Join(d, "b.sav"), "mine")
+	write(t, filepath.Join(d, "b.sync-conflict-20260925-143012-ABCDEFG.sav"), "else")
+	same := func(a, b string) (bool, error) {
+		x, err := os.ReadFile(a)
+		if err != nil {
+			return false, err
+		}
+		y, err := os.ReadFile(b)
+		return string(x) == string(y), err
+	}
+	if n := DropIdentical(d, same); n != 1 {
+		t.Errorf("dropped %d, want 1", n)
+	}
+	if cs := Find(d); len(cs) != 1 || cs[0].Rel != "b.sav" {
+		t.Errorf("left: %+v", cs)
+	}
+}
+
+// "Keep all current" on a file with two conflict copies, within a second:
+// both copies must survive in .stversions.
+func TestStVersionsKeepNeverReplaces(t *testing.T) {
+	d := t.TempDir()
+	write(t, filepath.Join(d, "a.sav"), "current")
+	write(t, filepath.Join(d, "a.sync-conflict-20260925-143012-AAAAAAA.sav"), "one")
+	write(t, filepath.Join(d, "a.sync-conflict-20260925-150000-BBBBBBB.sav"), "two")
+	for _, c := range Find(d) {
+		if err := Resolve(d, c.Copy, false, StVersionsKeep(d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	es, _ := os.ReadDir(filepath.Join(d, ".stversions"))
+	got := map[string]bool{}
+	for _, e := range es {
+		got[read(t, filepath.Join(d, ".stversions", e.Name()))] = true
+	}
+	if !got["one"] || !got["two"] {
+		t.Errorf("kept: %v", got)
 	}
 }

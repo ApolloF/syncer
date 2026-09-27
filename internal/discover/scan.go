@@ -33,6 +33,9 @@ type Found struct {
 	SteamID int    `json:"steamId"` // Steam app id, 0 if unknown
 	// OneDrive: the folder is in OneDrive, which already syncs it between PCs.
 	OneDrive bool `json:"oneDrive"`
+	// UbisoftCloud: the folder is Ubisoft Connect's own save folder, which
+	// Ubisoft Connect already keeps in its cloud.
+	UbisoftCloud bool `json:"ubisoftCloud"`
 	// OneDriveCopy is another copy of this folder on the other side of
 	// OneDrive (see paths.OneDriveTwin); OneDriveCopyNewer: it has newer saves.
 	OneDriveCopy      string    `json:"oneDriveCopy"`
@@ -50,6 +53,7 @@ var placeholders = map[string]string{
 	"<home>":            paths.Home,
 	"<winPublic>":       paths.Public,
 	"<winProgramData>":  paths.ProgramData,
+	ubisoftPlaceholder:  paths.Ubisoft,
 }
 
 // tooBroad are folders that hold many games; syncing them whole is never right.
@@ -66,6 +70,15 @@ func tooBroad() map[string]bool {
 		{paths.Local, "CrashDumps"}, {paths.Roaming, "Godot"}, {paths.Roaming, "Godot/app_userdata"}} {
 		if p, ok := paths.Resolve(rel[0], rel[1]); ok {
 			m[strings.ToLower(p)] = true
+		}
+	}
+	// Ubisoft Connect's account folders hold every Ubisoft game's saves.
+	if u := paths.Root(paths.Ubisoft); u != "" {
+		es, _ := os.ReadDir(u)
+		for _, e := range es {
+			if e.IsDir() {
+				m[strings.ToLower(filepath.Join(u, e.Name()))] = true
+			}
 		}
 	}
 	return m
@@ -88,7 +101,7 @@ func Scan(entries []Entry) []Found {
 	emuSaves := emulatorSaves(emuDirs)
 	emuByApp := map[int]string{}
 	for _, s := range emuSaves {
-		if emuByApp[s.appID] == "" {
+		if !s.ubisoft && emuByApp[s.appID] == "" {
 			emuByApp[s.appID] = s.group
 		}
 	}
@@ -188,29 +201,46 @@ func Scan(entries []Entry) []Found {
 		}
 	}
 
-	// Saves a Steam emulator keeps for a cracked copy: "Game (RUNE saves)".
-	// When the game also keeps them in a folder of its own, this is a copy.
-	names := map[int]string{}
+	// Saves a Steam or Ubisoft emulator keeps for a cracked copy: "Game
+	// (RUNE saves)". When the game also keeps them in a folder of its own,
+	// this is a copy.
+	names, ubiNames := map[int]string{}, map[int]string{}
 	for _, e := range entries {
 		if _, ok := names[e.SteamID]; !ok && e.SteamID > 0 {
 			names[e.SteamID] = e.Name
 		}
+		for _, id := range e.UbisoftIDs {
+			if _, ok := ubiNames[id]; !ok {
+				ubiNames[id] = e.Name
+			}
+		}
 	}
-	own := map[int][]string{}
+	own, ownApp := map[string][]string{}, map[int][]string{}
 	for _, f := range out {
+		own[f.Name] = append(own[f.Name], f.Path)
 		if f.SteamID > 0 {
-			own[f.SteamID] = append(own[f.SteamID], f.Path)
+			ownApp[f.SteamID] = append(ownApp[f.SteamID], f.Path)
 		}
 	}
 	for _, s := range emuSaves {
 		name, ok := names[s.appID]
+		if s.ubisoft {
+			name, ok = ubiNames[s.appID]
+		}
 		key := strings.ToLower(s.dir)
 		if !ok || seenDir[key] {
 			continue
 		}
 		seenDir[key] = true
-		f := Found{Name: name + " (" + s.group + " saves)", Path: s.dir, Emulator: s.group, SteamID: s.appID, Known: true}
-		if mirrorOf(s.dir, own[s.appID]) {
+		f := Found{Name: name + " (" + s.group + " saves)", Path: s.dir, Emulator: s.group, Known: true}
+		if !s.ubisoft {
+			f.SteamID = s.appID
+		}
+		d, dirs := emuDir{ubisoft: s.ubisoft}, own[name]
+		if !s.ubisoft {
+			dirs = ownApp[s.appID]
+		}
+		if mirrorIn(d.saves(s.dir), dirs) {
 			f.CopyOf = name
 		}
 		out = append(out, f)
@@ -259,6 +289,7 @@ func Scan(entries []Entry) []Found {
 	od := paths.OneDriveRoots()
 	for i := range out {
 		out[i].OneDrive = paths.WithinAny(od, out[i].Path)
+		out[i].UbisoftCloud = InUbisoftConnect(out[i].Path)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out
@@ -266,6 +297,11 @@ func Scan(entries []Entry) []Found {
 
 // resolve expands one manifest path to existing save directories.
 func resolve(raw, userName string, ex *existCache) []string {
+	if strings.HasPrefix(raw, ubisoftPlaceholder) {
+		// savegames\<account>\<game id>: every account's folder for this
+		// game, never an account's whole folder.
+		raw = strings.ReplaceAll(raw, "<storeUserId>", "*")
+	}
 	var abs string
 	for ph, root := range placeholders {
 		if strings.HasPrefix(raw, ph) {
@@ -384,4 +420,11 @@ func measure(dir string) (size int64, files int, mod time.Time) {
 		return nil
 	})
 	return
+}
+
+// InUbisoftConnect reports whether path is in Ubisoft Connect's own save
+// folder, which Ubisoft Connect keeps in its cloud.
+func InUbisoftConnect(path string) bool {
+	u := paths.Root(paths.Ubisoft)
+	return u != "" && paths.Within(u, path)
 }

@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +32,9 @@ type Entry struct {
 	SteamCloud  bool     // the game supports Steam Cloud (not that it's in use here)
 	SteamID     int      // Steam app id, 0 if not on Steam
 	InstallDirs []string // folder names the game installs into
+	// UbisoftIDs are the game's Ubisoft Connect game ids (the <id> in
+	// savegames\<account>\<id>), which Ubisoft emulators use too.
+	UbisoftIDs []int
 }
 
 var (
@@ -42,7 +48,7 @@ func cacheDir() string {
 	return d
 }
 
-func indexFile() string { return filepath.Join(cacheDir(), "manifest-index-v3.gob.gz") }
+func indexFile() string { return filepath.Join(cacheDir(), "manifest-index-v4.gob.gz") }
 
 // CachedManifest returns the local index without downloading or refreshing it.
 func CachedManifest() []Entry {
@@ -116,8 +122,20 @@ func download() ([]Entry, error) {
 	return es, nil
 }
 
+// readIndex reads the local index. Until a new version of the index has been
+// downloaded, the previous one is used: without any, Syncer would forget
+// which folders Steam Cloud keeps and which are emulator copies.
 func readIndex() ([]Entry, error) {
-	f, err := os.Open(indexFile())
+	name := indexFile()
+	if _, err := os.Stat(name); err != nil {
+		old, _ := filepath.Glob(filepath.Join(cacheDir(), "manifest-index-v*.gob.gz"))
+		if len(old) == 0 {
+			return nil, err
+		}
+		sort.Strings(old)
+		name = old[len(old)-1]
+	}
+	f, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +179,9 @@ func writeIndex(es []Entry) error {
 }
 
 // Parse reads the manifest YAML and keeps the games that have Windows save
-// locations.
+// locations. Ubisoft Connect's save folders (<root>/savegames/… for the
+// Ubisoft store) become <ubisoft>/…; other store folders are left out
+// (Steam's own is Steam Cloud's).
 func Parse(r io.Reader) ([]Entry, error) {
 	es, err := ludusavi.Parse(r)
 	if err != nil {
@@ -169,9 +189,50 @@ func Parse(r io.Reader) ([]Entry, error) {
 	}
 	var out []Entry
 	for _, e := range es {
-		if len(e.Saves) > 0 {
-			out = append(out, Entry{Name: e.Name, Paths: e.Saves, SteamCloud: e.SteamCloud, SteamID: e.SteamID, InstallDirs: e.InstallDirs})
+		saves := e.Saves
+		var ubi []int
+		for _, rp := range e.RootSaves {
+			rest, ok := strings.CutPrefix(rp.Path, "<root>/savegames/")
+			if !ok || !forUbisoft(rp.Stores) {
+				continue
+			}
+			saves = append(saves[:len(saves):len(saves)], ubisoftPlaceholder+"/"+rest)
+			if id := ubisoftID(rest); id > 0 {
+				ubi = append(ubi, id)
+			}
+		}
+		if len(saves) > 0 {
+			out = append(out, Entry{Name: e.Name, Paths: saves, SteamCloud: e.SteamCloud, SteamID: e.SteamID,
+				InstallDirs: e.InstallDirs, UbisoftIDs: ubi})
 		}
 	}
 	return out, nil
+}
+
+const ubisoftPlaceholder = "<ubisoft>"
+
+// forUbisoft reports whether a store folder path applies to Ubisoft Connect.
+func forUbisoft(stores []string) bool {
+	if len(stores) == 0 {
+		return true
+	}
+	for _, s := range stores {
+		if s == "uplay" {
+			return true
+		}
+	}
+	return false
+}
+
+// ubisoftID returns the game id in "<storeUserId>/<id>", 0 if there's none.
+func ubisoftID(rest string) int {
+	acct, id, ok := strings.Cut(rest, "/")
+	if !ok || acct != "<storeUserId>" {
+		return 0
+	}
+	n, err := strconv.Atoi(id)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }

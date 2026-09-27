@@ -5,6 +5,7 @@
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
   import { SaveSettings, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, OpenUpdate } from '../../wailsjs/go/main/App'
   import type { store, main } from '../../wailsjs/go/models'
+  import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import { pausedUntil, tomorrowMorning } from '../lib/fmt'
 
   const o = $derived(ui.overview)
@@ -143,6 +144,14 @@
     <Toggle checked={o?.settings.installedOnly} label="Only sync installed games" onchange={(v) => save({ installedOnly: v })} />
   </div>
   <div class="item">
+    <div class="grow"><div class="name">Take newer saves from other PCs' backups</div><div class="faint small">When a PC that played later is off, its saves come from its Google Drive backup — only if nothing here changed since this PC's last backup and no game is running. The saves here are kept as a restore point first.</div></div>
+    <Toggle checked={!o?.settings.noCloudPull} label="Take newer saves from other PCs' backups" onchange={(v) => save({ noCloudPull: !v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Hold syncing while playing</div><div class="faint small">While a game runs, saves from your other PCs wait until it exits, so nothing changes under the running game.</div></div>
+    <Toggle checked={!o?.settings.noHoldWhilePlaying} label="Hold syncing while playing" onchange={(v) => save({ noHoldWhilePlaying: !v })} />
+  </div>
+  <div class="item">
     <div class="grow"><div class="name">Notify me about problems</div><div class="faint small">A Windows notification when a backup fails, no backup has worked for 3 days, a save has two versions, or a new Syncer is out.</div></div>
     <Toggle checked={o?.settings.notify} label="Notify me about problems" onchange={(v) => save({ notify: v })} />
   </div>
@@ -180,9 +189,14 @@
 {/if}
 
 <p class="faint small about">
-  Syncer keeps saves in sync with <b>Syncthing</b> (peer-to-peer, nothing goes through a server) and backs them up into
+  Syncer keeps saves in sync with <b>Syncthing</b> (end-to-end encrypted, directly between your PCs; public relays
+  pass the encrypted data along when they can't reach each other) and backs them up into
   <b>Google Drive for desktop</b>. Game locations come from the Ludusavi manifest (PCGamingWiki).
   {#if o?.version}Syncer {o.version}.{/if}
+  Free software under the
+  <button class="linkbtn" onclick={() => BrowserOpenURL('https://www.gnu.org/licenses/agpl-3.0.html')}>GNU AGPL v3.0</button> ·
+  <button class="linkbtn" onclick={() => BrowserOpenURL('https://github.com/ApolloF/syncer')}>Source code</button> ·
+  <button class="linkbtn" onclick={() => BrowserOpenURL('https://github.com/ApolloF/syncer/blob/main/THIRD_PARTY_NOTICES.md')}>Third-party notices</button>
 </p>
 
 <div class="card flush list">
@@ -249,4 +263,5 @@
   .indent { margin: -6px 0 0 26px; }
   .err { color: var(--err); }
   .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .linkbtn { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
 </style>

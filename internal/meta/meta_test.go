@@ -8,6 +8,7 @@ import (
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
+	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
 func TestAdoptable(t *testing.T) {
@@ -76,6 +77,26 @@ func TestAdoptable(t *testing.T) {
 	}
 }
 
+func TestAdoptableUbisoft(t *testing.T) {
+	no := func(string) bool { return false }
+	odyssey := SharedFolder{ID: "aco", Label: "Assassin's Creed Odyssey", Root: paths.Ubisoft, Rel: "0a1b2c/5092"}
+	account := SharedFolder{ID: "acct", Label: "acct", Root: paths.Ubisoft, Rel: "0a1b2c"}
+
+	restore := paths.SetRootForTest(paths.Ubisoft, "")
+	if _, got := Adoptable(odyssey, store.Settings{}, no, nil); got != SkipNoRoot {
+		t.Errorf("no Ubisoft Connect here: got %q, want %q", got, SkipNoRoot)
+	}
+	restore()
+
+	defer paths.SetRootForTest(paths.Ubisoft, `C:\Ubisoft Test\savegames`)() // not below Temp, which is never syncable
+	if _, got := Adoptable(odyssey, store.Settings{}, no, nil); got != SkipUbisoftCloud {
+		t.Errorf("Ubisoft Connect's folder: got %q, want %q", got, SkipUbisoftCloud)
+	}
+	if _, got := Adoptable(account, store.Settings{}, no, nil); got != SkipUnsafe {
+		t.Errorf("a whole Ubisoft account: got %q, want %q", got, SkipUnsafe)
+	}
+}
+
 func TestDropOuter(t *testing.T) {
 	av := func(id, p string) Avail { return Avail{SharedFolder: SharedFolder{ID: id}, Path: p} }
 	got := dropOuter([]Avail{
@@ -92,4 +113,38 @@ func TestDropOuter(t *testing.T) {
 	if want := "helldivers-2 other first"; strings.Join(ids, " ") != want {
 		t.Fatalf("got %v, want %s", ids, want)
 	}
+}
+
+func TestPatchFor(t *testing.T) {
+	fd := func(ids ...string) []syncthing.FolderDevice {
+		var out []syncthing.FolderDevice
+		for _, id := range ids {
+			out = append(out, syncthing.FolderDevice{DeviceID: id})
+		}
+		return out
+	}
+	done := syncthing.Folder{ID: "game", Devices: fd("me", "b"), Versioning: syncthing.Versioning{Type: "staggered"}, MaxConflicts: -1}
+	if p := patchFor(done, "me", []string{"b"}); len(p) != 0 {
+		t.Errorf("nothing to change: %v", p)
+	}
+	old := syncthing.Folder{ID: "game", Devices: fd("me"), MaxConflicts: 10}
+	p := patchFor(old, "me", []string{"c", "b"})
+	if got := devIDs(p["devices"]); got != "me b c" {
+		t.Errorf("devices = %q", got)
+	}
+	if p["maxConflicts"] != -1 || p["versioning"] == nil {
+		t.Errorf("conflicts/versioning not fixed: %v", p)
+	}
+	m := patchFor(syncthing.Folder{ID: FolderID, Devices: fd("me", "b")}, "me", []string{"b"})
+	if len(m) != 0 {
+		t.Errorf("metadata folder needs no versioning or conflict copies: %v", m)
+	}
+}
+
+func devIDs(v any) string {
+	var ids []string
+	for _, d := range v.([]map[string]string) {
+		ids = append(ids, d["deviceID"])
+	}
+	return strings.Join(ids, " ")
 }
