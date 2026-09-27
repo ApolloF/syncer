@@ -59,6 +59,7 @@ func (a *App) startup(ctx context.Context) {
 		go a.updateLoop(ctx)
 		go a.notifyLoop(ctx)
 		go a.newerLoop(ctx)
+		go a.modsLoop(ctx)
 		a.watch(ctx)
 	}()
 }
@@ -543,6 +544,13 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
 		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
 		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
+		s.FindMods, s.AutoAddMods, s.SyncDeployedMods = in.FindMods, in.AutoAddMods, in.SyncDeployedMods
+		if !s.FindMods { // the experimental mod options build on finding mods
+			s.AutoAddMods, s.SyncDeployedMods = false, false
+		}
+		if in.ModsMaxGB > 0 || in.ModsMaxGB == -1 {
+			s.ModsMaxGB = in.ModsMaxGB
+		}
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}
@@ -564,8 +572,13 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	if s.NoUpdateCheck != old.NoUpdateCheck {
 		a.refreshTray()
 	}
-	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) {
+	modsAuto := s.FindMods && s.AutoAddMods
+	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) ||
+		modsAuto && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB) {
 		go a.runAutoAdd()
+	}
+	if old.SyncDeployedMods && !s.SyncDeployedMods {
+		go a.holdAllDeployed("the experimental option to sync deployed mods was turned off")
 	}
 	return s, nil
 }

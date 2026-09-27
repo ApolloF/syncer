@@ -1,7 +1,9 @@
 package winx
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -33,4 +35,23 @@ func TestBackgroundThread(t *testing.T) {
 	end := BackgroundThread()
 	defer end()
 	end()
+}
+
+func TestProcessPaths(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skip(err)
+	}
+	for _, p := range ProcessPaths() {
+		if strings.EqualFold(p, exe) {
+			return
+		}
+	}
+	t.Errorf("own process %s not listed", exe)
+}
+
+func TestDiskFree(t *testing.T) {
+	if n, err := DiskFree(os.TempDir()); err != nil || n == 0 {
+		t.Errorf("DiskFree = %d, %v", n, err)
+	}
 }

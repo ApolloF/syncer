@@ -169,10 +169,10 @@ func TestWantAutoSkipsEmulatorCopies(t *testing.T) {
 }
 
 func TestWithSyncIgnores(t *testing.T) {
-	if got := withSyncIgnores(nil); !slices.Equal(got, []string{"steam_autocloud.vdf"}) {
+	if got := withSyncIgnores("", nil); !slices.Equal(got, []string{"steam_autocloud.vdf"}) {
 		t.Errorf("no exclusions: %v", got)
 	}
-	if got := withSyncIgnores([]string{"*.log", "STEAM_AUTOCLOUD.VDF"}); !slices.Equal(got, []string{"steam_autocloud.vdf", "*.log"}) {
+	if got := withSyncIgnores("", []string{"*.log", "STEAM_AUTOCLOUD.VDF"}); !slices.Equal(got, []string{"steam_autocloud.vdf", "*.log"}) {
 		t.Errorf("with exclusions: %v", got)
 	}
 }

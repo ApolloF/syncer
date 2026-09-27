@@ -62,6 +62,7 @@ func runBackground() {
 					logx.Printf("auto-add: %v", err)
 				}
 				ensureIgnores(ctx, c)
+				modsTick(ctx, c)
 			}
 		}
 	}

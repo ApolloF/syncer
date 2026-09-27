@@ -12,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/ApolloF/syncer/internal/logx"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 	"github.com/ApolloF/syncer/internal/tasks"
@@ -145,17 +146,33 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 	for _, f := range fs {
 		exists[f.ID] = true
 	}
-	var left []string
+	s := store.LoadSettings()
+	var left, modHeld []string
 	for _, id := range held {
 		if !exists[id] {
 			continue // removed meanwhile
+		}
+		// A mod folder waits while its mod manager is open (see modsTick),
+		// and a PC receiving deployed mods keeps its folder paused.
+		if isMod(s, id) && (!holdable(s, id) || mods.ManagerRunning(processPaths())) {
+			if holdable(s, id) {
+				modHeld = append(modHeld, id)
+			}
+			continue
 		}
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
 			errs = append(errs, err)
 			left = append(left, id)
 		}
 	}
-	store.UpdateState(func(st *store.State) { st.PausedFolders = left })
+	store.UpdateState(func(st *store.State) {
+		st.PausedFolders = left
+		for _, id := range modHeld {
+			if !slices.Contains(st.ModHeld, id) {
+				st.ModHeld = append(st.ModHeld, id)
+			}
+		}
+	})
 	return errors.Join(errs...)
 }
 

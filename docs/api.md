@@ -39,11 +39,12 @@ Errors use the standard codes (`-32700` parse error, `-32600` invalid request, `
 | `registerGames` | `{games: [{title, dir?, steamAppId?, gogId?}]}` (at most 20,000) | `{games: n}` |
 | `subscribe` | – | `true`, then `changed` notifications on this connection |
 
-**Folder:** `{id, label, path, sync, backup, state, needBytes, errors, conflicts, exists, modified?, backedUp?, newerOn?, newerAt?}`.
+**Folder:** `{id, label, path, sync, backup, state, needBytes, errors, conflicts, exists, modified?, backedUp?, newerOn?, newerAt?, kind?}`.
 
 - `sync`: synced with other PCs; `false` means only backed up.
 - `state`: Syncthing's state (`idle`, `scanning`, `syncing`, …), or `backup-only`, `off`, `paused`.
 - `newerOn`: another PC backed up a newer save that hasn't arrived here yet.
+- `kind`: set for mod folders: `mods` (Vortex's installed mods), `mods-profiles` (its load orders), `mods-deployed` (mods deployed into the game's folder). `gameStatus` never returns deployed-mods folders, and `syncNow` doesn't apply their updates: that only happens from Syncer's window.
 
 ### Notes
 

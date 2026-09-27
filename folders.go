@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,15 @@ type FolderView struct {
 	CopyOf            string `json:"copyOf"`            // a Steam emulator's copy of this game's own saves
 	OneDriveCopy      string `json:"oneDriveCopy"`      // another copy on the other side of OneDrive
 	OneDriveCopyNewer bool   `json:"oneDriveCopyNewer"` // … with newer saves than this one
+
+	// Mod folders: their kind (mods.Kind*), the mod manager's game id, and
+	// for deployed mods this PC's role and update state.
+	Kind       string `json:"kind"`
+	ModGame    string `json:"modGame"`
+	ModRole    string `json:"modRole"`
+	ModPhase   string `json:"modPhase"`   // idle, pending, applying, held
+	ModHeld    string `json:"modHeld"`    // why updates are held
+	ModPending string `json:"modPending"` // what the next update changes
 }
 
 // Folders lists synced folders plus this PC's backup-only ones. Backup-only
@@ -107,6 +117,11 @@ func (a *App) Folders() ([]FolderView, error) {
 	}
 	od := paths.OneDriveRoots()
 	for i := range out {
+		if mf, ok := s.Mods[out[i].ID]; ok {
+			out[i].Kind, out[i].ModGame, out[i].ModRole, out[i].Installed = mf.Kind, mf.Game, mf.Role, true
+			a.modView(&out[i])
+			continue // not a save folder: Steam Cloud and OneDrive checks don't apply
+		}
 		out[i].OneDrive = paths.WithinAny(od, out[i].Path)
 		c := discover.Classify(out[i].Label, out[i].Path)
 		out[i].SteamCloud, out[i].CopyOf = c.SteamCloud, c.CopyOf
@@ -141,7 +156,7 @@ func (a *App) ScanGames(refresh bool) ([]GameView, error) {
 	if err != nil {
 		return nil, err
 	}
-	found := discover.Scan(es)
+	found := append(discover.Scan(es), modFounds(store.LoadSettings())...)
 	a.mu.Lock()
 	a.lastScan = found
 	a.mu.Unlock()
@@ -174,7 +189,7 @@ func (a *App) annotate(found []discover.Found) []GameView {
 	}
 	out := make([]GameView, 0, len(found))
 	for _, f := range found {
-		g := GameView{Found: f, Installed: inst.Has(f.Name), Dismissed: s.Dismissed[dismissKey(f.Path)]}
+		g := GameView{Found: f, Installed: f.Kind != "" || inst.Has(f.Name), Dismissed: s.Dismissed[dismissKey(f.Path)]}
 		for p, label := range covering {
 			if paths.Within(p, f.Path) {
 				g.SyncedBy = label
@@ -221,10 +236,16 @@ func (a *App) ManifestUpdated() int64 {
 // checkNewFolder validates a folder the user wants to add and returns the ids
 // already in use. A path already backed up only is returned as existing.
 func checkNewFolder(path string, synced []backup.Folder) (taken map[string]bool, backupOnly string, err error) {
+	return checkNewFolderWith(path, synced, paths.CheckSyncable)
+}
+
+// checkNewFolderWith is checkNewFolder with its own safety check: mod
+// folders are checked by package mods instead.
+func checkNewFolderWith(path string, synced []backup.Folder, check func(string) error) (taken map[string]bool, backupOnly string, err error) {
 	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
 		return nil, "", errors.New("folder not found: " + path)
 	}
-	if err := paths.CheckSyncable(path); err != nil {
+	if err := check(path); err != nil {
 		return nil, "", err
 	}
 	if err := overlapsSynced(path, "", synced); err != nil {
@@ -466,6 +487,9 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		if !ok {
 			return errors.New("unknown folder")
 		}
+		if mf, mod := s.Mods[id]; mod {
+			return a.resyncMod(ctx, c, id, lf, mf)
+		}
 		if err := paths.CheckSyncable(lf.Path); err != nil {
 			return err
 		}
@@ -544,6 +568,10 @@ func toBackupOnly(s *store.Settings, syncID, label, path string) string {
 	}
 	bid := backupOnlyID(label, taken)
 	s.BackupOnly[bid] = store.LocalFolder{ID: bid, Label: label, Path: path, SyncID: syncID}
+	if mf, ok := s.Mods[syncID]; ok {
+		s.Mods[bid] = mf // syncing it again needs to know it's a mod folder
+		delete(s.Mods, syncID)
+	}
 	s.Ignored[syncID] = true
 	s.Dismissed[dismissKey(path)] = true // auto-add must not sync it again
 	if s.NoBackup[syncID] {
@@ -588,6 +616,7 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		if _, err := store.UpdateSettings(func(s *store.Settings) {
 			delete(s.BackupOnly, id)
 			delete(s.NoBackup, id)
+			delete(s.Mods, id)
 			s.Dismissed[dismissKey(lf.Path)] = true
 		}); err != nil {
 			return err
@@ -627,6 +656,11 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		s.Ignored[id] = true
 		s.Dismissed[dismissKey(f.Path)] = true
 		delete(s.NoBackup, id)
+		delete(s.Mods, id)
+	})
+	store.UpdateState(func(st *store.State) {
+		delete(st.ModSync, id)
+		st.ModHeld = slices.DeleteFunc(st.ModHeld, func(h string) bool { return h == id })
 	})
 	_, _ = meta.Reconcile(ctx, c)
 	if unlock != nil && paths.ValidID(id) {
@@ -752,6 +786,7 @@ type AvailableView struct {
 	Path   string `json:"path"`
 	From   string `json:"from"`
 	Reason string `json:"reason"` // a meta.Skip* reason, or meta.Pending
+	Kind   string `json:"kind"`   // mod folders: mods.Kind*
 }
 
 // Available lists games your other PCs sync that this PC doesn't.
@@ -768,7 +803,7 @@ func (a *App) Available() ([]AvailableView, error) {
 	}
 	out := make([]AvailableView, 0, len(av))
 	for _, v := range av {
-		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason})
+		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: v.Kind})
 	}
 	return out, nil
 }
@@ -788,6 +823,9 @@ func (a *App) SyncAvailable(id string) error {
 	}
 	for _, v := range av {
 		if v.ID == id {
+			if v.Kind != "" {
+				return a.joinModAvailable(ctx, c, v)
+			}
 			return a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false)
 		}
 	}
@@ -813,11 +851,13 @@ func (a *App) RemoveUninstalled() (int, error) {
 		return 0, err
 	}
 	inst := cachedInstalled()
+	s := store.LoadSettings()
 	n := 0
 	for _, f := range fs {
 		// Not converted to backup-only: the PCs that have the game installed
-		// keep backing these saves up into the same Drive folder.
-		if f.ID == meta.FolderID || inst.Has(cmpOr(f.Label, f.ID)) {
+		// keep backing these saves up into the same Drive folder. Mod
+		// folders only exist where the mod manager has the game.
+		if f.ID == meta.FolderID || isMod(s, f.ID) || inst.Has(cmpOr(f.Label, f.ID)) {
 			continue
 		}
 		if err := c.RemoveFolder(ctx, f.ID); err != nil {

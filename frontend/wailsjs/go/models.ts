@@ -164,6 +164,7 @@ export namespace main {
 	    path: string;
 	    from: string;
 	    reason: string;
+	    kind: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AvailableView(source);
@@ -176,6 +177,7 @@ export namespace main {
 	        this.path = source["path"];
 	        this.from = source["from"];
 	        this.reason = source["reason"];
+	        this.kind = source["kind"];
 	    }
 	}
 	export class BulkResult {
@@ -320,6 +322,12 @@ export namespace main {
 	    copyOf: string;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
+	    kind: string;
+	    modGame: string;
+	    modRole: string;
+	    modPhase: string;
+	    modHeld: string;
+	    modPending: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderView(source);
@@ -354,6 +362,12 @@ export namespace main {
 	        this.copyOf = source["copyOf"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
+	        this.kind = source["kind"];
+	        this.modGame = source["modGame"];
+	        this.modRole = source["modRole"];
+	        this.modPhase = source["modPhase"];
+	        this.modHeld = source["modHeld"];
+	        this.modPending = source["modPending"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -391,6 +405,11 @@ export namespace main {
 	    files: number;
 	    // Go type: time
 	    modified: any;
+	    kind?: string;
+	    manager?: string;
+	    modGame?: string;
+	    modKey?: string;
+	    warn?: string[];
 	    syncedBy: string;
 	    installed: boolean;
 	    dismissed: boolean;
@@ -416,6 +435,11 @@ export namespace main {
 	        this.size = source["size"];
 	        this.files = source["files"];
 	        this.modified = this.convertValues(source["modified"], null);
+	        this.kind = source["kind"];
+	        this.manager = source["manager"];
+	        this.modGame = source["modGame"];
+	        this.modKey = source["modKey"];
+	        this.warn = source["warn"];
 	        this.syncedBy = source["syncedBy"];
 	        this.installed = source["installed"];
 	        this.dismissed = source["dismissed"];
@@ -662,6 +686,30 @@ export namespace store {
 	        this.copiedFrom = source["copiedFrom"];
 	    }
 	}
+	export class ModFolder {
+	    kind: string;
+	    manager: string;
+	    game: string;
+	    gameName: string;
+	    root: string;
+	    rel: string;
+	    role?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.manager = source["manager"];
+	        this.game = source["game"];
+	        this.gameName = source["gameName"];
+	        this.root = source["root"];
+	        this.rel = source["rel"];
+	        this.role = source["role"];
+	    }
+	}
 	export class Settings {
 	    theme: string;
 	    backupEnabled: boolean;
@@ -687,6 +735,11 @@ export namespace store {
 	    notify: boolean;
 	    noUpdateCheck: boolean;
 	    exclude?: Record<string, Array<string>>;
+	    findMods: boolean;
+	    autoAddMods: boolean;
+	    syncDeployedMods: boolean;
+	    modsMaxGB: number;
+	    mods?: Record<string, ModFolder>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -717,6 +770,11 @@ export namespace store {
 	        this.notify = source["notify"];
 	        this.noUpdateCheck = source["noUpdateCheck"];
 	        this.exclude = source["exclude"];
+	        this.findMods = source["findMods"];
+	        this.autoAddMods = source["autoAddMods"];
+	        this.syncDeployedMods = source["syncDeployedMods"];
+	        this.modsMaxGB = source["modsMaxGB"];
+	        this.mods = this.convertValues(source["mods"], ModFolder, true);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

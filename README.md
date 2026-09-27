@@ -37,6 +37,7 @@ Syncer is a small desktop app built on two tools that already work well:
 - **Stays out of your way while you play.** Backups run at background CPU and disk priority, and the automatic backup waits while a full-screen app or an installed game is in the foreground (*Backup → Pause while playing*).
 - **Undo.** Removing a game takes it out of Syncer and cleans up Syncthing's marker files (optionally deleting its backup too). *Settings → Undo everything* stops all syncing on this PC, and can also unlink your PCs, stop or uninstall Syncthing, and stop or delete backups. Neither ever deletes save files.
 - **Deletes saves only when you really mean it.** From a game's *Remove* dialog, *Delete the save files…* asks you to type the game's name. It then stops syncing the game on this PC (your other PCs keep their copy), backs it up one last time (nothing is deleted if that fails) and moves the save folder to the Recycle Bin. The game stays in your games as *Backup only*, so you can restore it later.
+- **Syncs your mods too (optional).** With *Settings → Find installed mods* on, *Found on this PC* also lists the mods [Vortex](https://www.nexusmods.com/about/vortex/) installed for each game (its staging folder, wherever you keep it) and each game's load orders. Sync them like a save folder and they arrive in Vortex on your other PCs, ready to enable and deploy there. Other PCs find the folder through their own Vortex, never by a path another PC sends. Mod folders aren't backed up to Google Drive unless you turn their backup on, pause while Vortex is open so it never sees a half-arrived mod, and keep replaced files for a week in `%LOCALAPPDATA%\Syncer\mod-versions`. Each PC keeps its own game settings (`.ini` files). Experimental options add new mod folders automatically (up to a size you pick) and sync the mods deployed into the game's own folder (see below).
 - **Light and dark mode.** It follows your Windows setting (you can override it), and uses the Mica backdrop on Windows 11.
 
 ## Install
@@ -77,6 +78,7 @@ Syncer stores its settings in `%APPDATA%\Syncer`. It reads Syncthing's API key f
 
 ### Security
 
+- Mod folders are shared by a name only each PC's own Vortex can turn into a folder (`vortex:<game>`), and must hold Vortex's staging marker. Vortex's own database and extensions, whole drives, system folders and store library folders are never shared.
 - Folder lists from other PCs are treated as untrusted. Ids and paths are validated, and folders like your whole profile, `.ssh`, browser profiles, the Startup folder or Syncthing's own settings are never shared, even if another PC asks for them.
 - Syncer talks to Syncthing only on this PC, or over HTTPS pinned to Syncthing's own certificate. It never sends the API key in the clear over the network.
 - The launcher API is a named pipe that only your Windows account can open, never over the network. Launchers pass game names and folders; nothing they send is run or trusted as a path to change.

@@ -88,6 +88,8 @@ func TestCheckSyncable(t *testing.T) {
 	allowed := []string{
 		ok(Roaming, "StardewValley/Saves"),
 		ok(Documents, "My Games/Skyrim"),
+		ok(Roaming, "Vortex/skyrimse/mods"),
+		ok(Roaming, "Vortex/skyrimse/profiles"),
 	}
 	for _, p := range allowed {
 		if err := CheckSyncable(p); err != nil {
@@ -101,6 +103,9 @@ func TestCheckSyncable(t *testing.T) {
 		ok(Local, "Syncthing"),
 		ok(Roaming, "Microsoft/Windows/Start Menu/Programs/Startup"),
 		ok(Documents, "My Games"),
+		ok(Roaming, "Vortex"),
+		ok(Roaming, "Vortex/state.v2"),
+		ok(Roaming, "Vortex/plugins/some-extension"),
 		`C:\Windows`,
 		`C:\`,
 	}

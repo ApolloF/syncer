@@ -19,7 +19,7 @@
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
   import {
-    Folders, ScanGames, AddFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
+    Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
     LeaveToSteamCloud,
@@ -163,7 +163,7 @@
   const removeInner = $derived(removeFor ? overlaps.find(v => v.outer.id === removeFor!.id)?.inner ?? [] : [])
   const base = (p: string) => p.split('\\').filter(Boolean).pop() ?? p
   const names = (fs: main.FolderView[]) => [...new Set(fs.map(f => f.label))].join(', ')
-  const notInstalled = $derived((cache.found ?? []).filter(g => !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
+  const notInstalled = $derived((cache.found ?? []).filter(g => !g.kind && !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
   const bulkCount = $derived(notInstalled.filter(g => bulkPick[g.path]).length)
 
   /** A time from Go; the zero time means "never". */
@@ -199,6 +199,27 @@
       cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as main.GameView : g) ?? null
       load(); refresh()
     }
+  }
+
+  // Mod folders are added by their key: this PC finds the folder again.
+  let modAsk = $state<main.GameView | null>(null)
+  async function addMod(g: main.GameView, asked = false) {
+    if (g.kind === 'mods-deployed' && !asked) { modAsk = g; return }
+    modAsk = null
+    adding = g.path
+    const ok = await attempt(() => AddModFolder(g.modKey ?? ''), `Now syncing ${g.name}`)
+    adding = ''
+    if (ok) {
+      cache.found = cache.found?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as main.GameView : x) ?? null
+      load()
+      refresh()
+    }
+  }
+
+  const modKinds: Record<string, { text: string; tip: string }> = {
+    'mods': { text: 'Vortex mods', tip: "The mods Vortex installed for this game (its staging folder). On your other PCs they appear in Vortex, to be enabled and deployed there. Synced while Vortex is closed." },
+    'mods-profiles': { text: 'Vortex load order', tip: "Vortex's profiles for this game: plugin lists and load orders. Each PC keeps its own game settings (.ini files)." },
+    'mods-deployed': { text: 'Deployed mods', tip: "The mod files Vortex deployed into the game's folder, for other PCs to play with right away. Experimental: one PC sends, the others apply checked updates." },
   }
 
   async function addBackupOnly(name: string, path: string) {
@@ -478,15 +499,23 @@
   {/if}
 {/snippet}
 
+{#snippet deployedLine(f: main.FolderView)}
+  <div class="detail faint ellipsis">
+    {f.modRole === 'source' ? 'Sent from this PC' : 'Received from another PC'}{f.modHeld ? ` · Held: ${f.modHeld}` : ''}
+  </div>
+{/snippet}
+
 {#snippet folderRow(f: main.FolderView)}
   {@const s = stateOf(f)}
   <div class="item" transition:slide={{ duration: 150 }}>
     <div class="grow">
       <div class="name ellipsis">{f.label}</div>
       <div class="path faint ellipsis" title={f.path}>{f.path}</div>
+      {#if f.kind === 'mods-deployed'}{@render deployedLine(f)}{/if}
       {#if !f.sync && f.backup}<div class="detail faint ellipsis">{backupLine(f)}</div>{/if}
     </div>
     {#if f.sync}<span class="meta faint">{bytes(f.bytes)}</span>{/if}
+    {#if f.kind}<span class="pill accent" title={modKinds[f.kind]?.tip}>{modKinds[f.kind]?.text ?? 'Mods'}</span>{/if}
     {#if f.conflicts}
       <button class="pill warn linkish" title="Two PCs changed the same save — choose which to keep" onclick={() => openConflicts(f)}>
         {f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}
@@ -626,6 +655,10 @@
           <div class="grow">
             <div class="row name-row">
               <span class="name ellipsis">{g.name}</span>
+              {#if g.kind}<span class="pill accent" title={modKinds[g.kind]?.tip}>{modKinds[g.kind]?.text ?? 'Mods'}</span>
+                {#if g.kind === 'mods-deployed'}<span class="pill warn">Experimental</span>{/if}
+                {#each g.warn ?? [] as w}<span class="pill warn" title={w}>{w.length > 40 ? w.slice(0, 38) + '…' : w}</span>{/each}
+              {/if}
               {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
               {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
               {#if g.copyOf}<span class="pill" title={copyTip(g.copyOf, true)}>Copy of {g.copyOf}</span>
@@ -639,6 +672,12 @@
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>
           </div>
           <span class="meta faint">{bytes(g.size)} · {ago(g.modified)}</span>
+          {#if g.kind}
+          <button class="btn sm" disabled={adding === g.path} onclick={() => addMod(g)}>
+            {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
+            {g.kind === 'mods-deployed' ? 'Send…' : 'Sync'}
+          </button>
+          {:else}
           <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
             Back up only
           </button>
@@ -646,6 +685,7 @@
             {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync
           </button>
+          {/if}
         </div>
       {:else}
         <div class="empty inner"><p class="muted">{query ? 'Nothing matches.' : 'Everything found is already in your games.'}</p></div>
@@ -653,6 +693,7 @@
     </div>
     <p class="faint hint">
       {autoOn ? `New games are added automatically${o?.settings.installedOnly ? ' once installed' : ''}; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Adding new games automatically is off.'}
+      {#if o?.settings.findMods}Mod folders {o?.settings.autoAddMods ? 'are added automatically (experimental)' : 'need a click'} and aren't backed up unless you turn their backup on.{/if}
       {#if hiddenCloud && !showCloud}{plural(hiddenCloud, 'Steam Cloud game')} hidden. <button class="linkbtn" onclick={showCloudGames}>Show them</button>{/if}
     </p>
   {/if}
@@ -676,8 +717,13 @@
           {:else if a.reason === 'steam-cloud'}<span class="pill" title="Steam Cloud keeps this folder on this PC, so it isn't synced here as well.">Steam Cloud here</span>
           {:else if a.reason === 'copy'}<span class="pill" title="A Steam emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
           {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
+          {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
+          {:else if a.reason === 'mods-experimental-off'}<span class="pill" title="Turn on “Sync deployed mods in the game folder” in Settings to receive deployed mods on this PC.">Experimental option off</span>
+          {:else if a.reason === 'mod-game-missing'}<span class="pill warn" title="Vortex on this PC doesn't manage this game yet. Add the game in Vortex here (with its default or your own mods folder), then it can sync.">Not in Vortex here</span>
+          {:else if a.reason === 'mod-vortex-here'}<span class="pill warn" title="Vortex on this PC deploys this game's mods itself. Receiving deployed mods too would mix two deployments in the game's folder.">Vortex deploys here</span>
+          {:else if a.reason === 'mods-manual'}<span class="pill" title={modKinds[a.kind]?.tip}>{modKinds[a.kind]?.text ?? 'Mods'}</span>
           {:else}<span class="pill">Removed here</span>{/if}
-          <button class="btn sm" disabled={syncingId === a.id} onclick={() => syncHere(a)}>
+          <button class="btn sm" disabled={syncingId === a.id || ['mods-off', 'mods-experimental-off', 'mod-game-missing', 'mod-vortex-here'].includes(a.reason)} onclick={() => syncHere(a)}>
             {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync here
           </button>
@@ -920,7 +966,24 @@
   </Modal>
 {/if}
 
+{#if modAsk}
+  <Modal title="Send deployed mods of {modAsk.name.replace(/ \(deployed mods\)$/, '')}?" onclose={() => (modAsk = null)}>
+    <p>This PC becomes the source: the mods Vortex deployed into the game's folder are offered to your other PCs, which apply them when you say so there.</p>
+    <ul class="notes">
+      <li>Only the files in Vortex's deployment are sent; the game's own files never are.</li>
+      <li>While Vortex or the game is running here, nothing is sent.</li>
+      <li>Your other PCs need the same game version, and must not deploy this game with their own Vortex.</li>
+    </ul>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (modAsk = null)}>Cancel</button>
+      <button class="btn primary" onclick={() => modAsk && addMod(modAsk, true)}>Send from this PC</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
+  .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .notes li + li { margin-top: 6px; }
   .bar { gap: 12px; }
   .tabs { display: flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--hover); }
   .tabs button {

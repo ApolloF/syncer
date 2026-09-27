@@ -177,3 +177,50 @@ func ownWindow() windows.HWND {
 	}
 	return h
 }
+
+// ProcessPaths lists the executables of the running processes: full paths
+// where Windows allows it, else just the file name.
+func ProcessPaths() []string {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(snap)
+	var out []string
+	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		name := windows.UTF16ToString(e.ExeFile[:])
+		if e.ProcessID == 0 || name == "" {
+			continue
+		}
+		out = append(out, processPath(e.ProcessID, name))
+	}
+	return out
+}
+
+func processPath(pid uint32, name string) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return name
+	}
+	defer windows.CloseHandle(h)
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	n := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &n); err != nil {
+		return name
+	}
+	return windows.UTF16ToString(buf[:n])
+}
+
+// DiskFree returns the bytes free for this user on the drive holding path.
+func DiskFree(path string) (uint64, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	var free, total, totalFree uint64
+	if err := windows.GetDiskFreeSpaceEx(p, &free, &total, &totalFree); err != nil {
+		return 0, err
+	}
+	return free, nil
+}

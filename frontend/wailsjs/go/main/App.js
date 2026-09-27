@@ -18,6 +18,10 @@ export function AddFolder(arg1, arg2) {
   return window['go']['main']['App']['AddFolder'](arg1, arg2);
 }
 
+export function AddModFolder(arg1) {
+  return window['go']['main']['App']['AddModFolder'](arg1);
+}
+
 export function AdoptBackup(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AdoptBackup'](arg1, arg2, arg3, arg4);
 }

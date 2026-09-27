@@ -45,6 +45,8 @@
   }
 
   const sizes = [1, 5, 10, 25, 50, 100, -1]
+  const modSizes = [5, 20, 50, 100, -1]
+  let deployedOpen = $state(false)
 
   const themes = [
     { id: 'system', label: 'System' },
@@ -173,6 +175,59 @@
   </div>
 </div>
 
+<h2 class="section">Mods</h2>
+<div class="card flush list">
+  <div class="item">
+    <div class="grow">
+      <div class="name">Find installed mods</div>
+      <div class="faint small">
+        List the mods Vortex installed for your games, and their load orders, under “Found on this PC” so you can sync them to your other PCs.
+        Mod folders sync only; they aren't backed up to Google Drive unless you turn their backup on.
+        They pause while Vortex is open. Open Vortex on the other PC to enable and deploy the mods that arrive.
+      </div>
+    </div>
+    <Toggle checked={o?.settings.findMods} label="Find installed mods" onchange={(v) => save({ findMods: v })} />
+  </div>
+  <div class="item" class:off={!o?.settings.findMods}>
+    <div class="grow">
+      <div class="name">Sync new mod folders automatically <span class="pill warn">Experimental</span></div>
+      <div class="faint small">Vortex's mod and load-order folders start syncing without a click, including ones your other PCs sync. Otherwise you add each one by hand.</div>
+    </div>
+    <select disabled={!o?.settings.findMods || !o?.settings.autoAddMods} value={o?.settings.modsMaxGB} title="Largest mod folder to add automatically"
+      onchange={(e) => save({ modsMaxGB: +e.currentTarget.value })}>
+      {#each modSizes as g}<option value={g}>{g === -1 ? 'No limit' : `Up to ${g} GB`}</option>{/each}
+      {#if o && !modSizes.includes(o.settings.modsMaxGB)}<option value={o.settings.modsMaxGB}>Up to {o.settings.modsMaxGB} GB</option>{/if}
+    </select>
+    <Toggle checked={o?.settings.autoAddMods} disabled={!o?.settings.findMods} label="Sync new mod folders automatically"
+      onchange={(v) => save({ autoAddMods: v })} />
+  </div>
+  <div class="item" class:off={!o?.settings.findMods}>
+    <div class="grow">
+      <div class="name">Sync deployed mods in the game folder <span class="pill warn">Experimental</span></div>
+      <div class="faint small">Send the mods one PC deployed straight into the game's folder, so other PCs can play with them without Vortex. Only the mod files are synced. Each update is checked, and this PC saves a copy of what it replaces before it applies anything.</div>
+    </div>
+    <Toggle checked={o?.settings.syncDeployedMods} disabled={!o?.settings.findMods} label="Sync deployed mods in the game folder"
+      onchange={(v) => { if (v) deployedOpen = true; else save({ syncDeployedMods: false }) }} />
+  </div>
+</div>
+
+{#if deployedOpen}
+  <Modal title="Sync deployed mods?" onclose={() => (deployedOpen = false)}>
+    <p>This is experimental. Deployed mods go straight into your game's folder:</p>
+    <ul class="notes">
+      <li>Every PC needs the same version of the game. Syncer checks the version and won't apply mods when it differs.</li>
+      <li>One PC is the source; the others receive. On a receiving PC, don't let Vortex deploy that game, or the two will fight over the same files.</li>
+      <li>Nothing changes on a receiving PC until you apply an update. Before it applies anything, Syncer saves a copy of the files it will replace, so you can roll back.</li>
+      <li>Only the files Vortex deployed are synced. The game's own files are never touched.</li>
+      <li>Vortex must deploy with hardlinks (its default), not symlinks.</li>
+    </ul>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (deployedOpen = false)}>Cancel</button>
+      <button class="btn primary" onclick={() => { deployedOpen = false; save({ syncDeployedMods: true }) }}>Turn on</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 {#if log}
   <div class="card logbox selectable">
     {#each [...log].reverse() as l}<div class="mono">{l}</div>{:else}<p class="faint">Nothing yet.</p>{/each}
@@ -249,4 +304,8 @@
   .indent { margin: -6px 0 0 26px; }
   .err { color: var(--err); }
   .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .notes li + li { margin-top: 6px; }
+  .section { font-size: 13px; font-weight: 600; color: var(--muted); margin: 22px 4px 8px; text-transform: uppercase; letter-spacing: .04em; }
+  .off { opacity: .55; }
+  .name .pill { margin-left: 6px; vertical-align: 1px; }
 </style>

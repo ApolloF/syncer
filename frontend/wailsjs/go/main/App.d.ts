@@ -13,6 +13,8 @@ export function AddDevice(arg1:string,arg2:string):Promise<void>;
 
 export function AddFolder(arg1:string,arg2:string):Promise<void>;
 
+export function AddModFolder(arg1:string):Promise<void>;
+
 export function AdoptBackup(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<number>;
 
 export function Available():Promise<Array<main.AvailableView>>;
