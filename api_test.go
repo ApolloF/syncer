@@ -52,6 +52,15 @@ func (f *fakeBackend) conflicts(id string) ([]conflict.Conflict, error) {
 func (f *fakeBackend) resolveConflict(string, string, bool) error    { return nil }
 func (f *fakeBackend) getNewer(context.Context, string) (int, error) { return 2, nil }
 func (f *fakeBackend) open() error                                   { f.opened++; return nil }
+func (f *fakeBackend) accounts() apiAccounts {
+	return apiAccounts{Enabled: true, Active: "aaaaaa", Accounts: []apiAccount{{ID: "aaaaaa", Name: "A", Active: true}}}
+}
+func (f *fakeBackend) switchAccount(_ context.Context, id string) error {
+	if id != "aaaaaa" {
+		return fmt.Errorf("unknown account")
+	}
+	return nil
+}
 
 type client struct {
 	t  *testing.T
@@ -205,5 +214,23 @@ func TestAPISubscribe(t *testing.T) {
 func TestTimeoutOf(t *testing.T) {
 	if timeoutOf(0, time.Second, time.Minute) != time.Second || timeoutOf(999999999, time.Second, time.Minute) != time.Minute {
 		t.Error("timeoutOf limits")
+	}
+}
+
+func TestAPIAccounts(t *testing.T) {
+	name, _ := startTest(t, &fakeBackend{})
+	c := dial(t, name)
+	r := c.call("accounts", nil)["result"].(map[string]any)
+	if r["active"] != "aaaaaa" || len(r["accounts"].([]any)) != 1 {
+		t.Errorf("accounts = %v", r)
+	}
+	if e := c.call("switchAccount", map[string]any{})["error"].(map[string]any); e["code"].(float64) != rpcInvalidParams {
+		t.Errorf("switchAccount without id = %v", e)
+	}
+	if e := c.call("switchAccount", map[string]any{"id": "zzzzzz"})["error"].(map[string]any); e["code"].(float64) != rpcFailed {
+		t.Errorf("unknown account = %v", e)
+	}
+	if r := c.call("switchAccount", map[string]any{"id": "aaaaaa"}); r["result"] != true {
+		t.Errorf("switchAccount = %v", r)
 	}
 }

@@ -24,6 +24,9 @@ import (
 // its saves can be restored. confirm must be the game's name; noBackupOK must
 // be set for a game without a backup. It returns the game's id afterwards.
 func (a *App) DeleteSaves(id, confirm string, noBackupOK bool) (string, error) {
+	if err := splitGuard(id); err != nil {
+		return "", err
+	}
 	ctx, cancel := joinCtx(a.ctx) // the last backup can take a while
 	defer cancel()
 	s := store.LoadSettings()

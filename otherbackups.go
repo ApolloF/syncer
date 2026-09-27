@@ -12,6 +12,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -40,6 +41,14 @@ func knownBackups() (map[string]bool, error) {
 	}
 	for _, lf := range s.BackupOnly {
 		known[lf.ID], known[lf.SyncID], known[lf.CopiedFrom] = true, true, true
+	}
+	// A split game's accounts are backed up under their own ids; while it's
+	// split the game's own id is its history from before.
+	for _, r := range accounts.Load().Splits() {
+		known[r.Game] = true
+		for _, a := range r.Accounts {
+			known[accounts.FolderID(r.Game, a)] = true
+		}
 	}
 	return known, nil
 }

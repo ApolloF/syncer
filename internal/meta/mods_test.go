@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -98,7 +99,7 @@ func TestPublishMods(t *testing.T) {
 		{ID: "sky-recv", Label: "Skyrim (deployed mods)", Path: `E:\Games\Skyrim\Data`},
 		{ID: "broken", Path: `D:\x`},
 	}
-	got := publishable(fs, s, "ME", func(string) int64 { return 3<<30 + 1 })
+	got := publishable(fs, s, accounts.State{}, "ME", func(string) int64 { return 3<<30 + 1 })
 	if len(got) != 2 {
 		t.Fatalf("published %d folders, want 2: %+v", len(got), got)
 	}

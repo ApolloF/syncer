@@ -13,6 +13,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
@@ -36,6 +37,7 @@ type App struct {
 	session   sessionTracker          // the game running, see session.go
 	others    *othersCache            // backups in Drive no game here uses
 	quitting  bool                    // quit from the tray: really exit
+	headless  bool                    // the --api helper: no window to tell about changes
 	tray      trayItems
 }
 
@@ -109,6 +111,7 @@ func (a *App) watch(ctx context.Context) {
 		if reconcile || time.Since(lastReconcile) > time.Minute {
 			if rep, err := meta.Reconcile(ctx, c); err == nil {
 				lastReconcile = time.Now()
+				a.refreshTray() // accounts may have changed on another PC
 				if len(rep.Added) > 0 {
 					runtime.EventsEmit(ctx, "toast", "Added from another PC: "+strings.Join(rep.Added, ", "))
 				}
@@ -221,12 +224,14 @@ func (a *App) Overview() Overview {
 				bf = append(bf, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
 			}
 		}
-		for _, n := range a.conflictCounts(bf) {
-			o.Conflicts += n
+		for id, n := range a.conflictCounts(bf) {
+			if !inVault(fs, id) {
+				o.Conflicts += n // other accounts' conflicts show under Accounts
+			}
 		}
 		o.Overlaps = len(nestedIn(bf))
 		for _, f := range fs {
-			if f.ID == meta.FolderID {
+			if f.ID == meta.FolderID || accounts.InVault(f.Path) {
 				continue
 			}
 			o.Folders++

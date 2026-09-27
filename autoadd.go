@@ -10,6 +10,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
@@ -32,6 +33,9 @@ var autoAddMu sync.Mutex
 // files make conflicting copies. It returns the games synced and the games
 // backed up only.
 func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string, err error) {
+	if _, busy := accounts.PendingOp(); busy {
+		return nil, nil, nil // saves are being moved between accounts; next time
+	}
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
 	s := store.LoadSettings()
@@ -194,7 +198,20 @@ func addFolder(ctx context.Context, c *syncthing.Client, label, path string) (st
 		label = filepath.Base(path)
 	}
 	id := syncID(st.MyID, label, path, taken)
-	if err := meta.AddFolder(ctx, c, id, label, path, st.MyID, others); err != nil {
+	// Not while a split or switch moves saves around at this path.
+	err = accounts.Locked(func() error {
+		fs, err := c.Folders(ctx)
+		if err != nil {
+			return err
+		}
+		for _, f := range fs {
+			if f.ID == id || (f.ID != meta.FolderID && (paths.Within(f.Path, path) || paths.Within(path, f.Path))) {
+				return coveredError("already synced")
+			}
+		}
+		return meta.AddFolder(ctx, c, id, label, path, st.MyID, others)
+	})
+	if err != nil {
 		return "", err
 	}
 	return id, nil

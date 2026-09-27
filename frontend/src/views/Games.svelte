@@ -16,7 +16,8 @@
   import Icon from '../lib/Icon.svelte'
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
-  import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
+  import SplitDialog from '../lib/SplitDialog.svelte'
+  import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
   import {
     Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
@@ -46,6 +47,9 @@
   let conflictsFor = $state<main.FolderView | null>(null)
   let conflicts = $state<conflict.Conflict[]>([])
   let resolving = $state('')
+  // Separating a game's saves per account (see SplitDialog).
+  let splitFor = $state<main.FolderView | null>(null)
+  const canSplit = $derived((ui.accounts?.accounts?.length ?? 0) >= 2)
 
   // Deleting a game's saves: deliberately a few steps (see openDelete).
   let deleteFor = $state<main.FolderView | null>(null)
@@ -671,6 +675,11 @@
     </div>
     {#if f.sync}<span class="meta faint">{bytes(f.bytes)}</span>{/if}
     {#if f.kind}<span class="pill accent" title={modKinds[f.kind]?.tip}>{modKinds[f.kind]?.text ?? 'Mods'}</span>{/if}
+    {#if f.split}
+      <span class="pill acct" title="Each account has its own saves of this game; these are {accountName(f.account) || 'this account'}'s. Manage them in Accounts.">
+        <span class="adot" style="background:{accountColor(f.account)}"></span>{accountName(f.account) || 'Account'}'s saves
+      </span>
+    {/if}
     {#if f.conflicts}
       <button class="pill warn linkish" title="Two PCs changed the same save — choose which to keep" onclick={() => openConflicts(f)}>
         {f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}
@@ -722,9 +731,16 @@
         title={f.exclude?.length ? `Skipped files: ${f.exclude.join(', ')}` : 'Skip files (logs, screenshots, …)'}
         onclick={() => openExclude(f)}><Icon name="filter" size={16} /></button>
       <button class="btn ghost icon sm" title="Restore from backup" onclick={() => openRestore(f)}><Icon name="history" size={16} /></button>
-      <button class="btn ghost icon sm danger" title="Remove from Syncer" onclick={() => openRemove(f)}><Icon name="trash" size={16} /></button>
+      {#if canSplit && f.sync && !f.split}
+        <button class="btn ghost icon sm" title="Separate saves per account" onclick={() => (splitFor = f)}><Icon name="split" size={16} /></button>
+      {/if}
+      {#if !f.split}
+        <button class="btn ghost icon sm danger" title="Remove from Syncer" onclick={() => openRemove(f)}><Icon name="trash" size={16} /></button>
+      {/if}
     </div>
-    <span title="Sync between PCs"><Toggle checked={f.sync} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} /></span>
+    <span title={f.split ? 'Separate saves per account are always synced; share the game again under Accounts to change that' : 'Sync between PCs'}>
+      <Toggle checked={f.sync} disabled={f.split} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} />
+    </span>
     <span title="Back up to Google Drive">
       <Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />
     </span>
@@ -970,6 +986,14 @@
 {#if conflictsFor}
   <Modal title="Two versions of {conflictsFor.label}" onclose={() => (conflictsFor = null)}>
     <p>Two PCs changed the same save. The game loads the current one; the other was kept aside. Close the game, then pick which to keep. The version you don't pick goes into the backup history, so you can still restore it.</p>
+    {#if canSplit && !conflictsFor.split}
+      {@const f = conflictsFor}
+      <div class="notice row splitask">
+        <Icon name="users" size={16} />
+        <span class="grow small">Are these two different people's saves? Give each account its own saves instead of picking one.</span>
+        <button class="btn sm" onclick={() => { conflictsFor = null; splitFor = f }}><Icon name="split" size={14} /> Separate saves…</button>
+      </div>
+    {/if}
     <div class="conflicts">
       {#each conflicts as c (c.copy)}
         <div class="conf">
@@ -1008,6 +1032,10 @@
       <button class="btn" onclick={() => (conflictsFor = null)}>Close</button>
     {/snippet}
   </Modal>
+{/if}
+
+{#if splitFor}
+  <SplitDialog id={splitFor.id} label={splitFor.label} onclose={() => (splitFor = null)} ondone={() => load()} />
 {/if}
 
 {#if removeFor}
@@ -1339,6 +1367,9 @@
   .linkish { border: 0; cursor: pointer; font: inherit; font-size: 12px; }
   .linkbtn { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
   .linkbtn.danger { color: var(--err); }
+  .acct { display: inline-flex; align-items: center; gap: 6px; }
+  .adot { width: 8px; height: 8px; border-radius: 50%; }
+  .splitask { gap: 10px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); color: var(--text); align-items: center; }
   .conflicts { display: flex; flex-direction: column; gap: 12px; max-height: 340px; overflow-y: auto; }
   .conf { display: flex; flex-direction: column; gap: 8px; }
   .versions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

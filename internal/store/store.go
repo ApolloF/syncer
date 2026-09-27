@@ -67,6 +67,9 @@ type Settings struct {
 	// Mods are the synced (or backup-only) folders that are mod folders, by
 	// folder id: how they are described to other PCs.
 	Mods map[string]ModFolder `json:"mods,omitempty"`
+	// Accounts shows accounts (separate saves per person) on this PC. It
+	// can only be turned off while no game is split per account.
+	Accounts bool `json:"accounts,omitempty"`
 }
 
 // ModFolder is a mod manager's folder that Syncer syncs.
@@ -260,7 +263,7 @@ func UpdateState(fn func(*State)) {
 	_ = SaveState(st)
 }
 
-// FileLock locks name across Syncer's processes until unlock is called.
+// FileLock takes the named cross-process lock (see fileLock).
 func FileLock(name string) (unlock func()) { return fileLock(name) }
 
 // fileLock also keeps the other Syncer process (the window and the background

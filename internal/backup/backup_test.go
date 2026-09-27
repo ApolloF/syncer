@@ -376,3 +376,25 @@ func TestRunScoped(t *testing.T) {
 		t.Errorf("snapshot saved %d files (%v), want 1", n, err)
 	}
 }
+
+// Two files kept under the same name in the same second both stay.
+func TestKeepNeverOverwrites(t *testing.T) {
+	target, src := t.TempDir(), t.TempDir()
+	for _, s := range []string{"one", "two", "three"} {
+		p := filepath.Join(src, "save.dat")
+		write(t, p, s)
+		if err := Keep(target, "g", p, "save.dat", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]bool{}
+	for _, pt := range Points(target, "g") {
+		b, err := os.ReadFile(filepath.Join(target, VersionsDir, "g", pt.Format(stampFmt), "save.dat"))
+		if err == nil {
+			got[string(b)] = true
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("kept %v, want all three", got)
+	}
+}

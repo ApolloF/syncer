@@ -104,6 +104,9 @@ type Options struct {
 	// Device is this PC's Syncthing device id, recorded in the info files so
 	// other PCs can tell whether this PC is online.
 	Device string
+	// List, if set, gives the folders again once the lock is held (their
+	// paths can change until then).
+	List func() []Folder
 }
 
 var pauseEvery = 2 * time.Second // var so tests can pause on every file
@@ -120,6 +123,9 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 		return nil, err
 	}
 	defer unlock()
+	if opts.List != nil {
+		folders = opts.List()
+	}
 
 	res := &store.BackupRun{Started: time.Now(), Target: opts.Target}
 	if err := os.MkdirAll(opts.Target, 0o755); err != nil {
@@ -382,7 +388,13 @@ func moveTo(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	_ = os.Remove(dst)
+	if _, err := os.Lstat(dst); err == nil {
+		// Two versions of the same file in one restore point (e.g. a file
+		// kept and then backed up in the same second): keep both.
+		if err := os.Rename(dst, fmt.Sprintf("%s.syncer-kept-%d", dst, time.Now().UnixNano())); err != nil {
+			return err
+		}
+	}
 	if err := os.Rename(src, dst); err == nil {
 		return nil
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/conflict"
 	"github.com/ApolloF/syncer/internal/logx"
@@ -83,8 +84,8 @@ func pullNewer(ctx context.Context, playing func() bool) (left map[string]newerS
 		if ctx.Err() != nil {
 			return left, took
 		}
-		if isMod(s, f.ID) {
-			continue
+		if isMod(s, f.ID) || accounts.InVault(f.Path) {
+			continue // a mod folder, or another account's saves: nobody plays them here now
 		}
 		f.Exclude = s.Exclude[dismissKey(f.Path)]
 		n, in, ok := newerElsewhere(target, f, f.Exclude, time.Now())

@@ -107,6 +107,13 @@ func Keep(target, id, src, rel string, move bool) error {
 		return err
 	}
 	defer unlock()
+	return KeepLocked(target, id, src, rel, move)
+}
+
+// KeepLocked is Keep for a caller that already holds the backup lock.
+func KeepLocked(target, id, src, rel string, move bool) error {
+	// A restore point of its own: two files kept in the same second (or a
+	// snapshot taken just before) must never replace each other.
 	t := time.Now()
 	dir := filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
 	for isDir(dir) {

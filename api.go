@@ -22,6 +22,7 @@ import (
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/conflict"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
@@ -102,13 +103,37 @@ type apiFolder struct {
 	NewerCanGet bool `json:"newerCanGet,omitempty"`
 	// Kind is set for mod folders ("mods", "mods-profiles", "mods-deployed").
 	Kind string `json:"kind,omitempty"`
+	// Account: the game has separate saves per account, and these are this
+	// account's (the one playing on this PC).
+	Account string `json:"account,omitempty"`
+}
+
+// apiAccounts describes the accounts (separate saves per person).
+type apiAccounts struct {
+	Enabled  bool         `json:"enabled"`
+	Active   string       `json:"active,omitempty"` // account id playing on this PC
+	Accounts []apiAccount `json:"accounts"`
+	Split    []apiSplit   `json:"split"` // games with separate saves per account
+}
+
+type apiAccount struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Color  string `json:"color,omitempty"`
+	Active bool   `json:"active"`
+}
+
+type apiSplit struct {
+	Game     string   `json:"game"` // the id shown by games is game.u-<account>
+	Label    string   `json:"label"`
+	Accounts []string `json:"accounts"`
 }
 
 func folderFromView(v FolderView) apiFolder {
 	return apiFolder{ID: v.ID, Label: v.Label, Path: v.Path, Sync: v.Sync, Backup: v.Backup, State: v.State,
 		NeedBytes: v.NeedBytes, Errors: v.Errors, Conflicts: v.Conflicts, Exists: v.Exists, Modified: v.Modified,
 		BackedUp: v.BackedUp, NewerOn: v.NewerOn, NewerAt: v.NewerAt, NewerCanGet: v.NewerCanGet,
-		Kind: v.Kind}
+		Kind: v.Kind, Account: v.Account}
 }
 
 type apiSyncResult struct {
@@ -145,6 +170,8 @@ type apiBackend interface {
 	resolveConflict(id, copyRel string, useCopy bool) error
 	getNewer(ctx context.Context, id string) (int, error)
 	open() error
+	accounts() apiAccounts
+	switchAccount(ctx context.Context, id string) error
 }
 
 // ---- the server ----
@@ -462,6 +489,24 @@ func (s *apiServer) call(ctx context.Context, ac *apiConn, method string, raw js
 		}
 		return map[string]int{"games": len(keep)}, nil
 
+	case "accounts":
+		return s.b.accounts(), nil
+
+	case "switchAccount":
+		p, perr := rpcParams[struct {
+			ID string `json:"id"`
+		}](raw)
+		if perr != nil {
+			return nil, perr
+		}
+		if p.ID == "" {
+			return nil, &rpcError{rpcInvalidParams, "give the account id"}
+		}
+		if err := s.b.switchAccount(ctx, p.ID); err != nil {
+			return nil, failed(err)
+		}
+		return true, nil
+
 	case "subscribe":
 		s.subscribe(ac)
 		return true, nil
@@ -753,6 +798,30 @@ func (b appBackend) getNewer(ctx context.Context, id string) (int, error) {
 	return b.a.getNewer(ctx, id)
 }
 
+func (b appBackend) accounts() apiAccounts {
+	st := accounts.Load()
+	st.Clean()
+	out := apiAccounts{Enabled: store.LoadSettings().Accounts, Accounts: []apiAccount{}, Split: []apiSplit{}}
+	if !out.Enabled {
+		return out
+	}
+	out.Active = st.ActiveID()
+	for _, a := range st.Live() {
+		out.Accounts = append(out.Accounts, apiAccount{ID: a.ID, Name: a.Name, Color: a.Color, Active: a.ID == out.Active})
+	}
+	for _, r := range st.Splits() {
+		out.Split = append(out.Split, apiSplit{Game: r.Game, Label: r.Label, Accounts: r.Accounts})
+	}
+	return out
+}
+
+func (b appBackend) switchAccount(_ context.Context, id string) error {
+	if !store.LoadSettings().Accounts {
+		return errors.New("accounts are off in Syncer's settings")
+	}
+	return b.a.SwitchAccount(id)
+}
+
 func (b appBackend) open() error {
 	if b.window {
 		b.a.showWindow()
@@ -802,7 +871,7 @@ func runAPI() {
 		return // the window (or another helper) serves it
 	}
 	a := NewApp()
-	a.ctx = context.Background()
+	a.ctx, a.headless = context.Background(), true
 	s := newAPIServer(appBackend{a: a}, ln, launcherGamesFile())
 	go s.serve()
 	logx.Printf("api: helper serving %s", apiPipe)

@@ -410,6 +410,23 @@ func (c *Client) RemoveFolder(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/rest/config/folders/"+url.PathEscape(id), nil, nil)
 }
 
+// FileInfo is what Syncthing knows about one file.
+type FileInfo struct {
+	Modified   time.Time `json:"modified"`
+	ModifiedBy string    `json:"modifiedBy"` // short id of the device that last changed it
+	Deleted    bool      `json:"deleted"`
+	Size       int64     `json:"size"`
+}
+
+// DBFile returns the newest known version of a file (rel uses forward
+// slashes, relative to the folder).
+func (c *Client) DBFile(ctx context.Context, folder, rel string) (FileInfo, error) {
+	var r struct {
+		Global FileInfo `json:"global"`
+	}
+	return r.Global, c.get(ctx, "/rest/db/file?folder="+url.QueryEscape(folder)+"&file="+url.QueryEscape(rel), &r)
+}
+
 // Ignores returns the lines of a folder's .stignore, comments included.
 func (c *Client) Ignores(ctx context.Context, id string) ([]string, error) {
 	var r struct {

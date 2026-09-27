@@ -1,15 +1,16 @@
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import { Overview } from '../../wailsjs/go/main/App'
+import { Overview, Accounts } from '../../wailsjs/go/main/App'
 import type { main } from '../../wailsjs/go/models'
 import { err } from './fmt'
 
-export type View = 'overview' | 'games' | 'devices' | 'backup' | 'settings'
+export type View = 'overview' | 'games' | 'accounts' | 'devices' | 'backup' | 'settings'
 
 type Toast = { id: number; text: string; kind: 'info' | 'ok' | 'err' }
 
 export const ui = $state({
   view: 'overview' as View,
   overview: null as main.Overview | null,
+  accounts: null as main.AccountsView | null, // loaded while accounts are on
   toasts: [] as Toast[],
   tick: 0, // bumps on every backend "changed" event so views can refetch
   gamesAdded: 0, // bumps when games were added automatically
@@ -38,6 +39,22 @@ export async function attempt<T>(fn: () => Promise<T>, okText?: string): Promise
 
 export async function refresh() {
   try { ui.overview = await Overview() } catch { /* backend not ready yet */ }
+  await refreshAccounts()
+}
+
+export async function refreshAccounts() {
+  if (!ui.overview?.settings.accounts && !ui.accounts?.splits?.length) { ui.accounts = null; return }
+  try { ui.accounts = await Accounts() } catch { /* backend not ready yet */ }
+}
+
+/** An account's display name ("" when unknown). */
+export function accountName(id: string | undefined): string {
+  return ui.accounts?.accounts?.find(a => a.id === id)?.name ?? ''
+}
+
+/** An account's color, or a neutral one. */
+export function accountColor(id: string | undefined): string {
+  return ui.accounts?.accounts?.find(a => a.id === id)?.color || 'var(--muted)'
 }
 
 export function applyTheme(t: string) {
@@ -55,6 +72,7 @@ export function init() {
     pending = setTimeout(() => { pending = null; ui.tick++; refresh() }, 400)
   })
   EventsOn('toast', (t: string) => toast(t, 'ok'))
+  EventsOn('toast:error', (t: string) => toast(t, 'err'))
   EventsOn('games:added', () => { ui.gamesAdded++ })
   setInterval(refresh, 15000)
 }

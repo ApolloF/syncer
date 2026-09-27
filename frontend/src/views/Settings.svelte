@@ -3,7 +3,7 @@
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
-  import { SaveSettings, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, OpenUpdate } from '../../wailsjs/go/main/App'
+  import { SaveSettings, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, OpenUpdate } from '../../wailsjs/go/main/App'
   import type { store, main } from '../../wailsjs/go/models'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import { pausedUntil, tomorrowMorning } from '../lib/fmt'
@@ -43,6 +43,12 @@
     if (patch.theme) applyTheme(patch.theme)
     await attempt(() => SaveSettings({ ...o.settings, ...patch } as store.Settings))
     refresh()
+  }
+
+  async function toggleAccounts(on: boolean) {
+    const ok = await attempt(() => SetAccountsEnabled(on))
+    await refresh()
+    if (ok && on) ui.view = 'accounts'
   }
 
   const sizes = [1, 5, 10, 25, 50, 100, -1]
@@ -152,6 +158,10 @@
   <div class="item">
     <div class="grow"><div class="name">Hold syncing while playing</div><div class="faint small">While a game runs, saves from your other PCs wait until it exits, so nothing changes under the running game.</div></div>
     <Toggle checked={!o?.settings.noHoldWhilePlaying} label="Hold syncing while playing" onchange={(v) => save({ noHoldWhilePlaying: !v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Accounts</div><div class="faint small">Separate saves for each person who plays on your PCs, e.g. two people playing the same game. Games stay shared until you separate them.</div></div>
+    <Toggle checked={o?.settings.accounts} label="Accounts" onchange={toggleAccounts} />
   </div>
   <div class="item">
     <div class="grow"><div class="name">Notify me about problems</div><div class="faint small">A Windows notification when a backup fails, no backup has worked for 3 days, a save has two versions, or a new Syncer is out.</div></div>
