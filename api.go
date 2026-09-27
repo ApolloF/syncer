@@ -1,7 +1,7 @@
 package main
 
 // The launcher API: a local JSON-RPC 2.0 service on the named pipe
-// \\.\pipe\syncer, for game launchers such as WaterLauncher. Only the
+// \\.\pipe\syncer, for game launchers such as Seaglass. Only the
 // current Windows user can connect, and never over the network. The
 // protocol is in docs/api.md.
 

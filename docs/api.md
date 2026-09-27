@@ -1,6 +1,6 @@
 # Syncer launcher API
 
-A local API for game launchers (such as [WaterLauncher](https://github.com/ApolloF/WaterLauncher)): show a game's save status, sync saves before a game starts, back them up after it exits, and deal with conflicts.
+A local API for game launchers (such as [Seaglass](https://github.com/ApolloF/Seaglass)): show a game's save status, sync saves before a game starts, back them up after it exits, and deal with conflicts.
 
 ## Connecting
 
