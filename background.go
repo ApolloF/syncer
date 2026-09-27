@@ -16,6 +16,7 @@ import (
 	"github.com/ApolloF/syncer/internal/gdrive"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -68,6 +69,7 @@ func runBackground() {
 				// off come from its backup, if nothing here is newer.
 				inst := cachedInstalled()
 				pullNewer(ctx, func() bool { return playing(inst) })
+				modsTick(ctx, c)
 			}
 		}
 	}
@@ -255,6 +257,10 @@ func backupFolders() ([]backup.Folder, error) {
 	fs := mergeFolders(synced, s.BackupOnly)
 	for i := range fs {
 		fs[i].Exclude = s.Exclude[dismissKey(fs[i].Path)]
+		if modKind(s, fs[i].ID) == mods.KindDeployed {
+			// Only the mod files: the folder is the game's own.
+			fs[i].Scoped, fs[i].Only = true, deployedFiles(s, fs[i].ID)
+		}
 	}
 	return fs, err
 }

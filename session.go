@@ -13,6 +13,7 @@ import (
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 	"github.com/ApolloF/syncer/internal/winx"
@@ -167,14 +168,31 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 			return nil
 		}
 		var errs []error
-		var left []string
+		var left, modHeld []string
+		s := store.LoadSettings()
 		for _, id := range held {
+			// A mod folder waits while its mod manager is open (see
+			// modsTick), and a PC receiving deployed mods keeps its folder
+			// paused.
+			if isMod(s, id) && (!holdable(s, id) || mods.ManagerRunning(processPaths())) {
+				if holdable(s, id) {
+					modHeld = append(modHeld, id)
+				}
+				continue
+			}
 			if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil && exists(ctx, c, id) {
 				errs = append(errs, err)
 				left = append(left, id)
 			}
 		}
-		store.UpdateState(func(st *store.State) { st.GamePaused = left })
+		store.UpdateState(func(st *store.State) {
+			st.GamePaused = left
+			for _, id := range modHeld {
+				if !slices.Contains(st.ModHeld, id) {
+					st.ModHeld = append(st.ModHeld, id)
+				}
+			}
+		})
 		return errors.Join(errs...)
 	}
 	fs, err := c.Folders(ctx)

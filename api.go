@@ -25,6 +25,7 @@ import (
 	"github.com/ApolloF/syncer/internal/conflict"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 )
@@ -99,12 +100,15 @@ type apiFolder struct {
 	NewerAt   time.Time `json:"newerAt,omitzero"`
 	// NewerCanGet: getNewer can take it from that PC's backup now.
 	NewerCanGet bool `json:"newerCanGet,omitempty"`
+	// Kind is set for mod folders ("mods", "mods-profiles", "mods-deployed").
+	Kind string `json:"kind,omitempty"`
 }
 
 func folderFromView(v FolderView) apiFolder {
 	return apiFolder{ID: v.ID, Label: v.Label, Path: v.Path, Sync: v.Sync, Backup: v.Backup, State: v.State,
 		NeedBytes: v.NeedBytes, Errors: v.Errors, Conflicts: v.Conflicts, Exists: v.Exists, Modified: v.Modified,
-		BackedUp: v.BackedUp, NewerOn: v.NewerOn, NewerAt: v.NewerAt, NewerCanGet: v.NewerCanGet}
+		BackedUp: v.BackedUp, NewerOn: v.NewerOn, NewerAt: v.NewerAt, NewerCanGet: v.NewerCanGet,
+		Kind: v.Kind}
 }
 
 type apiSyncResult struct {
@@ -485,6 +489,11 @@ func (s *apiServer) match(g apiGame, fs []apiFolder) []apiFolder {
 	}
 	out := []apiFolder{}
 	for _, f := range fs {
+		// Deployed mods only change through an audited update, never
+		// because a launcher starts or stops a game.
+		if f.Kind == mods.KindDeployed {
+			continue
+		}
 		for _, n := range names {
 			if discover.SameGame(f.Label, n) {
 				out = append(out, f)

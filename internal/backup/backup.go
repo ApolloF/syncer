@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,6 +45,42 @@ type Folder struct {
 	// Solo: only this PC backs it up (backed up only, not synced), so every
 	// file in its backup is this PC's.
 	Solo bool `json:"-"`
+	// Scoped limits the backup to the files in Only (paths relative to
+	// Path, forward slashes): a folder that holds much more than what
+	// Syncer looks after, like a game folder with deployed mods in it.
+	// Scoped with no files backs up nothing.
+	Scoped bool     `json:"scoped,omitempty"`
+	Only   []string `json:"only,omitempty"`
+}
+
+// scope is a Scoped folder's files and the folders they are in (lower-cased).
+type scope struct {
+	on          bool
+	files, dirs map[string]bool
+}
+
+func (f Folder) scope() scope {
+	sc := scope{on: f.Scoped, files: map[string]bool{}, dirs: map[string]bool{}}
+	for _, rel := range f.Only {
+		k := strings.ToLower(filepath.ToSlash(rel))
+		sc.files[k] = true
+		for d := path.Dir(k); d != "." && d != "/"; d = path.Dir(d) {
+			sc.dirs[d] = true
+		}
+	}
+	return sc
+}
+
+// skip reports whether rel (a file, or a folder when dir) is outside the scope.
+func (sc scope) skip(rel string, dir bool) bool {
+	if !sc.on {
+		return false
+	}
+	k := strings.ToLower(filepath.ToSlash(rel))
+	if dir {
+		return !sc.dirs[k]
+	}
+	return !sc.files[k]
 }
 
 // Progress is reported while a backup runs.
@@ -166,6 +203,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	dst := filepath.Join(target, f.ID)
 	verRoot := filepath.Join(target, VersionsDir, f.ID, stamp)
 	m := LoadMatcher(f.Path, f.Exclude...)
+	sc := f.scope()
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}
 	seen := map[string]bool{}
@@ -190,7 +228,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		if rel == "." {
 			return nil
 		}
-		if m.Ignored(rel) {
+		if m.Ignored(rel) || sc.skip(rel, d.IsDir()) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}

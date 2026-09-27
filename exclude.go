@@ -15,6 +15,7 @@ import (
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
@@ -31,19 +32,35 @@ const maxExclusions = 100
 // syncIgnores are never synced, in any folder. steam_autocloud.vdf belongs
 // to the PC it's on: Steam writes it for the account using that PC, and a
 // copy arriving from another PC names the wrong owner, to Steam and to
-// Syncer's Steam Cloud check alike.
-var syncIgnores = []string{backup.SteamMarker}
+// Syncer's Steam Cloud check alike. Vortex's markers and deployment
+// manifests describe this PC's own Vortex; one arriving from another PC
+// could make Syncer take a folder for a Vortex one.
+var syncIgnores = []string{backup.SteamMarker, "vortex.deployment*", "__vortex_staging_folder", "__folder_managed_by_vortex"}
 
 // withSyncIgnores returns the lines of Syncer's .stignore block for a game
-// with the exclusions pats.
-func withSyncIgnores(pats []string) []string {
+// (or a mod folder of kind) with the exclusions pats.
+func withSyncIgnores(kind string, pats []string) []string {
 	out := append([]string(nil), syncIgnores...)
+	out = append(out, mods.Ignores(kind)...)
 	for _, p := range pats {
 		if !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, p) }) {
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// folderIgnores are all of Syncer's .stignore lines for the folder id at
+// path. A deployed-mods folder ends with the lines that limit it to the mod
+// files, after the user's exclusions (Syncthing uses the first line that
+// matches).
+func folderIgnores(s store.Settings, id, path string) []string {
+	kind := modKind(s, id)
+	lines := withSyncIgnores(kind, s.Exclude[dismissKey(path)])
+	if kind == mods.KindDeployed {
+		lines = append(lines, deployedScope(id, path)...)
+	}
+	return lines
 }
 
 // cleanExclusions validates patterns typed by the user.
@@ -117,10 +134,10 @@ func mergeIgnores(current, patterns []string) []string {
 // writeExclusions puts Syncer's lines (the game's exclusions and
 // syncIgnores) into its folder's .stignore just before Syncthing starts on
 // the folder, so its first scan already skips them.
-func writeExclusions(_, path string) {
+func writeExclusions(id, path string) {
 	p := filepath.Join(path, ".stignore")
 	cur := readIgnores(p)
-	next := mergeIgnores(cur, withSyncIgnores(store.LoadSettings().Exclude[dismissKey(path)]))
+	next := mergeIgnores(cur, folderIgnores(store.LoadSettings(), id, path))
 	if slices.Equal(cur, next) {
 		return
 	}
@@ -145,13 +162,13 @@ func ensureIgnores(ctx context.Context, c *syncthing.Client) {
 	if err != nil {
 		return
 	}
-	ex := store.LoadSettings().Exclude
+	s := store.LoadSettings()
 	failed := 0
 	for _, f := range fs {
 		if f.ID == meta.FolderID {
 			continue
 		}
-		if err := applyExclusions(ctx, c, f.ID, withSyncIgnores(ex[dismissKey(f.Path)])); err != nil {
+		if err := applyExclusions(ctx, c, f.ID, folderIgnores(s, f.ID, f.Path)); err != nil {
 			failed++
 		}
 	}
@@ -204,7 +221,7 @@ func (a *App) SetExclusions(id string, patterns []string) error {
 	if err == nil {
 		ctx, cancel := a.callCtx()
 		defer cancel()
-		err = applyExclusions(ctx, c, id, withSyncIgnores(pats))
+		err = applyExclusions(ctx, c, id, folderIgnores(store.LoadSettings(), id, f.Path))
 	}
 	if c == nil || errors.Is(err, syncthing.ErrNotRunning) {
 		writeExclusions(id, f.Path) // Syncthing reads it when it starts

@@ -90,6 +90,20 @@ func New() (*Client, error) {
 	}, nil
 }
 
+// PatchOptions changes Syncthing's global options.
+func (c *Client) PatchOptions(ctx context.Context, patch map[string]any) error {
+	return c.do(ctx, http.MethodPatch, "/rest/config/options", patch, nil)
+}
+
+// NewAt returns a client for a Syncthing on this PC at a plain-HTTP
+// loopback address (tests and tools; Syncer itself uses New).
+func NewAt(addr, apiKey string) (*Client, error) {
+	if !isLoopbackHost(hostOnly(addr)) {
+		return nil, errors.New("only a Syncthing on this PC")
+	}
+	return &Client{base: "http://" + addr, apiKey: apiKey, http: &http.Client{Timeout: 15 * time.Second}}, nil
+}
+
 // normalizeHost rewrites an unspecified bind address ("", "0.0.0.0", "::",
 // "[::]") to loopback, keeping the port, and fills in the default port.
 // Syncthing's config may bind those to mean "listen on every interface";
@@ -178,6 +192,14 @@ func verifyPinnedCert(pinnedDER []byte) func(rawCerts [][]byte, _ [][]*x509.Cert
 // GUIURL is the address of Syncthing's own web UI.
 func (c *Client) GUIURL() string { return c.base }
 
+// StatusError is an error status Syncthing answered with.
+type StatusError struct {
+	Code int
+	msg  string
+}
+
+func (e *StatusError) Error() string { return e.msg }
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var rd io.Reader
 	if body != nil {
@@ -208,7 +230,8 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("syncthing %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(msg)))
+		return &StatusError{Code: resp.StatusCode,
+			msg: fmt.Sprintf("syncthing %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(msg)))}
 	}
 	if out == nil {
 		return nil
@@ -299,6 +322,9 @@ type FolderStatus struct {
 	NeedFiles   int    `json:"needFiles"`
 	Errors      int    `json:"errors"`
 	PullErrors  int    `json:"pullErrors"`
+	// ReceiveOnlyTotalItems are files changed locally in a receive-only
+	// folder (they'd be put back by Revert).
+	ReceiveOnlyTotalItems int `json:"receiveOnlyTotalItems"`
 }
 
 type Completion struct {
@@ -425,6 +451,72 @@ func (c *Client) Rescan(ctx context.Context, id string) error {
 		p += "?folder=" + url.QueryEscape(id)
 	}
 	return c.do(ctx, http.MethodPost, p, nil, nil)
+}
+
+// ModifiedBy returns the short id of the device that last changed a file
+// in a folder, as Syncthing's global index has it.
+func (c *Client) ModifiedBy(ctx context.Context, folder, file string) (string, error) {
+	var fi struct {
+		Global struct {
+			ModifiedBy string `json:"modifiedBy"`
+		} `json:"global"`
+	}
+	err := c.get(ctx, "/rest/db/file?folder="+url.QueryEscape(folder)+"&file="+url.QueryEscape(file), &fi)
+	return fi.Global.ModifiedBy, err
+}
+
+// GlobalFile is a file as the other devices have it (Syncthing's global
+// index), whether or not it is ignored here.
+type GlobalFile struct {
+	Exists     bool // known at all
+	Deleted    bool
+	Size       int64
+	ModifiedBy string // short device id
+}
+
+// Global looks a file up in a folder's global index.
+func (c *Client) Global(ctx context.Context, folder, file string) (GlobalFile, error) {
+	var fi struct {
+		Global struct {
+			Deleted    bool   `json:"deleted"`
+			Size       int64  `json:"size"`
+			ModifiedBy string `json:"modifiedBy"`
+			Name       string `json:"name"`
+		} `json:"global"`
+	}
+	err := c.get(ctx, "/rest/db/file?folder="+url.QueryEscape(folder)+"&file="+url.QueryEscape(file), &fi)
+	var se *StatusError
+	if errors.As(err, &se) && se.Code == http.StatusNotFound {
+		return GlobalFile{}, nil
+	}
+	if err != nil {
+		return GlobalFile{}, err
+	}
+	return GlobalFile{Exists: fi.Global.Name != "", Deleted: fi.Global.Deleted, Size: fi.Global.Size, ModifiedBy: fi.Global.ModifiedBy}, nil
+}
+
+// LocalChanged lists the files changed here in a receive-only folder (what
+// Revert would undo).
+func (c *Client) LocalChanged(ctx context.Context, folder string) ([]string, error) {
+	var out struct {
+		Files []struct {
+			Name string `json:"name"`
+		} `json:"files"`
+	}
+	if err := c.get(ctx, "/rest/db/localchanged?folder="+url.QueryEscape(folder)+"&perpage=100000", &out); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(out.Files))
+	for _, f := range out.Files {
+		names = append(names, f.Name)
+	}
+	return names, nil
+}
+
+// Revert undoes local changes in a receive-only folder: files changed or
+// added here are replaced by (or deleted in favour of) the other devices'.
+func (c *Client) Revert(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/rest/db/revert?folder="+url.QueryEscape(id), nil, nil)
 }
 
 // Events long-polls for events after since. Blocks up to ~60s.

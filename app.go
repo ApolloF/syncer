@@ -61,6 +61,7 @@ func (a *App) startup(ctx context.Context) {
 		go a.notifyLoop(ctx)
 		go a.newerLoop(ctx)
 		go a.sessionLoop(ctx)
+		go a.modsLoop(ctx)
 		a.watch(ctx)
 	}()
 }
@@ -498,6 +499,9 @@ func (a *App) RestorePoints(id string) []int64 {
 
 // Restore copies a backup back into place. point 0 = latest backup.
 func (a *App) Restore(id string, point int64) (int, error) {
+	if applying.has(id) {
+		return 0, errApplying
+	}
 	t, ok := backupTarget(store.LoadSettings())
 	if !ok {
 		return 0, errors.New("Google Drive folder not found")
@@ -552,6 +556,13 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
 		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
 		s.NoCloudPull, s.NoHoldWhilePlaying = in.NoCloudPull, in.NoHoldWhilePlaying
+		s.FindMods, s.AutoAddMods, s.SyncDeployedMods = in.FindMods, in.AutoAddMods, in.SyncDeployedMods
+		if !s.FindMods { // the experimental mod options build on finding mods
+			s.AutoAddMods, s.SyncDeployedMods = false, false
+		}
+		if in.ModsMaxGB > 0 || in.ModsMaxGB == -1 {
+			s.ModsMaxGB = in.ModsMaxGB
+		}
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}
@@ -573,8 +584,13 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	if s.NoUpdateCheck != old.NoUpdateCheck {
 		a.refreshTray()
 	}
-	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) {
+	modsAuto := s.FindMods && s.AutoAddMods
+	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) ||
+		modsAuto && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB) {
 		go a.runAutoAdd()
+	}
+	if old.SyncDeployedMods && !s.SyncDeployedMods {
+		go a.holdAllDeployed("the experimental option to sync deployed mods was turned off")
 	}
 	return s, nil
 }

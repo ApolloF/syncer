@@ -258,6 +258,12 @@ var sensitivePaths = []rootSub{
 	{Home, []string{".config"}},
 	{Home, []string{"Desktop"}},
 	{Home, []string{"Downloads"}},
+	// Vortex's own state database and its extensions (code it runs): never
+	// shared. Blocking them also blocks %APPDATA%\Vortex as a whole, while a
+	// game's staging folder (Vortex\<game>\mods) stays syncable.
+	{Roaming, []string{"Vortex", "state.v2"}},
+	{Roaming, []string{"Vortex", "temp"}},
+	{Roaming, []string{"Vortex", "plugins"}},
 }
 
 var errNotSyncable = errors.New("only folders inside your user profile, Documents, AppData, Saved Games or Ubisoft Connect's savegames can be synced between PCs")
@@ -288,6 +294,15 @@ func CheckSyncable(abs string) error {
 			return errNotSyncable
 		}
 	}
+	return CheckSensitive(abs)
+}
+
+// CheckSensitive rejects a path inside a sensitive directory, or an
+// ancestor of one. Unlike CheckSyncable it allows paths outside the known
+// roots, for folders (like a mod manager's) whose location is decided by
+// this PC alone and never taken from a peer.
+func CheckSensitive(abs string) error {
+	abs = filepath.Clean(abs)
 	for _, s := range sensitivePaths {
 		p, ok := s.abs()
 		if ok && (Within(p, abs) || Within(abs, p)) { // abs inside/== sensitive, or an ancestor of it
@@ -319,4 +334,21 @@ func SetRootForTest(root, dir string) (restore func()) {
 			delete(roots, root)
 		}
 	}
+}
+
+// CheckContainer rejects a known root or protected container, or an
+// ancestor of one: folders that hold far more than one game's files.
+func CheckContainer(abs string) error {
+	abs = filepath.Clean(abs)
+	for _, r := range roots {
+		if Within(abs, r) {
+			return errNotSyncable
+		}
+	}
+	for _, c := range protectedContainers {
+		if p, ok := c.abs(); ok && Within(abs, p) {
+			return errNotSyncable
+		}
+	}
+	return nil
 }

@@ -147,6 +147,17 @@ func problems(s store.Settings, st store.State, conflicts map[string]int, labels
 			n.Host + " saved it on " + n.At.Local().Format("Mon 2 Jan 15:04") + ", but that save hasn't reached this PC yet. Turn " +
 				n.Host + " on and let it sync before you play here."})
 	}
+	for id, ms := range st.ModSync {
+		if _, ok := s.Mods[id]; !ok || ms.Phase != phaseHeld {
+			continue
+		}
+		game := cmpOr(s.Mods[id].GameName, cmpOr(labels[id], id))
+		why := "Open Syncer to see why."
+		if ms.Held != "" {
+			why = strings.ToUpper(ms.Held[:1]) + ms.Held[1:] + "."
+		}
+		ps = append(ps, problem{"modheld:" + id + ":" + ms.Held, "Mod updates for " + game + " are on hold", why})
+	}
 	if upd != nil {
 		ps = append(ps, problem{"update:" + upd.Latest, "Syncer " + upd.Latest + " is available",
 			"Open Syncer to download it."})

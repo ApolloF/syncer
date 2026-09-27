@@ -32,6 +32,12 @@ func snapshotDir() string { return filepath.Join(paths.Root(paths.Local), "Synce
 // this PC starts exchanging them with other PCs. If the other PC's copy wins,
 // this PC's saves can still be restored ("As it was before <time>").
 func protectExisting(ctx context.Context, id, label, path string) error {
+	// Mod folders are too big to copy to Drive and can be downloaded again;
+	// files replaced by another PC's are kept by Syncthing's versioning (and
+	// deployed mods get their own snapshot before every update).
+	if isMod(store.LoadSettings(), id) {
+		return nil
+	}
 	key := id + "|" + strings.ToLower(filepath.Clean(path))
 	// Adding the folder can fail after the snapshot (e.g. a timeout); don't
 	// copy everything again on the retry.

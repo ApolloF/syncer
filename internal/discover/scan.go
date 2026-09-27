@@ -44,6 +44,14 @@ type Found struct {
 	Size              int64     `json:"size"`
 	Files             int       `json:"files"`
 	Modified          time.Time `json:"modified"`
+
+	// Mod folders (see package mods) have a Kind; ModKey identifies them
+	// when the UI asks to sync one.
+	Kind    string   `json:"kind,omitempty"`
+	Manager string   `json:"manager,omitempty"`
+	ModGame string   `json:"modGame,omitempty"`
+	ModKey  string   `json:"modKey,omitempty"`
+	Warn    []string `json:"warn,omitempty"`
 }
 
 var placeholders = map[string]string{

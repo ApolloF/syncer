@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -35,6 +38,17 @@ type SharedFolder struct {
 	// CopyOf: the publishing PC found this to be a Steam emulator's copy of
 	// the named game's own saves, which other PCs don't add on their own.
 	CopyOf string `json:"copyOf,omitempty"`
+
+	// Mod folders (Root is a mods root, resolved by each PC's own mod
+	// manager): their kind and the mod manager's game id.
+	Kind    string `json:"kind,omitempty"`
+	ModGame string `json:"modGame,omitempty"`
+	// SizeGB is the folder's size, rounded up, for the auto-add limit.
+	SizeGB int `json:"sizeGB,omitempty"`
+	// Source is the PC whose deployed mods are sent to the others, and
+	// SourceSince when it became the source (the newest claim wins).
+	Source      string `json:"source,omitempty"`
+	SourceSince int64  `json:"sourceSince,omitempty"`
 }
 
 // DeviceFile is what one PC publishes.
@@ -100,17 +114,12 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 
 	// Publish our own folder list.
-	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now()}
-	for _, f := range folders {
-		if f.ID == FolderID {
-			continue
-		}
-		if root, rel, ok := paths.Portable(f.Path); ok {
-			mine.Folders = append(mine.Folders, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel,
-				CopyOf: classify(f.Label, f.Path).CopyOf})
-		}
-	}
-	sort.Slice(mine.Folders, func(i, j int) bool { return mine.Folders[i].ID < mine.Folders[j].ID })
+	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(),
+		Folders: publishable(folders, settings, me, func(id string) int64 {
+			st, _ := c.FolderStatus(ctx, id)
+			return st.GlobalBytes
+		})}
+	rememberModSizes(settings, mine.Folders)
 	if changed(me, mine) {
 		if err := store.WriteJSON(filepath.Join(Dir(), me+".json"), mine); err != nil {
 			logx.Printf("meta: write own file: %v", err)
@@ -135,7 +144,15 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		if reason != "" {
 			continue
 		}
-		if err := AddFolder(ctx, c, sf.ID, sf.Label, p, me, others); err != nil {
+		spec := FolderSpec{ID: sf.ID, Label: sf.Label, Path: p}
+		if sf.Kind != "" {
+			if err := RegisterMod(sf.ID, mods.NameOf(sf.ModGame), sf); err != nil {
+				logx.Printf("meta: add %s: %v", sf.ID, err)
+				continue
+			}
+			spec = ModSpec(sf.ID, sf.Label, p, sf.Kind, false)
+		}
+		if err := AddFolderSpec(ctx, c, spec, me, others); err != nil {
 			logx.Printf("meta: add %s: %v", sf.ID, err)
 			continue
 		}
@@ -147,9 +164,18 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 
 	// Every folder is shared with every paired PC, has versioning on and
-	// keeps every conflict copy.
+	// keeps every conflict copy, except a PC receiving deployed mods: it
+	// takes them from its source only. Mod folders keep the conflict limit
+	// they were added with.
 	for _, f := range byID {
+		mf, isMod := settings.Mods[f.ID]
+		if isMod && mf.Kind == mods.KindDeployed && mf.Role != RoleSource {
+			continue
+		}
 		patch := patchFor(f, me, others)
+		if isMod {
+			delete(patch, "maxConflicts")
+		}
 		if _, ok := patch["devices"]; ok {
 			// This PC's saves are about to meet another PC's: keep a
 			// restore point of them first, as a PC joining a folder does.
@@ -174,6 +200,75 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	cacheFolders(byID)
 	return rep, nil
 }
+
+// publishable describes this PC's folders for the other PCs. Save folders
+// are published by their portable path; mod folders by their mod root,
+// which each PC resolves with its own mod manager. size returns a folder's
+// size in bytes (asked for mod folders only).
+func publishable(folders []syncthing.Folder, s store.Settings, me string, size func(id string) int64) []SharedFolder {
+	var out []SharedFolder
+	for _, f := range folders {
+		if f.ID == FolderID {
+			continue
+		}
+		if mf, ok := s.Mods[f.ID]; ok {
+			if _, valid := mods.KindOf(mf.Root, mf.Rel); !valid {
+				continue
+			}
+			if mf.Kind == mods.KindDeployed && mf.Role != RoleSource {
+				continue // only the source's deployment is sent to the other PCs
+			}
+			sf := SharedFolder{ID: f.ID, Label: f.Label, Root: mf.Root, Rel: mf.Rel, Kind: mf.Kind, ModGame: mf.Game}
+			if b := size(f.ID); b > 0 {
+				sf.SizeGB = int((b + 1<<30 - 1) >> 30)
+			} else {
+				sf.SizeGB = s.Mods[f.ID].SizeGB // paused (Vortex open): keep the last size known
+			}
+			if mf.Kind == mods.KindDeployed {
+				sf.Source, sf.SourceSince = me, sourceSince(f.ID)
+			}
+			out = append(out, sf)
+			continue
+		}
+		if root, rel, ok := paths.Portable(f.Path); ok {
+			out = append(out, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel,
+				CopyOf: classify(f.Label, f.Path).CopyOf})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// rememberModSizes keeps the sizes published for mod folders, to publish
+// again while Syncthing can't tell (paused while Vortex is open).
+func rememberModSizes(s store.Settings, fs []SharedFolder) {
+	changed := false
+	for _, sf := range fs {
+		if mf, ok := s.Mods[sf.ID]; ok && sf.SizeGB > 0 && mf.SizeGB != sf.SizeGB {
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	_, _ = store.UpdateSettings(func(s *store.Settings) {
+		for _, sf := range fs {
+			if mf, ok := s.Mods[sf.ID]; ok && sf.SizeGB > 0 {
+				mf.SizeGB = sf.SizeGB
+				s.Mods[sf.ID] = mf
+			}
+		}
+	})
+}
+
+// Roles of a PC for a deployed-mods folder.
+const (
+	RoleSource   = "source"   // its deployment is sent to the other PCs
+	RoleReceiver = "receiver" // it takes the source's deployment
+)
+
+// sourceSince is when this PC became the source of a deployed-mods folder.
+var sourceSince = func(id string) int64 { return store.LoadState().ModSync[id].Since }
 
 // BeforeJoin, when set, runs before this PC starts syncing a folder that is
 // shared with other PCs, so the saves already at path can be protected first.
@@ -246,6 +341,13 @@ const (
 	SkipUbisoftCloud = "ubisoft-cloud" // Ubisoft Connect's own save folder, in Ubisoft's cloud
 	SkipNoRoot       = "not-here"      // the folder it's in doesn't exist on this PC (no Ubisoft Connect)
 
+	// Mod folders.
+	SkipModsOff             = "mods-off"              // "Find installed mods" is off here
+	SkipModsExperimentalOff = "mods-experimental-off" // deployed mods: the experimental option is off here
+	SkipModGameMissing      = "mod-game-missing"      // the mod manager doesn't manage that game here
+	SkipModsManual          = "mods-manual"           // mod folders are added by hand here
+	SkipModVortexHere       = "mod-vortex-here"       // deployed mods: this PC's own Vortex deploys that game
+
 	// Pending: nothing stops adding it, it just hasn't happened yet (syncing
 	// is paused or off here, or the next reconcile hasn't run).
 	Pending = "pending"
@@ -256,6 +358,11 @@ const (
 var (
 	inOneDrive = paths.InOneDrive
 	classify   = discover.Classify
+	resolveMod = mods.Resolve
+	checkMod   = mods.CheckModSyncable
+	// deploysHere reports whether this PC's own mod manager deploys into
+	// the deployed-mods folder at path.
+	deploysHere = mods.DeploysHere
 )
 
 // Adoptable resolves a folder published by another PC to a local path and
@@ -268,6 +375,9 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 	if !paths.ValidID(sf.ID) || sf.ID == FolderID {
 		return "", SkipUnsafe
 	}
+	if sf.Kind != "" || mods.IsModRoot(sf.Root) {
+		return adoptableMod(sf, s, synced)
+	}
 	if paths.Known(sf.Root) && !paths.Here(sf.Root) {
 		return "", SkipNoRoot
 	}
@@ -275,19 +385,10 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 	if !ok || paths.CheckSyncable(p) != nil {
 		return "", SkipUnsafe
 	}
-	for _, lf := range s.BackupOnly {
-		if lf.SyncID == sf.ID || lf.ID == sf.ID || paths.Within(lf.Path, p) || paths.Within(p, lf.Path) {
-			return p, SkipBackupOnly
-		}
-	}
-	for _, sp := range synced {
-		if paths.Within(sp, p) || paths.Within(p, sp) {
-			return p, SkipOverlap
-		}
+	if reason := commonSkips(sf, p, s, synced); reason != "" {
+		return p, reason
 	}
 	switch {
-	case s.Ignored[sf.ID]:
-		return p, SkipRemoved
 	case inOneDrive(p):
 		return p, SkipOneDrive
 	case sf.Root == paths.Ubisoft:
@@ -308,6 +409,65 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 	return p, ""
 }
 
+// adoptableMod is Adoptable for a mod folder. Its root is resolved by this
+// PC's own mod manager: nothing the peer sent is used as a path.
+func adoptableMod(sf SharedFolder, s store.Settings, synced []string) (string, string) {
+	kind, ok := mods.KindOf(sf.Root, sf.Rel)
+	if !ok || kind != sf.Kind || sf.ModGame != mods.GameOf(sf.Root) {
+		return "", SkipUnsafe
+	}
+	if !s.FindMods {
+		return "", SkipModsOff
+	}
+	if kind == mods.KindDeployed && !s.SyncDeployedMods {
+		return "", SkipModsExperimentalOff
+	}
+	p, err := resolveMod(sf.Root, sf.Rel)
+	switch {
+	case errors.Is(err, mods.ErrGameMissing):
+		return "", SkipModGameMissing
+	case err != nil:
+		return "", SkipUnsafe
+	}
+	if err := checkMod(kind, p); err != nil {
+		// A receiving PC's game folder may not have the deployment target
+		// yet (it's created when the mods are applied): its parent must pass.
+		if kind != mods.KindDeployed || !errors.Is(err, fs.ErrNotExist) || checkMod(kind, filepath.Dir(p)) != nil {
+			return "", SkipUnsafe
+		}
+	}
+	if reason := commonSkips(sf, p, s, synced); reason != "" {
+		return p, reason
+	}
+	switch {
+	case kind == mods.KindDeployed && deploysHere(p):
+		return p, SkipModVortexHere
+	case kind == mods.KindDeployed, !s.AutoAddMods:
+		return p, SkipModsManual // deployed mods are never added on their own
+	case s.ModsMaxGB > 0 && sf.SizeGB > s.ModsMaxGB:
+		return p, SkipModsManual
+	}
+	return p, ""
+}
+
+// commonSkips are the reasons any folder, save or mod, isn't added.
+func commonSkips(sf SharedFolder, p string, s store.Settings, synced []string) string {
+	for _, lf := range s.BackupOnly {
+		if lf.SyncID == sf.ID || lf.ID == sf.ID || paths.Within(lf.Path, p) || paths.Within(p, lf.Path) {
+			return SkipBackupOnly
+		}
+	}
+	for _, sp := range synced {
+		if paths.Within(sp, p) || paths.Within(p, sp) {
+			return SkipOverlap
+		}
+	}
+	if s.Ignored[sf.ID] {
+		return SkipRemoved
+	}
+	return ""
+}
+
 // PeerFolderAt returns the folder another PC syncs at path (resolved on this
 // PC; me is this PC's device id), so this PC joins it under the same id
 // instead of creating a second folder for the same saves.
@@ -317,7 +477,7 @@ func PeerFolderAt(me, path string) (SharedFolder, bool) {
 		if !paths.ValidID(sf.ID) {
 			continue
 		}
-		if p, ok := paths.Resolve(sf.Root, sf.Rel); ok && strings.EqualFold(filepath.Clean(p), want) {
+		if p := resolveAny(sf); p != "" && strings.EqualFold(filepath.Clean(p), want) {
 			return sf, true
 		}
 	}
@@ -338,8 +498,28 @@ func syncedPaths(fs []syncthing.Folder) []string {
 // resolvedLen is the length of a published folder's local path (0 if it
 // doesn't resolve), to order folders from most to least specific.
 func resolvedLen(sf SharedFolder) int {
+	if sf.Kind != "" || mods.IsModRoot(sf.Root) {
+		return 0 // resolving asks the mod manager; mod folders go last
+	}
 	p, _ := paths.Resolve(sf.Root, sf.Rel)
 	return len(p)
+}
+
+// resolveAny resolves a published save or mod folder on this PC ("" if it
+// doesn't resolve).
+func resolveAny(sf SharedFolder) string {
+	if sf.Kind != "" || mods.IsModRoot(sf.Root) {
+		if k, ok := mods.KindOf(sf.Root, sf.Rel); !ok || k != sf.Kind {
+			return ""
+		}
+		p, err := resolveMod(sf.Root, sf.Rel)
+		if err != nil {
+			return ""
+		}
+		return p
+	}
+	p, _ := paths.Resolve(sf.Root, sf.Rel)
+	return p
 }
 
 // lazyInstalled looks up installed games only when asked, from a snapshot
@@ -441,25 +621,117 @@ func dropOuter(av []Avail) []Avail {
 
 // AddFolder creates a Syncthing folder shared with all devices, with versioning.
 func AddFolder(ctx context.Context, c *syncthing.Client, id, label, path, me string, others []string) error {
+	return AddFolderSpec(ctx, c, FolderSpec{ID: id, Label: label, Path: path}, me, others)
+}
+
+// FolderSpec describes a folder to add. Zero values are a save folder's.
+type FolderSpec struct {
+	ID, Label, Path string
+	Type            string         // "" = sendreceive
+	Paused          bool           // added paused
+	MarkerName      string         // "" = .stfolder
+	Versioning      map[string]any // nil = staggered, kept in the folder
+	MaxConflicts    *int           // nil = keep every conflict copy
+}
+
+// AddFolderSpec creates a Syncthing folder shared with all devices.
+func AddFolderSpec(ctx context.Context, c *syncthing.Client, spec FolderSpec, me string, others []string) error {
 	if BeforeJoin != nil && len(others) > 0 {
-		if err := BeforeJoin(ctx, id, label, path); err != nil {
+		if err := BeforeJoin(ctx, spec.ID, spec.Label, spec.Path); err != nil {
 			return err
 		}
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := os.MkdirAll(spec.Path, 0o755); err != nil {
 		return err
 	}
 	if BeforeAdd != nil {
-		BeforeAdd(id, path)
+		BeforeAdd(spec.ID, spec.Path)
 	}
-	return c.AddFolder(ctx, map[string]any{
-		"id": id, "label": label, "path": path, "type": "sendreceive",
+	f := map[string]any{
+		"id": spec.ID, "label": spec.Label, "path": spec.Path, "type": "sendreceive",
 		"fsWatcherEnabled": true, "rescanIntervalS": 3600, "ignorePerms": true,
 		"devices":    devList(me, others),
 		"versioning": syncthing.StaggeredVersioning(),
 		// Keep every conflict copy: one may be the only copy of a save.
 		"maxConflicts": -1,
+	}
+	if spec.Type != "" {
+		f["type"] = spec.Type
+	}
+	if spec.Paused {
+		f["paused"] = true
+	}
+	if spec.Versioning != nil {
+		f["versioning"] = spec.Versioning
+	}
+	if spec.MarkerName != "" {
+		f["markerName"] = spec.MarkerName
+	}
+	if spec.MaxConflicts != nil {
+		f["maxConflicts"] = *spec.MaxConflicts
+	}
+	return c.AddFolder(ctx, f)
+}
+
+// ModVersionsDir is where replaced files of a mod folder are kept: outside
+// the folder (so the mod manager never takes them for a mod), on this PC only.
+func ModVersionsDir(id string) string {
+	return filepath.Join(paths.Root(paths.Local), "Syncer", "mod-versions", id)
+}
+
+// ModSpec is how a mod folder of kind is added. A staging folder uses
+// Vortex's own marker as Syncthing's, so no .stfolder appears among the mods
+// and the folder stops, rather than looking emptied, if its drive is
+// missing. Replaced files are kept for a week. A PC receiving deployed mods
+// only takes them from the source, and stays paused between audited updates.
+// HoldNewMod, when set, says whether a new mod folder must start paused
+// (its mod manager is open) and remembers to resume it.
+var HoldNewMod func(id string) bool
+
+func ModSpec(id, label, path, kind string, source bool) FolderSpec {
+	v := syncthing.StaggeredVersioning()
+	v["params"] = map[string]string{"maxAge": "604800", "cleanInterval": "3600"}
+	v["fsPath"] = ModVersionsDir(id)
+	spec := FolderSpec{ID: id, Label: label, Path: path, Versioning: v}
+	switch kind {
+	case mods.KindStaging, mods.KindProfiles:
+		if kind == mods.KindStaging {
+			spec.MarkerName = mods.StagingMarker
+		}
+		spec.Paused = HoldNewMod != nil && HoldNewMod(id)
+		// Syncthing's usual limit: conflict copies sit among the mods,
+		// and replaced files are kept in the versions folder anyway.
+		spec.MaxConflicts = new(10)
+	case mods.KindDeployed:
+		if source {
+			spec.Type = "sendonly"
+		} else {
+			// No conflict copies in the game's folder: the snapshot taken
+			// before each update already has the file it replaces.
+			spec.Type, spec.Paused, spec.MaxConflicts = "receiveonly", true, new(int)
+		}
+	}
+	return spec
+}
+
+// RegisterMod records a mod folder in the settings before it is added, so it
+// is described as one to other PCs and its .stignore gets the mod lines. It
+// is left out of the backup (mod folders are big and can be downloaded
+// again) unless it was registered before; its backup toggle still works.
+func RegisterMod(id, gameName string, sf SharedFolder) error {
+	_, err := store.UpdateSettings(func(s *store.Settings) {
+		old, had := s.Mods[id]
+		if !had {
+			s.NoBackup[id] = true
+		}
+		mf := store.ModFolder{Kind: sf.Kind, Manager: "vortex", Game: sf.ModGame, GameName: gameName,
+			Root: sf.Root, Rel: sf.Rel, Role: old.Role}
+		if sf.Kind == mods.KindDeployed && mf.Role == "" {
+			mf.Role = RoleReceiver
+		}
+		s.Mods[id] = mf
 	})
+	return err
 }
 
 // NewID derives a stable, readable folder id from a game name.
@@ -546,7 +818,7 @@ func readDeviceFiles() []DeviceFile {
 			continue
 		}
 		var df DeviceFile
-		if json.Unmarshal(b, &df) == nil && df.Device != "" {
+		if json.Unmarshal(b, &df) == nil && df.Device != "" && df.Device+".json" == n {
 			out = append(out, df)
 		}
 	}
@@ -625,4 +897,120 @@ func ForgetCache() error {
 		return err
 	}
 	return nil
+}
+
+// ---- deployed-mods inventories -----------------------------------------------
+
+// A PC sending deployed mods publishes each folder's inventory next to its
+// folder list, as <device>.modinv (not .json: those are folder lists).
+
+const maxInventoryFile = 64 << 20
+
+func inventoryFile(device string) string { return filepath.Join(Dir(), device+".modinv") }
+
+// WriteModInventories publishes this PC's inventories (by folder id); none
+// removes the file.
+func WriteModInventories(me string, invs map[string]mods.Inventory) error {
+	if len(invs) == 0 {
+		if err := os.Remove(inventoryFile(me)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return store.WriteJSON(inventoryFile(me), invs)
+}
+
+// ModInventories reads the inventories a PC published (by folder id). They
+// come from another PC and are checked before they are returned.
+func ModInventories(device string) map[string]mods.Inventory {
+	if !paths.ValidID(device) {
+		return nil
+	}
+	p := inventoryFile(device)
+	fi, err := os.Stat(p)
+	if err != nil || fi.Size() > maxInventoryFile {
+		return nil
+	}
+	invCache.Lock()
+	defer invCache.Unlock()
+	if c, ok := invCache.m[device]; ok && c.size == fi.Size() && c.mod.Equal(fi.ModTime()) {
+		return c.invs
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var m map[string]mods.Inventory
+	if json.Unmarshal(b, &m) != nil || len(m) > maxInventories {
+		m = nil
+	}
+	for id, inv := range m {
+		if !paths.ValidID(id) || inv.Folder != id || inv.Valid() != nil {
+			delete(m, id)
+		}
+	}
+	if invCache.m == nil {
+		invCache.m = map[string]cachedInvs{}
+	}
+	invCache.m[device] = cachedInvs{fi.Size(), fi.ModTime(), m}
+	return m
+}
+
+// maxInventories caps how many deployed-mods folders one PC can send.
+const maxInventories = 64
+
+type cachedInvs struct {
+	size int64
+	mod  time.Time
+	invs map[string]mods.Inventory
+}
+
+// invCache keeps parsed inventories until their file changes: checking one
+// hashes its whole file list.
+var invCache struct {
+	sync.Mutex
+	m map[string]cachedInvs
+}
+
+// WrittenBy reports whether device itself last wrote its files in the
+// shared metadata (its folder list and inventories). Any paired PC can write
+// any file there; Syncthing records which one did.
+func WrittenBy(ctx context.Context, c *syncthing.Client, device string) error {
+	for _, name := range []string{device + ".json", device + ".modinv"} {
+		by, err := c.ModifiedBy(ctx, FolderID, name)
+		if err != nil {
+			return err
+		}
+		if len(device) < 7 || !strings.EqualFold(by, device[:7]) {
+			return fmt.Errorf("%s was last written by another PC (%s)", name, by)
+		}
+	}
+	return nil
+}
+
+// Source is the PC currently sending a deployed-mods folder: the one with
+// the newest claim among all PCs' folder lists (this PC's own included).
+type Source struct {
+	Device string
+	Name   string
+	Since  int64
+	Folder SharedFolder
+}
+
+// ModSource finds who sends the deployed-mods folder id (ok false: no one).
+func ModSource(id string) (Source, bool) {
+	var best Source
+	found := false
+	for _, df := range readDeviceFiles() {
+		for _, sf := range df.Folders {
+			if sf.ID != id || sf.Kind != mods.KindDeployed || sf.Source != df.Device ||
+				sf.SourceSince > time.Now().Add(time.Hour).UnixNano() { // a claim from the future would win forever
+				continue
+			}
+			if !found || sf.SourceSince > best.Since {
+				best, found = Source{Device: df.Device, Name: df.Name, Since: sf.SourceSince, Folder: sf}, true
+			}
+		}
+	}
+	return best, found
 }

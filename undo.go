@@ -100,12 +100,22 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 	s, err := store.UpdateSettings(func(s *store.Settings) {
 		s.SyncDisabled = true
 		s.AutoAdd = false // otherwise re-enabling sync would re-add every game at once
+		s.AutoAddMods = false
 		s.Ignored = map[string]bool{}
 		if o.StopBackups {
 			s.BackupEnabled = false
 			s.BackupOnly = map[string]store.LocalFolder{}
+			s.Mods = map[string]store.ModFolder{}
 			return
 		}
+		// Mod folders that stay (backed up only) keep knowing they are.
+		defer func() {
+			for id := range s.Mods {
+				if _, ok := s.BackupOnly[id]; !ok {
+					delete(s.Mods, id)
+				}
+			}
+		}()
 		// Keep backing every game up, as backup-only folders.
 	next:
 		for _, f := range synced {
@@ -121,6 +131,9 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 			}
 			id := backupOnlyID(cmpOr(f.Label, f.ID), taken)
 			s.BackupOnly[id] = store.LocalFolder{ID: id, Label: cmpOr(f.Label, f.ID), Path: f.Path, SyncID: f.ID}
+			if mf, ok := s.Mods[f.ID]; ok {
+				s.Mods[id] = mf
+			}
 			converted = append(converted, [2]string{f.ID, id})
 		}
 	})

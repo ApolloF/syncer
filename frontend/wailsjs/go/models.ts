@@ -158,12 +158,29 @@ export namespace conflict {
 
 export namespace main {
 	
+	export class ApplyConfirm {
+	    deletes: boolean;
+	    gameFiles: boolean;
+	    code: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplyConfirm(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deletes = source["deletes"];
+	        this.gameFiles = source["gameFiles"];
+	        this.code = source["code"];
+	    }
+	}
 	export class AvailableView {
 	    id: string;
 	    label: string;
 	    path: string;
 	    from: string;
 	    reason: string;
+	    kind: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AvailableView(source);
@@ -176,6 +193,7 @@ export namespace main {
 	        this.path = source["path"];
 	        this.from = source["from"];
 	        this.reason = source["reason"];
+	        this.kind = source["kind"];
 	    }
 	}
 	export class BulkResult {
@@ -325,6 +343,13 @@ export namespace main {
 	    copyOf: string;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
+	    kind: string;
+	    modGame: string;
+	    modRole: string;
+	    modPhase: string;
+	    modHeld: string;
+	    modHeldBy: string;
+	    modPending: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderView(source);
@@ -362,6 +387,13 @@ export namespace main {
 	        this.copyOf = source["copyOf"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
+	        this.kind = source["kind"];
+	        this.modGame = source["modGame"];
+	        this.modRole = source["modRole"];
+	        this.modPhase = source["modPhase"];
+	        this.modHeld = source["modHeld"];
+	        this.modHeldBy = source["modHeldBy"];
+	        this.modPending = source["modPending"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -400,6 +432,11 @@ export namespace main {
 	    files: number;
 	    // Go type: time
 	    modified: any;
+	    kind?: string;
+	    manager?: string;
+	    modGame?: string;
+	    modKey?: string;
+	    warn?: string[];
 	    syncedBy: string;
 	    installed: boolean;
 	    dismissed: boolean;
@@ -426,6 +463,11 @@ export namespace main {
 	        this.size = source["size"];
 	        this.files = source["files"];
 	        this.modified = this.convertValues(source["modified"], null);
+	        this.kind = source["kind"];
+	        this.manager = source["manager"];
+	        this.modGame = source["modGame"];
+	        this.modKey = source["modKey"];
+	        this.warn = source["warn"];
 	        this.syncedBy = source["syncedBy"];
 	        this.installed = source["installed"];
 	        this.dismissed = source["dismissed"];
@@ -468,6 +510,67 @@ export namespace main {
 	        this.account = source["account"];
 	        this.synced = this.convertValues(source["synced"], null);
 	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ModPreview {
+	    id: string;
+	    label: string;
+	    from: string;
+	    // Go type: time
+	    updated: any;
+	    added: number;
+	    changed: number;
+	    removed: number;
+	    same: number;
+	    bytes: number;
+	    removedPlugins: string[];
+	    pluginLists: string[];
+	    needDeletes: boolean;
+	    gameFiles: string[];
+	    code: string[];
+	    checks: mods.Check[];
+	    ready: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.from = source["from"];
+	        this.updated = this.convertValues(source["updated"], null);
+	        this.added = source["added"];
+	        this.changed = source["changed"];
+	        this.removed = source["removed"];
+	        this.same = source["same"];
+	        this.bytes = source["bytes"];
+	        this.removedPlugins = source["removedPlugins"];
+	        this.pluginLists = source["pluginLists"];
+	        this.needDeletes = source["needDeletes"];
+	        this.gameFiles = source["gameFiles"];
+	        this.code = source["code"];
+	        this.checks = this.convertValues(source["checks"], mods.Check);
+	        this.ready = source["ready"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -603,6 +706,45 @@ export namespace main {
 		}
 	}
 	
+	export class SnapshotView {
+	    stamp: string;
+	    // Go type: time
+	    created: any;
+	    files: number;
+	    added: number;
+	    bytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SnapshotView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stamp = source["stamp"];
+	        this.created = this.convertValues(source["created"], null);
+	        this.files = source["files"];
+	        this.added = source["added"];
+	        this.bytes = source["bytes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class UndoOptions {
 	    unpair: boolean;
@@ -639,6 +781,74 @@ export namespace main {
 	        this.devices = source["devices"];
 	        this.notes = source["notes"];
 	    }
+	}
+
+}
+
+export namespace mods {
+	
+	export class Check {
+	    name: string;
+	    ok: boolean;
+	    warn?: boolean;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Check(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.ok = source["ok"];
+	        this.warn = source["warn"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class AuditEntry {
+	    // Go type: time
+	    at: any;
+	    folder: string;
+	    label: string;
+	    phase: string;
+	    gen: number;
+	    ok: boolean;
+	    summary: string;
+	    checks: Check[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AuditEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at = this.convertValues(source["at"], null);
+	        this.folder = source["folder"];
+	        this.label = source["label"];
+	        this.phase = source["phase"];
+	        this.gen = source["gen"];
+	        this.ok = source["ok"];
+	        this.summary = source["summary"];
+	        this.checks = this.convertValues(source["checks"], Check);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
@@ -715,6 +925,32 @@ export namespace store {
 	        this.copiedFrom = source["copiedFrom"];
 	    }
 	}
+	export class ModFolder {
+	    kind: string;
+	    manager: string;
+	    game: string;
+	    gameName: string;
+	    root: string;
+	    rel: string;
+	    role?: string;
+	    sizeGB?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.manager = source["manager"];
+	        this.game = source["game"];
+	        this.gameName = source["gameName"];
+	        this.root = source["root"];
+	        this.rel = source["rel"];
+	        this.role = source["role"];
+	        this.sizeGB = source["sizeGB"];
+	    }
+	}
 	export class Settings {
 	    theme: string;
 	    backupEnabled: boolean;
@@ -743,6 +979,11 @@ export namespace store {
 	    noCloudPull: boolean;
 	    noHoldWhilePlaying: boolean;
 	    exclude?: Record<string, Array<string>>;
+	    findMods: boolean;
+	    autoAddMods: boolean;
+	    syncDeployedMods: boolean;
+	    modsMaxGB: number;
+	    mods?: Record<string, ModFolder>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -776,6 +1017,11 @@ export namespace store {
 	        this.noCloudPull = source["noCloudPull"];
 	        this.noHoldWhilePlaying = source["noHoldWhilePlaying"];
 	        this.exclude = source["exclude"];
+	        this.findMods = source["findMods"];
+	        this.autoAddMods = source["autoAddMods"];
+	        this.syncDeployedMods = source["syncDeployedMods"];
+	        this.modsMaxGB = source["modsMaxGB"];
+	        this.mods = this.convertValues(source["mods"], ModFolder, true);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

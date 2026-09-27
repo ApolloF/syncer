@@ -19,14 +19,15 @@
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
   import {
-    Folders, ScanGames, AddFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
+    Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, ResolveConflicts, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
-    LeaveToSteamCloud,
+    LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
+    ReleaseModHold, MakeModSource, HandOverMods,
     StopSyncingCopies,
     GetNewer,
   } from '../../wailsjs/go/main/App'
-  import type { conflict, store } from '../../wailsjs/go/models'
+  import type { conflict, store, mods } from '../../wailsjs/go/models'
 
   let loading = $state(false)
   let scanning = $state(false)
@@ -65,6 +66,19 @@
   let adoptPath = $state('')
   let adoptRestore = $state(true)
   let adopting = $state(false)
+
+  // Deployed mods (experimental): apply an update, audits, rollback.
+  let applyFor = $state<main.FolderView | null>(null)
+  let preview = $state<main.ModPreview | null>(null)
+  let confirm = $state({ deletes: false, gameFiles: false, code: false })
+  let applyBusy = $state(false)
+  let auditFor = $state<main.FolderView | null>(null)
+  let audits = $state<mods.AuditEntry[]>([])
+  let auditOpen = $state<Record<number, boolean>>({})
+  let auditBusy = $state(false)
+  let rollbackFor = $state<main.FolderView | null>(null)
+  let snapshots = $state<main.SnapshotView[]>([])
+  let rollbackBusy = $state('')
 
   let dropFor = $state<backup.Orphan | null>(null)
   let dropTyped = $state('')
@@ -187,7 +201,7 @@
   const removeInner = $derived(removeFor ? overlaps.find(v => v.outer.id === removeFor!.id)?.inner ?? [] : [])
   const base = (p: string) => p.split('\\').filter(Boolean).pop() ?? p
   const names = (fs: main.FolderView[]) => [...new Set(fs.map(f => f.label))].join(', ')
-  const notInstalled = $derived((cache.found ?? []).filter(g => !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
+  const notInstalled = $derived((cache.found ?? []).filter(g => !g.kind && !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
   const bulkCount = $derived(notInstalled.filter(g => bulkPick[g.path]).length)
 
   /** A time from Go; the zero time means "never". */
@@ -222,6 +236,111 @@
     if (ok) {
       cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as main.GameView : g) ?? null
       load(); refresh()
+    }
+  }
+
+  // Mod folders are added by their key: this PC finds the folder again.
+  let modAsk = $state<main.GameView | null>(null)
+  async function addMod(g: main.GameView, asked = false) {
+    if (g.kind === 'mods-deployed' && !asked) { modAsk = g; return }
+    modAsk = null
+    adding = g.path
+    const ok = await attempt(() => AddModFolder(g.modKey ?? ''), `Now syncing ${g.name}`)
+    adding = ''
+    if (ok) {
+      cache.found = cache.found?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as main.GameView : x) ?? null
+      load()
+      refresh()
+    }
+  }
+
+  const modKinds: Record<string, { text: string; tip: string }> = {
+    'mods': { text: 'Vortex mods', tip: "The mods Vortex installed for this game (its staging folder). On your other PCs they appear in Vortex, to be enabled and deployed there. Synced while Vortex is closed." },
+    'mods-profiles': { text: 'Vortex load order', tip: "Vortex's profiles for this game: plugin lists and load orders. Each PC keeps its own game settings (.ini files)." },
+    'mods-deployed': { text: 'Deployed mods', tip: "The mod files Vortex deployed into the game's folder, for other PCs to play with right away. Experimental: one PC sends, the others apply checked updates." },
+  }
+
+  async function openApply(f: main.FolderView) {
+    applyFor = f
+    preview = null
+    confirm = { deletes: false, gameFiles: false, code: false }
+    try { preview = await ModUpdatePreview(f.id) } catch (e) { fail(e); applyFor = null }
+  }
+
+  // Ready once every check passes; "Removals confirmed" is the checkbox.
+  // Ready once every check passes; the ones below are the checkboxes.
+  const confirmed: Record<string, () => boolean> = {
+    'Removals confirmed': () => confirm.deletes,
+    'Replacing game files confirmed': () => confirm.gameFiles,
+    'Program files confirmed': () => confirm.code,
+  }
+  const applyReady = $derived(!!preview && preview.checks.every(c => c.ok || c.warn || !!confirmed[c.name]?.()))
+
+  async function doApply() {
+    if (!applyFor) return
+    applyBusy = true
+    const ok = await attempt(() => ApplyModUpdate(applyFor!.id, confirm as main.ApplyConfirm), 'Applying the update…')
+    applyBusy = false
+    if (ok) { applyFor = null; load() }
+  }
+
+  async function openAudit(f: main.FolderView) {
+    auditFor = f
+    auditOpen = {}
+    audits = (await ModAudit(f.id).catch(() => [])) ?? []
+  }
+
+  async function runAudit() {
+    if (!auditFor) return
+    auditBusy = true
+    try {
+      const e = await RunModAudit(auditFor.id)
+      toast(e.ok ? 'Everything checks out' : 'Some checks failed', e.ok ? 'ok' : 'err')
+      audits = (await ModAudit(auditFor.id)) ?? []
+      auditOpen = { 0: true }
+    } catch (e) { fail(e) }
+    auditBusy = false
+  }
+
+  async function releaseHold() {
+    if (!auditFor) return
+    if (await attempt(() => ReleaseModHold(auditFor!.id), 'Updates can be applied again')) { auditFor = null; load() }
+  }
+
+  async function handOver() {
+    if (!auditFor) return
+    if (await attempt(() => HandOverMods(auditFor!.id), 'The other PC sends these mods now')) { auditFor = null; load() }
+  }
+
+  async function makeSource() {
+    if (!auditFor) return
+    if (await attempt(() => MakeModSource(auditFor!.id), 'This PC sends these mods now')) { auditFor = null; load() }
+  }
+
+  async function openRollback(f: main.FolderView) {
+    rollbackFor = f
+    snapshots = (await ModSnapshots(f.id).catch(() => [])) ?? []
+  }
+
+  async function doRollback(stamp: string) {
+    if (!rollbackFor) return
+    rollbackBusy = stamp
+    const ok = await attempt(() => RollbackMods(rollbackFor!.id, stamp), 'Rolled back')
+    rollbackBusy = ''
+    if (ok) { rollbackFor = null; load() }
+  }
+
+  function modPhase(f: main.FolderView): { kind: string; text: string } {
+    if (f.modRole === 'source') {
+      if (f.modPhase === 'held') return { kind: 'err', text: 'On hold' }
+      if (f.modPhase === 'busy') return { kind: 'accent', text: 'Vortex or game open' }
+      return { kind: 'ok', text: 'Sending' }
+    }
+    switch (f.modPhase) {
+      case 'pending': return { kind: 'accent', text: 'Update waiting' }
+      case 'applying': return { kind: 'accent', text: 'Applying…' }
+      case 'held': return { kind: 'err', text: 'On hold' }
+      default: return { kind: 'ok', text: 'Up to date' }
     }
   }
 
@@ -263,7 +382,12 @@
     } catch (e) { fail(e) }
   }
 
-  async function toggleBackup(f: main.FolderView, on: boolean) {
+  // Backing up mods is off unless turned on; for deployed mods, ask first.
+  let backupAsk = $state<main.FolderView | null>(null)
+
+  async function toggleBackup(f: main.FolderView, on: boolean, asked = false) {
+    if (on && f.kind === 'mods-deployed' && !asked) { backupAsk = f; return }
+    backupAsk = null
     f.backup = on
     if (await attempt(() => SetFolderBackup(f.id, on))) { if (!f.sync) load() }
     else f.backup = !on
@@ -530,15 +654,23 @@
   {/if}
 {/snippet}
 
+{#snippet deployedLine(f: main.FolderView)}
+  <div class="detail faint ellipsis" title={f.modHeld}>
+    {f.modRole === 'source' ? 'Sent from this PC' : 'Received'}{f.modPending ? ` · ${f.modPending}` : ''}{f.modHeld ? ` · On hold: ${f.modHeld}` : ''}
+  </div>
+{/snippet}
+
 {#snippet folderRow(f: main.FolderView)}
   {@const s = stateOf(f)}
   <div class="item" transition:slide={{ duration: 150 }}>
     <div class="grow">
       <div class="name ellipsis">{f.label}</div>
       <div class="path faint ellipsis" title={f.path}>{f.path}</div>
+      {#if f.kind === 'mods-deployed'}{@render deployedLine(f)}{/if}
       {#if !f.sync && f.backup}<div class="detail faint ellipsis">{backupLine(f)}</div>{/if}
     </div>
     {#if f.sync}<span class="meta faint">{bytes(f.bytes)}</span>{/if}
+    {#if f.kind}<span class="pill accent" title={modKinds[f.kind]?.tip}>{modKinds[f.kind]?.text ?? 'Mods'}</span>{/if}
     {#if f.conflicts}
       <button class="pill warn linkish" title="Two PCs changed the same save — choose which to keep" onclick={() => openConflicts(f)}>
         {f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}
@@ -572,11 +704,19 @@
     {#if f.copyOf}<span class="pill" title={copyTip(f.copyOf, false)}>Copy of {f.copyOf}</span>{/if}
     {@render driveCopy(f.oneDriveCopy, f.oneDriveCopyNewer)}
     {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
-    {#if f.sync}<span class="pill {s.kind}">{s.text}</span>
+    {#if f.sync && f.kind === 'mods-deployed'}{@const m = modPhase(f)}<span class="pill {m.kind}">{m.text}</span>
+    {:else if f.sync}<span class="pill {s.kind}">{s.text}</span>
     {:else if !f.exists}<span class="pill" title="The save folder isn't on this PC. Restore it from the backup to bring it back.">Not on this PC</span>
     {:else if f.backup}<span class="pill">Backup only</span>
     {:else}<span class="pill" title="Neither synced nor backed up. Turn either toggle back on to include it again.">Off</span>{/if}
+    {#if f.sync && f.kind === 'mods-deployed' && f.modRole !== 'source' && (f.modPhase === 'pending' || f.modPhase === 'held')}
+      <button class="btn sm primary" onclick={() => openApply(f)}>Apply…</button>
+    {/if}
     <div class="acts">
+      {#if f.kind === 'mods-deployed'}
+        <button class="btn ghost icon sm" title="Audit: what each update did, and check it now" onclick={() => openAudit(f)}><Icon name="check" size={16} /></button>
+        {#if f.modRole !== 'source'}<button class="btn ghost icon sm" title="Roll back an update" onclick={() => openRollback(f)}><Icon name="undo" size={16} /></button>{/if}
+      {/if}
       <button class="btn ghost icon sm" title="Open folder" disabled={!f.exists} onclick={() => OpenPath(f.path)}><Icon name="folder" size={16} /></button>
       <button class="btn ghost icon sm" class:set={f.exclude?.length}
         title={f.exclude?.length ? `Skipped files: ${f.exclude.join(', ')}` : 'Skip files (logs, screenshots, …)'}
@@ -700,6 +840,10 @@
           <div class="grow">
             <div class="row name-row">
               <span class="name ellipsis">{g.name}</span>
+              {#if g.kind}<span class="pill accent" title={modKinds[g.kind]?.tip}>{modKinds[g.kind]?.text ?? 'Mods'}</span>
+                {#if g.kind === 'mods-deployed'}<span class="pill warn">Experimental</span>{/if}
+                {#each g.warn ?? [] as w}<span class="pill warn" title={w}>{w.length > 40 ? w.slice(0, 38) + '…' : w}</span>{/each}
+              {/if}
               {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
               {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
               {#if g.copyOf}<span class="pill" title={copyTip(g.copyOf, true)}>Copy of {g.copyOf}</span>
@@ -714,6 +858,12 @@
             <div class="path faint ellipsis" title={g.path}>{g.path}</div>
           </div>
           <span class="meta faint">{bytes(g.size)} · {ago(g.modified)}</span>
+          {#if g.kind}
+          <button class="btn sm" disabled={adding === g.path} onclick={() => addMod(g)}>
+            {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
+            {g.kind === 'mods-deployed' ? 'Send…' : 'Sync'}
+          </button>
+          {:else}
           <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
             Back up only
           </button>
@@ -721,6 +871,7 @@
             {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync
           </button>
+          {/if}
         </div>
       {:else}
         <div class="empty inner"><p class="muted">{query ? 'Nothing matches.' : 'Everything found is already in your games.'}</p></div>
@@ -728,6 +879,7 @@
     </div>
     <p class="faint hint">
       {autoOn ? `New games are added automatically${o?.settings.installedOnly ? ' once installed' : ''}; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Adding new games automatically is off.'}
+      {#if o?.settings.findMods}Mod folders {o?.settings.autoAddMods ? 'are added automatically (experimental)' : 'need a click'} and aren't backed up unless you turn their backup on.{/if}
       {#if hiddenCloud && !showCloud}{plural(hiddenCloud, 'Steam Cloud game')} hidden. <button class="linkbtn" onclick={showCloudGames}>Show them</button>{/if}
     </p>
   {/if}
@@ -753,8 +905,13 @@
           {:else if a.reason === 'not-here'}<span class="pill" title="These saves are in Ubisoft Connect's save folder, and Ubisoft Connect isn't installed on this PC.">No Ubisoft Connect here</span>
           {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
           {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
+          {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
+          {:else if a.reason === 'mods-experimental-off'}<span class="pill" title="Turn on “Sync deployed mods in the game folder” in Settings to receive deployed mods on this PC.">Experimental option off</span>
+          {:else if a.reason === 'mod-game-missing'}<span class="pill warn" title="Vortex on this PC doesn't manage this game yet. Add the game in Vortex here (with its default or your own mods folder), then it can sync.">Not in Vortex here</span>
+          {:else if a.reason === 'mod-vortex-here'}<span class="pill warn" title="Vortex on this PC deploys this game's mods itself. Receiving deployed mods too would mix two deployments in the game's folder.">Vortex deploys here</span>
+          {:else if a.reason === 'mods-manual'}<span class="pill" title={modKinds[a.kind]?.tip}>{modKinds[a.kind]?.text ?? 'Mods'}</span>
           {:else}<span class="pill">Removed here</span>{/if}
-          <button class="btn sm" disabled={syncingId === a.id || a.reason === 'not-here'} onclick={() => syncHere(a)}>
+          <button class="btn sm" disabled={syncingId === a.id || ['not-here', 'mods-off', 'mods-experimental-off', 'mod-game-missing', 'mod-vortex-here'].includes(a.reason)} onclick={() => syncHere(a)}>
             {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync here
           </button>
@@ -1013,7 +1170,141 @@
   </Modal>
 {/if}
 
+{#if modAsk}
+  <Modal title="Send deployed mods of {modAsk.name.replace(/ \(deployed mods\)$/, '')}?" onclose={() => (modAsk = null)}>
+    <p>This PC becomes the source: the mods Vortex deployed into the game's folder are offered to your other PCs, which apply them when you say so there.</p>
+    <ul class="notes">
+      <li>Only the files in Vortex's deployment are sent; the game's own files never are.</li>
+      <li>While Vortex or the game is running here, nothing is sent.</li>
+      <li>Your other PCs need the same game version, and must not deploy this game with their own Vortex.</li>
+    </ul>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (modAsk = null)}>Cancel</button>
+      <button class="btn primary" onclick={() => modAsk && addMod(modAsk, true)}>Send from this PC</button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if applyFor}
+  <Modal title="Update mods of {applyFor.label}?" onclose={() => { if (!applyBusy) applyFor = null }}>
+    {#if !preview}
+      <p class="faint"><Icon name="refresh" size={14} class="spin" /> Checking…</p>
+    {:else}
+      <p>Update from {preview.from} ({new Date(preview.updated).toLocaleString()}): <b>{preview.added}</b> new, <b>{preview.changed}</b> changed and <b>{preview.removed}</b> removed files
+        ({bytes(preview.bytes)} to download){preview.same ? `; ${preview.same} already here` : ''}.
+        {#if preview.pluginLists?.length}The load order ({preview.pluginLists.join(', ')}) is updated too.{/if}</p>
+      <p class="faint small">Syncer first saves a copy of every file it replaces or removes, so you can roll back. Only these mod files change; the game's own files are checked before and after.</p>
+      <ul class="checks">
+        {#each preview.checks.filter(c => !confirmed[c.name]) as c}
+          <li class:bad={!c.ok && !c.warn}><Icon name={c.ok ? 'check' : 'alert'} size={14} /> {c.name}{#if c.detail && !c.ok} <span class="faint">({c.detail})</span>{/if}</li>
+        {/each}
+      </ul>
+      {#if preview.needDeletes}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirm.deletes} />
+          <span>This update removes {preview.removed} files{preview.removedPlugins?.length ? `, including the plugins ${preview.removedPlugins.join(', ')}` : ''}. Remove them.</span></label>
+      {/if}
+      {#if preview.gameFiles?.length}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirm.gameFiles} />
+          <span>It replaces {preview.gameFiles.length === 1 ? 'one of the game\'s own files' : `${preview.gameFiles.length} of the game's own files`}: {preview.gameFiles.join(', ')}.
+          Syncer keeps the game's copies and puts them back when the mod goes. Replace them.</span></label>
+      {/if}
+      {#if preview.code?.length}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirm.code} />
+          <span>It adds or changes program files, which run with the game: {preview.code.join(', ')}. Only apply updates from a PC you trust. Apply them.</span></label>
+      {/if}
+    {/if}
+    {#snippet actions()}
+      <button class="btn" disabled={applyBusy} onclick={() => (applyFor = null)}>Cancel</button>
+      <button class="btn primary" disabled={!applyReady || applyBusy} onclick={doApply}>
+        {#if applyBusy}<Icon name="refresh" size={15} class="spin" />{/if} Apply update
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if auditFor}
+  <Modal title="Audit: {auditFor.label}" onclose={() => (auditFor = null)}>
+    {#if auditFor.modHeld}<p class="err small">On hold: {auditFor.modHeld}</p>{/if}
+    <div class="audits">
+      {#each audits as e, i}
+        <button class="audit" onclick={() => (auditOpen[i] = !auditOpen[i])}>
+          <span class="pill {e.ok ? 'ok' : 'err'}">{e.ok ? 'OK' : 'Failed'}</span>
+          <span class="grow ellipsis">{e.summary || e.phase}</span>
+          <span class="faint small">{ago(e.at)}</span>
+        </button>
+        {#if auditOpen[i]}
+          <ul class="checks">
+            {#each e.checks as c}
+              <li class:bad={!c.ok && !c.warn}><Icon name={c.ok ? 'check' : 'alert'} size={14} /> {c.name}{#if c.detail} <span class="faint">({c.detail})</span>{/if}</li>
+            {/each}
+          </ul>
+        {/if}
+      {:else}
+        <p class="faint">Nothing yet.</p>
+      {/each}
+    </div>
+    {#snippet actions()}
+      {#if auditFor?.modRole !== 'source' && auditFor?.modHeldBy !== 'handover'}<button class="btn ghost" onclick={makeSource} title="Only where Vortex deploys this game">Send from this PC instead</button>{/if}
+      {#if auditFor?.modHeldBy === 'handover' && auditFor?.modRole === 'source'}
+        <button class="btn" onclick={handOver}>Let the other PC send them</button>
+        <button class="btn" onclick={releaseHold}>Keep sending from this PC</button>
+      {:else if auditFor?.modHeldBy === 'handover'}
+        <button class="btn" onclick={releaseHold}>Take updates from the other PC</button>
+      {:else if auditFor?.modPhase === 'held'}<button class="btn" onclick={releaseHold}>Allow updates again</button>{/if}
+      <button class="btn primary" disabled={auditBusy} onclick={runAudit}>
+        {#if auditBusy}<Icon name="refresh" size={15} class="spin" />{/if} Check now
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if rollbackFor}
+  <Modal title="Roll back {rollbackFor.label}" onclose={() => { if (!rollbackBusy) rollbackFor = null }}>
+    <p>Put the game folder back the way it was before the last update: the files it replaced come back and the files it added go. Close Vortex and the game first.</p>
+    <div class="audits">
+      {#each snapshots.slice(0, 1) as sn (sn.stamp)}
+        <div class="audit">
+          <span class="grow">Before the update of {new Date(sn.created).toLocaleString()}
+            <span class="faint small">· {sn.files} saved, {sn.added} added · {bytes(sn.bytes)}</span></span>
+          <button class="btn sm" disabled={!!rollbackBusy} onclick={() => doRollback(sn.stamp)}>
+            {#if rollbackBusy === sn.stamp}<Icon name="refresh" size={14} class="spin" />{/if} Roll back
+          </button>
+        </div>
+      {:else}
+        <p class="faint">No snapshots: no update was applied on this PC yet.</p>
+      {/each}
+    </div>
+    {#snippet actions()}
+      <button class="btn" disabled={!!rollbackBusy} onclick={() => (rollbackFor = null)}>Close</button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if backupAsk}
+  <Modal title="Back up the deployed mods of {backupAsk.label}?" onclose={() => (backupAsk = null)}>
+    <p>Only the mod files are backed up to Google Drive: the files {backupAsk.modRole === 'source' ? 'Vortex deployed on this PC' : 'the last update applied here'}, not the game's own files.
+      {#if backupAsk.bytes}They take about {bytes(backupAsk.bytes)}.{/if}</p>
+    <p class="faint small">Mods can usually be downloaded again, so this is mostly worth it for mods that are hard to get. The Vortex mods folder can be backed up instead.</p>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (backupAsk = null)}>Cancel</button>
+      <button class="btn primary" onclick={() => backupAsk && toggleBackup(backupAsk, true, true)}>Back them up</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
+  .checks { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .checks li { display: flex; align-items: baseline; gap: 6px; color: var(--ok, inherit); }
+  .checks li.bad { color: var(--err); }
+  .audits { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; }
+  .audit { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; border: 0; background: transparent;
+    font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .audit:hover { background: var(--hover); }
+  .warnbox { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
+  .err { color: var(--err); }
+  .warnbox { align-items: flex-start; }
+  .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .notes li + li { margin-top: 6px; }
   .bar { gap: 12px; }
   .tabs { display: flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--hover); }
   .tabs button {

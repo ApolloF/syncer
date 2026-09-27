@@ -317,3 +317,62 @@ func TestRestoreSkipsSteamMarker(t *testing.T) {
 		t.Error("steam_autocloud.vdf restored")
 	}
 }
+
+// A scoped folder (a game folder with deployed mods) backs up its listed
+// files only; one that leaves the list retires into the history.
+func TestRunScoped(t *testing.T) {
+	src := t.TempDir()
+	target := t.TempDir()
+	id := "test-scoped-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	write(t, filepath.Join(src, "Skyrim.esm"), "the game's own")
+	write(t, filepath.Join(src, "SkyUI_SE.esp"), "mod")
+	write(t, filepath.Join(src, "meshes", "sky", "sky.nif"), "mod mesh")
+	write(t, filepath.Join(src, "meshes", "vanilla.nif"), "the game's own")
+	f := Folder{ID: id, Label: "Data", Path: src, Scoped: true, Only: []string{"SkyUI_SE.esp", "Meshes/Sky/sky.nif"}}
+
+	if res, err := Run(context.Background(), []Folder{f}, Options{Target: target, KeepDays: 30}); err != nil || !res.OK {
+		t.Fatalf("run: %v %v", err, res.Errors)
+	}
+	got := map[string]bool{}
+	_ = filepath.WalkDir(filepath.Join(target, id), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(filepath.Join(target, id), p)
+			got[filepath.ToSlash(rel)] = true
+		}
+		return nil
+	})
+	if len(got) != 2 || !got["SkyUI_SE.esp"] || !got["meshes/sky/sky.nif"] {
+		t.Fatalf("backed up %v, want only the two mod files", got)
+	}
+
+	// The mod goes away: its backup copy moves into the history.
+	time.Sleep(1100 * time.Millisecond)
+	f.Only = []string{"meshes/sky/sky.nif"}
+	if res, err := Run(context.Background(), []Folder{f}, Options{Target: target, KeepDays: 30}); err != nil || !res.OK {
+		t.Fatalf("run: %v %v", err, res.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(target, id, "SkyUI_SE.esp")); err == nil {
+		t.Error("file that left the list still in the backup")
+	}
+	if len(Points(target, id)) == 0 {
+		t.Error("no history for the file that left the list")
+	}
+
+	// Nothing listed (no update applied yet): nothing is backed up or retired.
+	empty := Folder{ID: id + "-e", Label: "Data", Path: src, Scoped: true}
+	defer os.Remove(indexPath(empty.ID))
+	if _, err := Run(context.Background(), []Folder{empty}, Options{Target: target}); err != nil {
+		t.Fatal(err)
+	}
+	if es, _ := os.ReadDir(filepath.Join(target, empty.ID)); len(es) != 0 {
+		t.Errorf("scoped folder with no files backed up %d entries", len(es))
+	}
+
+	// A restore point taken before syncing covers the listed files only.
+	snapTarget := t.TempDir()
+	n, err := Snapshot(context.Background(), snapTarget, f)
+	if err != nil || n != 1 {
+		t.Errorf("snapshot saved %d files (%v), want 1", n, err)
+	}
+}

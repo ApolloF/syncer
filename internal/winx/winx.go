@@ -89,27 +89,6 @@ func processPath(pid uint32) string {
 	return windows.UTF16ToString(buf[:n])
 }
 
-// ProcessPaths returns the executable paths of the running processes this
-// user can see.
-func ProcessPaths() []string {
-	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
-	if err != nil {
-		return nil
-	}
-	defer windows.CloseHandle(snap)
-	var out []string
-	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
-	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
-		if e.ProcessID == 0 {
-			continue
-		}
-		if p := processPath(e.ProcessID); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // System32 resolves a filename in the system directory, or returns "" on failure.
 func System32(name string) string {
 	dir, err := windows.GetSystemDirectory()
@@ -202,4 +181,60 @@ func ownWindow() windows.HWND {
 		return 0
 	}
 	return h
+}
+
+// ProcessPaths lists the executables of the running processes: full paths
+// where Windows allows it, else just the file name.
+func ProcessPaths() []string {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(snap)
+	var out []string
+	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		name := windows.UTF16ToString(e.ExeFile[:])
+		if e.ProcessID == 0 || name == "" {
+			continue
+		}
+		out = append(out, processPathOr(e.ProcessID, name))
+	}
+	return out
+}
+
+// processPathOr returns the executable path of a process, or name when
+// Windows doesn't allow reading it.
+func processPathOr(pid uint32, name string) string {
+	if p := processPath(pid); p != "" {
+		return p
+	}
+	return name
+}
+
+// ProcessAlive reports whether the process pid is still running.
+func ProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	var code uint32
+	return windows.GetExitCodeProcess(h, &code) == nil && code == 259 // STILL_ACTIVE
+}
+
+// DiskFree returns the bytes free for this user on the drive holding path.
+func DiskFree(path string) (uint64, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	var free, total, totalFree uint64
+	if err := windows.GetDiskFreeSpaceEx(p, &free, &total, &totalFree); err != nil {
+		return 0, err
+	}
+	return free, nil
 }

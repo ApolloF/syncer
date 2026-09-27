@@ -38,14 +38,20 @@ func TestBackgroundThread(t *testing.T) {
 }
 
 func TestProcessPaths(t *testing.T) {
-	self, err := os.Executable()
+	exe, err := os.Executable()
 	if err != nil {
-		t.Fatal(err)
+		t.Skip(err)
 	}
 	for _, p := range ProcessPaths() {
-		if strings.EqualFold(p, self) {
+		if strings.EqualFold(p, exe) {
 			return
 		}
 	}
-	t.Errorf("own process %s not listed", self)
+	t.Errorf("own process %s not listed", exe)
+}
+
+func TestDiskFree(t *testing.T) {
+	if n, err := DiskFree(os.TempDir()); err != nil || n == 0 {
+		t.Errorf("DiskFree = %d, %v", n, err)
+	}
 }

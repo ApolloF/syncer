@@ -35,8 +35,14 @@ func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string
 	autoAddMu.Lock()
 	defer autoAddMu.Unlock()
 	s := store.LoadSettings()
-	if !s.AutoAdd || s.SyncDisabled || s.Paused() {
+	if s.SyncDisabled || s.Paused() {
 		return nil, nil, nil
+	}
+	if !s.AutoAdd {
+		if added = autoAddMods(ctx, c, s); len(added) > 0 {
+			_, _ = meta.Reconcile(ctx, c)
+		}
+		return added, nil, nil
 	}
 	es, err := discover.Manifest(false)
 	if err != nil {
@@ -77,6 +83,7 @@ func autoAdd(ctx context.Context, c *syncthing.Client) (added, backedUp []string
 		added = append(added, g.Name)
 		logx.Printf("auto-added %s (%s) as %s", g.Name, g.Path, id)
 	}
+	added = append(added, autoAddMods(ctx, c, s)...)
 	if len(added) > 0 {
 		_, _ = meta.Reconcile(ctx, c)
 	}

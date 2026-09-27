@@ -83,6 +83,9 @@ func pullNewer(ctx context.Context, playing func() bool) (left map[string]newerS
 		if ctx.Err() != nil {
 			return left, took
 		}
+		if isMod(s, f.ID) {
+			continue
+		}
 		f.Exclude = s.Exclude[dismissKey(f.Path)]
 		n, in, ok := newerElsewhere(target, f, f.Exclude, time.Now())
 		if !ok {

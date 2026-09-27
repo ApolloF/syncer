@@ -54,6 +54,34 @@ type Settings struct {
 	// game switching between synced and backup-only), file patterns that are
 	// neither synced nor backed up on this PC.
 	Exclude map[string][]string `json:"exclude,omitempty"`
+
+	// Mods: FindMods lists mod managers' folders (Vortex) among the games
+	// found on this PC, to be synced by hand. AutoAddMods (experimental)
+	// syncs them without asking, up to ModsMaxGB (-1 = no limit).
+	// SyncDeployedMods (experimental) also offers the mods deployed in a
+	// game's own folder.
+	FindMods         bool `json:"findMods"`
+	AutoAddMods      bool `json:"autoAddMods"`
+	SyncDeployedMods bool `json:"syncDeployedMods"`
+	ModsMaxGB        int  `json:"modsMaxGB"`
+	// Mods are the synced (or backup-only) folders that are mod folders, by
+	// folder id: how they are described to other PCs.
+	Mods map[string]ModFolder `json:"mods,omitempty"`
+}
+
+// ModFolder is a mod manager's folder that Syncer syncs.
+type ModFolder struct {
+	Kind     string `json:"kind"`    // mods.Kind*
+	Manager  string `json:"manager"` // "vortex"
+	Game     string `json:"game"`    // the manager's game id
+	GameName string `json:"gameName"`
+	Root     string `json:"root"` // portable mod root, e.g. "vortex:skyrimse"
+	Rel      string `json:"rel"`
+	// Role of this PC for deployed mods: "source" (its deployment is sent
+	// to the other PCs) or "receiver".
+	Role string `json:"role,omitempty"`
+	// SizeGB is the size last published (Syncthing can't tell while paused).
+	SizeGB int `json:"sizeGB,omitempty"`
 }
 
 // Paused reports whether syncing and automatic backups are paused right now.
@@ -116,6 +144,30 @@ type State struct {
 	// BackgroundTask describes the background task as last registered, so it
 	// is only registered again when something about it changed.
 	BackgroundTask string `json:"backgroundTask,omitempty"`
+	// ModHeld are mod folders paused while their mod manager is open, to be
+	// resumed when it closes.
+	ModHeld []string `json:"modHeld,omitempty"`
+	// ModSync is the state of each deployed-mods folder (by id).
+	ModSync map[string]ModSyncState `json:"modSync,omitempty"`
+}
+
+// ModSyncState tracks updates of a deployed-mods folder.
+type ModSyncState struct {
+	Phase      string    `json:"phase"`                // idle | pending | applying | held
+	AppliedGen int64     `json:"appliedGen"`           // source inventory generation applied here
+	SourceGen  int64     `json:"sourceGen,omitempty"`  // source: generation published
+	SourceHash string    `json:"sourceHash,omitempty"` // source: what the published inventory was built from
+	Since      int64     `json:"since,omitempty"`      // source: when this PC became the source (unix ns)
+	Held       string    `json:"held,omitempty"`       // why it is held
+	HeldBy     string    `json:"heldBy,omitempty"`     // what held it: off, unreadable, handover, check, interrupted
+	LastAudit  time.Time `json:"lastAudit,omitzero"`
+	Started    time.Time `json:"started,omitzero"` // when the update being applied started
+	PID        int       `json:"pid,omitempty"`    // the process applying it
+	// Source is the PC a receiver takes updates from (its folder is shared
+	// with that PC only); Handover is another PC that claims to send them
+	// now, waiting for the user to agree.
+	Source   string `json:"source,omitempty"`
+	Handover string `json:"handover,omitempty"`
 }
 
 // Update is the newest Syncer release found on GitHub.
@@ -130,7 +182,7 @@ var mu sync.Mutex
 func defaults() Settings {
 	return Settings{Theme: "system", BackupEnabled: true, IntervalHours: 3, KeepDays: 30, AutoAdd: true, AutoAddMaxGB: 1,
 		PauseWhileGaming: true, Notify: true, NoBackup: map[string]bool{}, Ignored: map[string]bool{}, Dismissed: map[string]bool{},
-		BackupOnly: map[string]LocalFolder{}, Exclude: map[string][]string{}}
+		BackupOnly: map[string]LocalFolder{}, Exclude: map[string][]string{}, ModsMaxGB: 20, Mods: map[string]ModFolder{}}
 }
 
 // LoadSettings reads settings, falling back to defaults.
@@ -151,6 +203,15 @@ func LoadSettings() Settings {
 	}
 	if s.Exclude == nil {
 		s.Exclude = map[string][]string{}
+	}
+	if s.Mods == nil {
+		s.Mods = map[string]ModFolder{}
+	}
+	if s.ModsMaxGB == 0 || s.ModsMaxGB < -1 {
+		s.ModsMaxGB = 20
+	}
+	if !s.FindMods {
+		s.AutoAddMods, s.SyncDeployedMods = false, false
 	}
 	if s.IntervalHours <= 0 {
 		s.IntervalHours = 3
@@ -198,6 +259,9 @@ func UpdateState(fn func(*State)) {
 	fn(&st)
 	_ = SaveState(st)
 }
+
+// FileLock locks name across Syncer's processes until unlock is called.
+func FileLock(name string) (unlock func()) { return fileLock(name) }
 
 // fileLock also keeps the other Syncer process (the window and the background
 // task run separately) from updating the same file at the same time, which
