@@ -549,6 +549,7 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
 		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
 		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
+		s.NoCloudPull, s.NoHoldWhilePlaying = in.NoCloudPull, in.NoHoldWhilePlaying
 		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
 			s.AutoAddMaxGB = in.AutoAddMaxGB
 		}
