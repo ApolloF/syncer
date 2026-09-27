@@ -138,6 +138,7 @@ type ModSyncState struct {
 	Since      int64     `json:"since,omitempty"`      // source: when this PC became the source (unix ns)
 	Held       string    `json:"held,omitempty"`       // why it is held
 	LastAudit  time.Time `json:"lastAudit,omitzero"`
+	Started    time.Time `json:"started,omitzero"` // when the update being applied started
 }
 
 // Update is the newest Syncer release found on GitHub.

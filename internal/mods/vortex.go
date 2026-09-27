@@ -131,7 +131,7 @@ func (Vortex) Ignores(kind string) []string {
 	case KindStaging:
 		// The marker names this PC's Vortex install; manifests and backups
 		// are Vortex's bookkeeping for this PC's deployment.
-		return []string{"/" + stagingMarker, "(?d)*.vortex_backup", "vortex.deployment*.json", "(?d)desktop.ini", "(?d)Thumbs.db"}
+		return []string{"/" + stagingMarker, "(?d)*.vortex_backup", "vortex.deployment*", "(?d)desktop.ini", "(?d)Thumbs.db"}
 	case KindProfiles:
 		return []string{"(?d)*.bak", "(?d)desktop.ini"}
 	case KindDeployed:
@@ -311,9 +311,18 @@ func (Vortex) Resolve(root, rel string) (string, error) {
 	return p, nil
 }
 
-// GameDirFor finds a game's install folder on this PC when this PC's own
-// Vortex hasn't deployed it (a PC receiving deployed mods). Set by the app.
-var GameDirFor func(game string) string
+// GameDir is where game is installed on this PC ("" if it isn't found).
+func GameDir(game string) string {
+	if !validGameID(game) {
+		return ""
+	}
+	for _, m := range scanVortex().manifests {
+		if m.GameID == game {
+			return m.GameDir
+		}
+	}
+	return FindGameDir(game)
+}
 
 func resolveDeployed(vs vortexScan, game, rel string) (string, error) {
 	if !validRel(rel) {
@@ -326,8 +335,8 @@ func resolveDeployed(vs vortexScan, game, rel string) (string, error) {
 			break
 		}
 	}
-	if gd == "" && GameDirFor != nil {
-		gd = GameDirFor(game)
+	if gd == "" {
+		gd = FindGameDir(game) // a PC receiving deployed mods: its Vortex doesn't deploy them
 	}
 	if gd == "" || !filepath.IsAbs(gd) {
 		return "", ErrGameMissing

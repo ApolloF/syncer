@@ -22,9 +22,10 @@
     Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
-    LeaveToSteamCloud,
+    LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
+    ReleaseModHold, MakeModSource,
   } from '../../wailsjs/go/main/App'
-  import type { conflict, store } from '../../wailsjs/go/models'
+  import type { conflict, store, mods } from '../../wailsjs/go/models'
 
   let loading = $state(false)
   let scanning = $state(false)
@@ -63,6 +64,19 @@
   let adoptPath = $state('')
   let adoptRestore = $state(true)
   let adopting = $state(false)
+
+  // Deployed mods (experimental): apply an update, audits, rollback.
+  let applyFor = $state<main.FolderView | null>(null)
+  let preview = $state<main.ModPreview | null>(null)
+  let confirmDeletes = $state(false)
+  let applyBusy = $state(false)
+  let auditFor = $state<main.FolderView | null>(null)
+  let audits = $state<mods.AuditEntry[]>([])
+  let auditOpen = $state<Record<number, boolean>>({})
+  let auditBusy = $state(false)
+  let rollbackFor = $state<main.FolderView | null>(null)
+  let snapshots = $state<main.SnapshotView[]>([])
+  let rollbackBusy = $state('')
 
   let dropFor = $state<backup.Orphan | null>(null)
   let dropTyped = $state('')
@@ -220,6 +234,79 @@
     'mods': { text: 'Vortex mods', tip: "The mods Vortex installed for this game (its staging folder). On your other PCs they appear in Vortex, to be enabled and deployed there. Synced while Vortex is closed." },
     'mods-profiles': { text: 'Vortex load order', tip: "Vortex's profiles for this game: plugin lists and load orders. Each PC keeps its own game settings (.ini files)." },
     'mods-deployed': { text: 'Deployed mods', tip: "The mod files Vortex deployed into the game's folder, for other PCs to play with right away. Experimental: one PC sends, the others apply checked updates." },
+  }
+
+  async function openApply(f: main.FolderView) {
+    applyFor = f
+    preview = null
+    confirmDeletes = false
+    try { preview = await ModUpdatePreview(f.id) } catch (e) { fail(e); applyFor = null }
+  }
+
+  // Ready once every check passes; "Removals confirmed" is the checkbox.
+  const applyReady = $derived(!!preview && preview.checks.every(c => c.ok || c.warn || (c.name === 'Removals confirmed' && confirmDeletes)))
+
+  async function doApply() {
+    if (!applyFor) return
+    applyBusy = true
+    const ok = await attempt(() => ApplyModUpdate(applyFor!.id, confirmDeletes), 'Applying the update…')
+    applyBusy = false
+    if (ok) { applyFor = null; load() }
+  }
+
+  async function openAudit(f: main.FolderView) {
+    auditFor = f
+    auditOpen = {}
+    audits = (await ModAudit(f.id).catch(() => [])) ?? []
+  }
+
+  async function runAudit() {
+    if (!auditFor) return
+    auditBusy = true
+    try {
+      const e = await RunModAudit(auditFor.id)
+      toast(e.ok ? 'Everything checks out' : 'Some checks failed', e.ok ? 'ok' : 'err')
+      audits = (await ModAudit(auditFor.id)) ?? []
+      auditOpen = { 0: true }
+    } catch (e) { fail(e) }
+    auditBusy = false
+  }
+
+  async function releaseHold() {
+    if (!auditFor) return
+    if (await attempt(() => ReleaseModHold(auditFor!.id), 'Updates can be applied again')) { auditFor = null; load() }
+  }
+
+  async function makeSource() {
+    if (!auditFor) return
+    if (await attempt(() => MakeModSource(auditFor!.id), 'This PC sends these mods now')) { auditFor = null; load() }
+  }
+
+  async function openRollback(f: main.FolderView) {
+    rollbackFor = f
+    snapshots = (await ModSnapshots(f.id).catch(() => [])) ?? []
+  }
+
+  async function doRollback(stamp: string) {
+    if (!rollbackFor) return
+    rollbackBusy = stamp
+    const ok = await attempt(() => RollbackMods(rollbackFor!.id, stamp), 'Rolled back')
+    rollbackBusy = ''
+    if (ok) { rollbackFor = null; load() }
+  }
+
+  function modPhase(f: main.FolderView): { kind: string; text: string } {
+    if (f.modRole === 'source') {
+      if (f.modPhase === 'held') return { kind: 'err', text: 'On hold' }
+      if (f.modPhase === 'busy') return { kind: 'accent', text: 'Vortex or game open' }
+      return { kind: 'ok', text: 'Sending' }
+    }
+    switch (f.modPhase) {
+      case 'pending': return { kind: 'accent', text: 'Update waiting' }
+      case 'applying': return { kind: 'accent', text: 'Applying…' }
+      case 'held': return { kind: 'err', text: 'On hold' }
+      default: return { kind: 'ok', text: 'Up to date' }
+    }
   }
 
   async function addBackupOnly(name: string, path: string) {
@@ -500,8 +587,8 @@
 {/snippet}
 
 {#snippet deployedLine(f: main.FolderView)}
-  <div class="detail faint ellipsis">
-    {f.modRole === 'source' ? 'Sent from this PC' : 'Received from another PC'}{f.modHeld ? ` · Held: ${f.modHeld}` : ''}
+  <div class="detail faint ellipsis" title={f.modHeld}>
+    {f.modRole === 'source' ? 'Sent from this PC' : 'Received'}{f.modPending ? ` · ${f.modPending}` : ''}{f.modHeld ? ` · On hold: ${f.modHeld}` : ''}
   </div>
 {/snippet}
 
@@ -538,11 +625,19 @@
     {#if f.copyOf}<span class="pill" title={copyTip(f.copyOf, false)}>Copy of {f.copyOf}</span>{/if}
     {@render driveCopy(f.oneDriveCopy, f.oneDriveCopyNewer)}
     {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
-    {#if f.sync}<span class="pill {s.kind}">{s.text}</span>
+    {#if f.sync && f.kind === 'mods-deployed'}{@const m = modPhase(f)}<span class="pill {m.kind}">{m.text}</span>
+    {:else if f.sync}<span class="pill {s.kind}">{s.text}</span>
     {:else if !f.exists}<span class="pill" title="The save folder isn't on this PC. Restore it from the backup to bring it back.">Not on this PC</span>
     {:else if f.backup}<span class="pill">Backup only</span>
     {:else}<span class="pill" title="Neither synced nor backed up. Turn either toggle back on to include it again.">Off</span>{/if}
+    {#if f.sync && f.kind === 'mods-deployed' && f.modRole !== 'source' && (f.modPhase === 'pending' || f.modPhase === 'held')}
+      <button class="btn sm primary" onclick={() => openApply(f)}>Apply…</button>
+    {/if}
     <div class="acts">
+      {#if f.kind === 'mods-deployed'}
+        <button class="btn ghost icon sm" title="Audit: what each update did, and check it now" onclick={() => openAudit(f)}><Icon name="check" size={16} /></button>
+        {#if f.modRole !== 'source'}<button class="btn ghost icon sm" title="Roll back an update" onclick={() => openRollback(f)}><Icon name="undo" size={16} /></button>{/if}
+      {/if}
       <button class="btn ghost icon sm" title="Open folder" disabled={!f.exists} onclick={() => OpenPath(f.path)}><Icon name="folder" size={16} /></button>
       <button class="btn ghost icon sm" class:set={f.exclude?.length}
         title={f.exclude?.length ? `Skipped files: ${f.exclude.join(', ')}` : 'Skip files (logs, screenshots, …)'}
@@ -981,7 +1076,97 @@
   </Modal>
 {/if}
 
+{#if applyFor}
+  <Modal title="Update mods of {applyFor.label}?" onclose={() => { if (!applyBusy) applyFor = null }}>
+    {#if !preview}
+      <p class="faint"><Icon name="refresh" size={14} class="spin" /> Checking…</p>
+    {:else}
+      <p>Version {preview.gen} from {preview.from}: <b>{preview.added}</b> new, <b>{preview.changed}</b> changed and <b>{preview.removed}</b> removed files
+        ({bytes(preview.bytes)} to download){preview.same ? `; ${preview.same} already here` : ''}.
+        {#if preview.pluginLists?.length}The load order ({preview.pluginLists.join(', ')}) is updated too.{/if}</p>
+      <p class="faint small">Syncer first saves a copy of every file it replaces or removes, so you can roll back. Only these mod files change; the game's own files are checked before and after.</p>
+      <ul class="checks">
+        {#each preview.checks.filter(c => c.name !== 'Removals confirmed') as c}
+          <li class:bad={!c.ok && !c.warn}><Icon name={c.ok ? 'check' : 'alert'} size={14} /> {c.name}{#if c.detail && !c.ok} <span class="faint">({c.detail})</span>{/if}</li>
+        {/each}
+      </ul>
+      {#if preview.needConfirm}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirmDeletes} />
+          This update removes {preview.removed} files{preview.removedPlugins?.length ? `, including the plugins ${preview.removedPlugins.join(', ')}` : ''}. Remove them.</label>
+      {/if}
+    {/if}
+    {#snippet actions()}
+      <button class="btn" disabled={applyBusy} onclick={() => (applyFor = null)}>Cancel</button>
+      <button class="btn primary" disabled={!applyReady || applyBusy} onclick={doApply}>
+        {#if applyBusy}<Icon name="refresh" size={15} class="spin" />{/if} Apply update
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if auditFor}
+  <Modal title="Audit: {auditFor.label}" onclose={() => (auditFor = null)}>
+    {#if auditFor.modHeld}<p class="err small">On hold: {auditFor.modHeld}</p>{/if}
+    <div class="audits">
+      {#each audits as e, i}
+        <button class="audit" onclick={() => (auditOpen[i] = !auditOpen[i])}>
+          <span class="pill {e.ok ? 'ok' : 'err'}">{e.ok ? 'OK' : 'Failed'}</span>
+          <span class="grow ellipsis">{e.summary || e.phase}</span>
+          <span class="faint small">{ago(e.at)}</span>
+        </button>
+        {#if auditOpen[i]}
+          <ul class="checks">
+            {#each e.checks as c}
+              <li class:bad={!c.ok && !c.warn}><Icon name={c.ok ? 'check' : 'alert'} size={14} /> {c.name}{#if c.detail} <span class="faint">({c.detail})</span>{/if}</li>
+            {/each}
+          </ul>
+        {/if}
+      {:else}
+        <p class="faint">Nothing yet.</p>
+      {/each}
+    </div>
+    {#snippet actions()}
+      {#if auditFor?.modRole !== 'source'}<button class="btn ghost" onclick={makeSource} title="Only where Vortex deploys this game">Send from this PC instead</button>{/if}
+      {#if auditFor?.modPhase === 'held'}<button class="btn" onclick={releaseHold}>Allow updates again</button>{/if}
+      <button class="btn primary" disabled={auditBusy} onclick={runAudit}>
+        {#if auditBusy}<Icon name="refresh" size={15} class="spin" />{/if} Check now
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if rollbackFor}
+  <Modal title="Roll back {rollbackFor.label}" onclose={() => { if (!rollbackBusy) rollbackFor = null }}>
+    <p>Put the game folder back the way it was before an update: the files it replaced come back and the files it added go. Close Vortex and the game first.</p>
+    <div class="audits">
+      {#each snapshots as sn (sn.stamp)}
+        <div class="audit">
+          <span class="grow">Before the update of {new Date(sn.created).toLocaleString()}
+            <span class="faint small">· {sn.files} saved, {sn.added} added · {bytes(sn.bytes)}</span></span>
+          <button class="btn sm" disabled={!!rollbackBusy} onclick={() => doRollback(sn.stamp)}>
+            {#if rollbackBusy === sn.stamp}<Icon name="refresh" size={14} class="spin" />{/if} Roll back
+          </button>
+        </div>
+      {:else}
+        <p class="faint">No snapshots: no update was applied on this PC yet.</p>
+      {/each}
+    </div>
+    {#snippet actions()}
+      <button class="btn" disabled={!!rollbackBusy} onclick={() => (rollbackFor = null)}>Close</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
+  .checks { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .checks li { display: flex; align-items: baseline; gap: 6px; color: var(--ok, inherit); }
+  .checks li.bad { color: var(--err); }
+  .audits { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; }
+  .audit { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; border: 0; background: transparent;
+    font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .audit:hover { background: var(--hover); }
+  .warnbox { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
+  .err { color: var(--err); }
   .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
   .notes li + li { margin-top: 6px; }
   .bar { gap: 12px; }

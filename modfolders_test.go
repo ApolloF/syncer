@@ -66,7 +66,7 @@ func TestHoldable(t *testing.T) {
 
 func TestModIgnores(t *testing.T) {
 	got := withSyncIgnores(mods.KindStaging, []string{"*.log"})
-	for _, want := range []string{"steam_autocloud.vdf", "/" + mods.StagingMarker, "vortex.deployment*.json", "*.log"} {
+	for _, want := range []string{"steam_autocloud.vdf", "/" + mods.StagingMarker, "vortex.deployment*", "*.log"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("staging ignores %v lack %q", got, want)
 		}

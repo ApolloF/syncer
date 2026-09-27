@@ -26,6 +26,10 @@ export function AdoptBackup(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AdoptBackup'](arg1, arg2, arg3, arg4);
 }
 
+export function ApplyModUpdate(arg1, arg2) {
+  return window['go']['main']['App']['ApplyModUpdate'](arg1, arg2);
+}
+
 export function Available() {
   return window['go']['main']['App']['Available']();
 }
@@ -82,8 +86,24 @@ export function Log() {
   return window['go']['main']['App']['Log']();
 }
 
+export function MakeModSource(arg1) {
+  return window['go']['main']['App']['MakeModSource'](arg1);
+}
+
 export function ManifestUpdated() {
   return window['go']['main']['App']['ManifestUpdated']();
+}
+
+export function ModAudit(arg1) {
+  return window['go']['main']['App']['ModAudit'](arg1);
+}
+
+export function ModSnapshots(arg1) {
+  return window['go']['main']['App']['ModSnapshots'](arg1);
+}
+
+export function ModUpdatePreview(arg1) {
+  return window['go']['main']['App']['ModUpdatePreview'](arg1);
 }
 
 export function OpenBackupFolder() {
@@ -126,6 +146,10 @@ export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
 }
 
+export function ReleaseModHold(arg1) {
+  return window['go']['main']['App']['ReleaseModHold'](arg1);
+}
+
 export function RemoveDevice(arg1) {
   return window['go']['main']['App']['RemoveDevice'](arg1);
 }
@@ -152,6 +176,14 @@ export function RestorePoints(arg1) {
 
 export function Resume() {
   return window['go']['main']['App']['Resume']();
+}
+
+export function RollbackMods(arg1, arg2) {
+  return window['go']['main']['App']['RollbackMods'](arg1, arg2);
+}
+
+export function RunModAudit(arg1) {
+  return window['go']['main']['App']['RunModAudit'](arg1);
 }
 
 export function SaveSettings(arg1) {

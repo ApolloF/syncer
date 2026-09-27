@@ -372,8 +372,9 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 	if err != nil {
 		return false
 	}
-	busy := mods.ManagerRunning(processPaths())
-	changed := false
+	procs := processPaths()
+	changed := deployedTick(ctx, c, s, fs, procs)
+	busy := mods.ManagerRunning(procs)
 	if busy {
 		var now []string
 		for _, f := range fs {

@@ -282,6 +282,9 @@ type FolderStatus struct {
 	NeedFiles   int    `json:"needFiles"`
 	Errors      int    `json:"errors"`
 	PullErrors  int    `json:"pullErrors"`
+	// ReceiveOnlyTotalItems are files changed locally in a receive-only
+	// folder (they'd be put back by Revert).
+	ReceiveOnlyTotalItems int `json:"receiveOnlyTotalItems"`
 }
 
 type Completion struct {
@@ -408,6 +411,12 @@ func (c *Client) Rescan(ctx context.Context, id string) error {
 		p += "?folder=" + url.QueryEscape(id)
 	}
 	return c.do(ctx, http.MethodPost, p, nil, nil)
+}
+
+// Revert undoes local changes in a receive-only folder: files changed or
+// added here are replaced by (or deleted in favour of) the other devices'.
+func (c *Client) Revert(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/rest/db/revert?folder="+url.QueryEscape(id), nil, nil)
 }
 
 // Events long-polls for events after since. Blocks up to ~60s.

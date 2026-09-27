@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -550,6 +549,7 @@ func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (str
 	}
 	keepHistory(a.ctx, s, f.ID, bid)
 	_ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
+	dropModState(ctx, c, f.ID)
 	_, _ = meta.Reconcile(ctx, c)
 	if s.NoBackup[bid] {
 		logx.Printf("stopped syncing %s; it isn't backed up either", label)
@@ -658,10 +658,7 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		delete(s.NoBackup, id)
 		delete(s.Mods, id)
 	})
-	store.UpdateState(func(st *store.State) {
-		delete(st.ModSync, id)
-		st.ModHeld = slices.DeleteFunc(st.ModHeld, func(h string) bool { return h == id })
-	})
+	dropModState(ctx, c, id)
 	_, _ = meta.Reconcile(ctx, c)
 	if unlock != nil && paths.ValidID(id) {
 		if err := backup.Forget(target, id, deleteBackup); err != nil {

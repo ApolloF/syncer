@@ -803,3 +803,73 @@ func ForgetCache() error {
 	}
 	return nil
 }
+
+// ---- deployed-mods inventories -----------------------------------------------
+
+// A PC sending deployed mods publishes each folder's inventory next to its
+// folder list, as <device>.modinv (not .json: those are folder lists).
+
+const maxInventoryFile = 64 << 20
+
+func inventoryFile(device string) string { return filepath.Join(Dir(), device+".modinv") }
+
+// WriteModInventories publishes this PC's inventories (by folder id); none
+// removes the file.
+func WriteModInventories(me string, invs map[string]mods.Inventory) error {
+	if len(invs) == 0 {
+		if err := os.Remove(inventoryFile(me)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return store.WriteJSON(inventoryFile(me), invs)
+}
+
+// ModInventories reads the inventories a PC published (by folder id). They
+// come from another PC and are checked before they are returned.
+func ModInventories(device string) map[string]mods.Inventory {
+	p := inventoryFile(device)
+	if fi, err := os.Stat(p); err != nil || fi.Size() > maxInventoryFile {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var m map[string]mods.Inventory
+	if json.Unmarshal(b, &m) != nil {
+		return nil
+	}
+	for id, inv := range m {
+		if !paths.ValidID(id) || inv.Folder != id || inv.Valid() != nil {
+			delete(m, id)
+		}
+	}
+	return m
+}
+
+// Source is the PC currently sending a deployed-mods folder: the one with
+// the newest claim among all PCs' folder lists (this PC's own included).
+type Source struct {
+	Device string
+	Name   string
+	Since  int64
+	Folder SharedFolder
+}
+
+// ModSource finds who sends the deployed-mods folder id (ok false: no one).
+func ModSource(id string) (Source, bool) {
+	var best Source
+	found := false
+	for _, df := range readDeviceFiles() {
+		for _, sf := range df.Folders {
+			if sf.ID != id || sf.Kind != mods.KindDeployed || sf.Source != df.Device {
+				continue
+			}
+			if !found || sf.SourceSince > best.Since {
+				best, found = Source{Device: df.Device, Name: df.Name, Since: sf.SourceSince, Folder: sf}, true
+			}
+		}
+	}
+	return best, found
+}

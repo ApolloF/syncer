@@ -463,6 +463,64 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ModPreview {
+	    id: string;
+	    label: string;
+	    from: string;
+	    gen: number;
+	    appliedGen: number;
+	    added: number;
+	    changed: number;
+	    removed: number;
+	    same: number;
+	    bytes: number;
+	    removedPlugins: string[];
+	    pluginLists: string[];
+	    needConfirm: boolean;
+	    checks: mods.Check[];
+	    ready: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.from = source["from"];
+	        this.gen = source["gen"];
+	        this.appliedGen = source["appliedGen"];
+	        this.added = source["added"];
+	        this.changed = source["changed"];
+	        this.removed = source["removed"];
+	        this.same = source["same"];
+	        this.bytes = source["bytes"];
+	        this.removedPlugins = source["removedPlugins"];
+	        this.pluginLists = source["pluginLists"];
+	        this.needConfirm = source["needConfirm"];
+	        this.checks = this.convertValues(source["checks"], mods.Check);
+	        this.ready = source["ready"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class NewFolder {
 	    label: string;
 	    path: string;
@@ -576,6 +634,47 @@ export namespace main {
 		}
 	}
 	
+	export class SnapshotView {
+	    stamp: string;
+	    // Go type: time
+	    created: any;
+	    gen: number;
+	    files: number;
+	    added: number;
+	    bytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SnapshotView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stamp = source["stamp"];
+	        this.created = this.convertValues(source["created"], null);
+	        this.gen = source["gen"];
+	        this.files = source["files"];
+	        this.added = source["added"];
+	        this.bytes = source["bytes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class UndoOptions {
 	    unpair: boolean;
@@ -612,6 +711,74 @@ export namespace main {
 	        this.devices = source["devices"];
 	        this.notes = source["notes"];
 	    }
+	}
+
+}
+
+export namespace mods {
+	
+	export class Check {
+	    name: string;
+	    ok: boolean;
+	    warn?: boolean;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Check(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.ok = source["ok"];
+	        this.warn = source["warn"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class AuditEntry {
+	    // Go type: time
+	    at: any;
+	    folder: string;
+	    label: string;
+	    phase: string;
+	    gen: number;
+	    ok: boolean;
+	    summary: string;
+	    checks: Check[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AuditEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at = this.convertValues(source["at"], null);
+	        this.folder = source["folder"];
+	        this.label = source["label"];
+	        this.phase = source["phase"];
+	        this.gen = source["gen"];
+	        this.ok = source["ok"];
+	        this.summary = source["summary"];
+	        this.checks = this.convertValues(source["checks"], Check);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
