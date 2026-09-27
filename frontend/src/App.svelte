@@ -1,23 +1,41 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
   import Icon from './lib/Icon.svelte'
-  import { ui, init, applyTheme, type View } from './lib/state.svelte'
+  import { ui, init, applyTheme, attempt, refresh, type View } from './lib/state.svelte'
+  import { SwitchAccount } from '../wailsjs/go/main/App'
   import { pausedUntil } from './lib/fmt'
   import Overview from './views/Overview.svelte'
   import Games from './views/Games.svelte'
   import Devices from './views/Devices.svelte'
   import Backup from './views/Backup.svelte'
   import Settings from './views/Settings.svelte'
+  import Accounts from './views/Accounts.svelte'
 
   init()
 
-  const nav: { id: View; label: string; icon: string }[] = [
+  const nav = $derived<{ id: View; label: string; icon: string }[]>([
     { id: 'overview', label: 'Overview', icon: 'home' },
     { id: 'games', label: 'Games', icon: 'games' },
+    ...(ui.overview?.settings.accounts ? [{ id: 'accounts' as View, label: 'Accounts', icon: 'users' }] : []),
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'backup', label: 'Backup', icon: 'cloud' },
     { id: 'settings', label: 'Settings', icon: 'settings' },
-  ]
+  ])
+
+  // Who is playing on this PC (with accounts on).
+  const accts = $derived(ui.accounts)
+  const me = $derived(accts?.accounts?.find(a => a.id === accts.active))
+  let picker = $state(false)
+  let switching = $state(false)
+  async function switchTo(id: string) {
+    picker = false
+    if (id === accts?.active) return
+    switching = true
+    const name = accts?.accounts?.find(a => a.id === id)?.name
+    await attempt(() => SwitchAccount(id), `${name} is playing on this PC`)
+    switching = false
+    refresh()
+  }
 
   $effect(() => applyTheme(ui.overview?.settings.theme ?? 'system'))
 
@@ -32,6 +50,10 @@
     return { kind: 'ok', text: 'All synced' }
   })
 </script>
+
+<svelte:window
+  onkeydown={(e) => { if (e.key === 'Escape') picker = false }}
+  onclick={(e) => { if (picker && !(e.target as Element).closest?.('.who')) picker = false }} />
 
 <div class="shell">
   <aside>
@@ -48,6 +70,26 @@
         </button>
       {/each}
     </nav>
+    {#if accts && accts.accounts?.length}
+      <div class="who">
+        <button class="nav" title="Who's playing on this PC" disabled={switching} aria-haspopup="menu" aria-expanded={picker}
+          onclick={() => (picker = !picker)}>
+          <span class="adot" style="background:{me?.color || 'var(--muted)'}"></span>
+          <span class="grow ellipsis">{switching ? 'Switching…' : me?.name ?? 'Choose account'}</span>
+          <Icon name="chevron" size={14} />
+        </button>
+        {#if picker}
+          <div class="menu card" role="menu" transition:fly={{ y: 6, duration: 120 }}>
+            {#each accts.accounts as a (a.id)}
+              <button class="nav" role="menuitemradio" aria-checked={a.id === accts.active} class:active={a.id === accts.active} onclick={() => switchTo(a.id)}>
+                <span class="adot" style="background:{a.color || 'var(--muted)'}"></span><span class="grow">{a.name}</span>
+              </button>
+            {/each}
+            <button class="nav" onclick={() => { picker = false; ui.view = 'accounts' }}><Icon name="users" size={14} /><span class="grow">Manage…</span></button>
+          </div>
+        {/if}
+      </div>
+    {/if}
     <div class="status">
       <span class="dot {health.kind}"></span>
       <span class="muted">{health.text}</span>
@@ -61,6 +103,7 @@
         {:else if ui.view === 'games'}<Games />
         {:else if ui.view === 'devices'}<Devices />
         {:else if ui.view === 'backup'}<Backup />
+        {:else if ui.view === 'accounts'}<Accounts />
         {:else}<Settings />{/if}
       </div>
     {/key}
@@ -104,6 +147,11 @@
     min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px;
     display: grid; place-items: center; background: var(--accent); color: var(--accent-text);
   }
+  .who { margin-top: auto; position: relative; }
+  .who > .nav { width: 100%; }
+  .adot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .menu { position: absolute; bottom: 40px; left: 0; right: 0; padding: 4px; display: flex; flex-direction: column; gap: 2px; z-index: 40; }
+  .who + .status { margin-top: 0; }
   .status { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; }
 
   main {

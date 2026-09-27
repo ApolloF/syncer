@@ -145,7 +145,23 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 			fs = append(fs, f)
 		}
 	}
-	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause})
+	// Listed again once the backup holds its lock: switching account moves
+	// folders, and a list from before could back one account's saves up as
+	// another's.
+	relist := func() []backup.Folder {
+		all, err := backupFolders()
+		if err != nil && len(all) == 0 {
+			return fs
+		}
+		var out []backup.Folder
+		for _, f := range all {
+			if !s.NoBackup[f.ID] {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+	res, err := backup.Run(ctx, fs, backup.Options{Target: target, KeepDays: s.KeepDays, OnProg: onProg, Pause: pause, List: relist})
 	if err != nil {
 		if !errors.Is(err, backup.ErrBusy) {
 			record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Target: target, Errors: []string{err.Error()}})

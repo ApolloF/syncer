@@ -177,3 +177,32 @@ func ownWindow() windows.HWND {
 	}
 	return h
 }
+
+// ProcessPaths returns the executable paths of the running processes this
+// user can see (processes it can't open are left out).
+func ProcessPaths() []string {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(snap)
+	var out []string
+	var e windows.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		if e.ProcessID == 0 || e.ProcessID == uint32(os.Getpid()) {
+			continue
+		}
+		h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, e.ProcessID)
+		if err != nil {
+			continue
+		}
+		n := uint32(len(buf))
+		if windows.QueryFullProcessImageName(h, 0, &buf[0], &n) == nil {
+			out = append(out, windows.UTF16ToString(buf[:n]))
+		}
+		windows.CloseHandle(h)
+	}
+	return out
+}

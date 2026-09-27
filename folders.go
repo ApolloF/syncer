@@ -14,6 +14,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
@@ -57,6 +58,12 @@ type FolderView struct {
 	CopyOf            string `json:"copyOf"`            // a Steam emulator's copy of this game's own saves
 	OneDriveCopy      string `json:"oneDriveCopy"`      // another copy on the other side of OneDrive
 	OneDriveCopyNewer bool   `json:"oneDriveCopyNewer"` // … with newer saves than this one
+
+	// A game split per account: these are Account's saves (the account
+	// playing on this PC); Game is the game's shared id.
+	Split   bool   `json:"split"`
+	Account string `json:"account"`
+	Game    string `json:"game"`
 }
 
 // Folders lists synced folders plus this PC's backup-only ones. Backup-only
@@ -82,9 +89,19 @@ func (a *App) Folders() ([]FolderView, error) {
 			}
 			conflicts := a.conflictCounts(bf)
 			inside := nestedIn(bf)
+			ast := accounts.Load()
 			for _, f := range fs {
 				if f.ID != meta.FolderID {
+					if _, _, ok := accounts.ParseFolderID(f.ID); ok && accounts.InVault(f.Path) {
+						continue // another account's saves, waiting in the vault (see Accounts)
+					}
 					v := a.syncedView(ctx, c, f, s, installed)
+					if g, acc, ok := accounts.ParseFolderID(f.ID); ok {
+						v.Split, v.Account, v.Game = true, acc, g
+						if r, ok := ast.Split(g); ok {
+							v.Label = r.Label
+						}
+					}
 					v.Conflicts = conflicts[f.ID]
 					v.Inside = inside[f.ID]
 					out = append(out, v)
@@ -497,6 +514,9 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		return err
 	}
 
+	if err := splitGuard(id); err != nil {
+		return err
+	}
 	if _, err := a.stopSync(ctx, c, id); err != nil {
 		return err
 	}
@@ -581,6 +601,9 @@ func findFolder(ctx context.Context, c *syncthing.Client, id string) (syncthing.
 // backing it up and removes Syncthing's marker files. Save files are never
 // deleted; with deleteBackup its Drive backup and history go too.
 func (a *App) RemoveFolder(id string, deleteBackup bool) error {
+	if err := splitGuard(id); err != nil {
+		return err
+	}
 	if lf, ok := store.LoadSettings().BackupOnly[id]; ok {
 		if err := forgetBackup(id, deleteBackup); err != nil {
 			return err
@@ -613,7 +636,13 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		return err
 	}
 	if err == nil {
-		defer unlock()
+		defer func() {
+			if unlock != nil {
+				unlock()
+			}
+		}()
+	} else {
+		unlock = nil
 	}
 	target, ok := backupTarget(store.LoadSettings())
 	if deleteBackup && !ok {
@@ -628,13 +657,19 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		s.Dismissed[dismissKey(f.Path)] = true
 		delete(s.NoBackup, id)
 	})
-	_, _ = meta.Reconcile(ctx, c)
 	if unlock != nil && paths.ValidID(id) {
-		if err := backup.Forget(target, id, deleteBackup); err != nil {
+		err := backup.Forget(target, id, deleteBackup)
+		unlock()
+		unlock = nil
+		if err != nil {
+			_, _ = meta.Reconcile(ctx, c)
 			runtime.EventsEmit(a.ctx, "changed")
 			return fmt.Errorf("stopped syncing, but the backup wasn't deleted: %w", err)
 		}
 	}
+	// Not while holding the backup lock: reconciling may carry out another
+	// PC's split, which needs that lock.
+	_, _ = meta.Reconcile(ctx, c)
 	logx.Printf("removed %s (backup deleted: %v)", cmpOr(f.Label, id), deleteBackup)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
@@ -725,7 +760,7 @@ func (a *App) LeaveToSteamCloud() (int, error) {
 	n := 0
 	var firstErr error
 	for _, f := range fs {
-		if f.ID == meta.FolderID || !discover.Classify(cmpOr(f.Label, f.ID), f.Path).SteamCloud {
+		if f.ID == meta.FolderID || splitGuard(f.ID) != nil || !discover.Classify(cmpOr(f.Label, f.ID), f.Path).SteamCloud {
 			continue
 		}
 		if _, err := a.stopSync(ctx, c, f.ID); err != nil {
@@ -817,7 +852,7 @@ func (a *App) RemoveUninstalled() (int, error) {
 	for _, f := range fs {
 		// Not converted to backup-only: the PCs that have the game installed
 		// keep backing these saves up into the same Drive folder.
-		if f.ID == meta.FolderID || inst.Has(cmpOr(f.Label, f.ID)) {
+		if f.ID == meta.FolderID || splitGuard(f.ID) != nil || inst.Has(cmpOr(f.Label, f.ID)) {
 			continue
 		}
 		if err := c.RemoveFolder(ctx, f.ID); err != nil {

@@ -1,3 +1,50 @@
+export namespace accounts {
+	
+	export class Account {
+	    id: string;
+	    name: string;
+	    color?: string;
+	    // Go type: time
+	    created: any;
+	    // Go type: time
+	    updated: any;
+	    deleted?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Account(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.color = source["color"];
+	        this.created = this.convertValues(source["created"], null);
+	        this.updated = this.convertValues(source["updated"], null);
+	        this.deleted = source["deleted"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace backup {
 	
 	export class DriveAccount {
@@ -158,6 +205,224 @@ export namespace conflict {
 
 export namespace main {
 	
+	export class SaveFile {
+	    rel: string;
+	    size: number;
+	    // Go type: time
+	    modified: any;
+	    owner?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SaveFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rel = source["rel"];
+	        this.size = source["size"];
+	        this.modified = this.convertValues(source["modified"], null);
+	        this.owner = source["owner"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SplitSave {
+	    game: string;
+	    folderID: string;
+	    label: string;
+	    path: string;
+	    here: boolean;
+	    synced: boolean;
+	    files: SaveFile[];
+	    more: number;
+	    bytes: number;
+	    conflicts: number;
+	    // Go type: time
+	    modified: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new SplitSave(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.game = source["game"];
+	        this.folderID = source["folderID"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	        this.here = source["here"];
+	        this.synced = source["synced"];
+	        this.files = this.convertValues(source["files"], SaveFile);
+	        this.more = source["more"];
+	        this.bytes = source["bytes"];
+	        this.conflicts = source["conflicts"];
+	        this.modified = this.convertValues(source["modified"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AccountView {
+	    id: string;
+	    name: string;
+	    color?: string;
+	    // Go type: time
+	    created: any;
+	    // Go type: time
+	    updated: any;
+	    deleted?: boolean;
+	    active: boolean;
+	    games: SplitSave[];
+	    pcs: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AccountView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.color = source["color"];
+	        this.created = this.convertValues(source["created"], null);
+	        this.updated = this.convertValues(source["updated"], null);
+	        this.deleted = source["deleted"];
+	        this.active = source["active"];
+	        this.games = this.convertValues(source["games"], SplitSave);
+	        this.pcs = source["pcs"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PendingChange {
+	    game: string;
+	    label: string;
+	    kind: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PendingChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.game = source["game"];
+	        this.label = source["label"];
+	        this.kind = source["kind"];
+	        this.error = source["error"];
+	    }
+	}
+	export class SplitView {
+	    game: string;
+	    label: string;
+	    accounts: string[];
+	    here: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SplitView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.game = source["game"];
+	        this.label = source["label"];
+	        this.accounts = source["accounts"];
+	        this.here = source["here"];
+	    }
+	}
+	export class AccountsView {
+	    enabled: boolean;
+	    active: string;
+	    accounts: AccountView[];
+	    splits: SplitView[];
+	    waiting: string[];
+	    op: string;
+	    opLabel: string;
+	    opError: string;
+	    pending: PendingChange[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AccountsView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.active = source["active"];
+	        this.accounts = this.convertValues(source["accounts"], AccountView);
+	        this.splits = this.convertValues(source["splits"], SplitView);
+	        this.waiting = source["waiting"];
+	        this.op = source["op"];
+	        this.opLabel = source["opLabel"];
+	        this.opError = source["opError"];
+	        this.pending = this.convertValues(source["pending"], PendingChange);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AvailableView {
 	    id: string;
 	    label: string;
@@ -190,6 +455,22 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.added = source["added"];
 	        this.skipped = source["skipped"];
+	    }
+	}
+	export class ConflictOwner {
+	    copy: string;
+	    current: string;
+	    other: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConflictOwner(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.copy = source["copy"];
+	        this.current = source["current"];
+	        this.other = source["other"];
 	    }
 	}
 	export class DeviceView {
@@ -320,6 +601,9 @@ export namespace main {
 	    copyOf: string;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
+	    split: boolean;
+	    account: string;
+	    game: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderView(source);
@@ -354,6 +638,9 @@ export namespace main {
 	        this.copyOf = source["copyOf"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
+	        this.split = source["split"];
+	        this.account = source["account"];
+	        this.game = source["game"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -553,6 +840,10 @@ export namespace main {
 	}
 	
 	
+	
+	
+	
+	
 	export class UndoOptions {
 	    unpair: boolean;
 	    stopBackups: boolean;
@@ -687,6 +978,7 @@ export namespace store {
 	    notify: boolean;
 	    noUpdateCheck: boolean;
 	    exclude?: Record<string, Array<string>>;
+	    accounts?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -717,6 +1009,7 @@ export namespace store {
 	        this.notify = source["notify"];
 	        this.noUpdateCheck = source["noUpdateCheck"];
 	        this.exclude = source["exclude"];
+	        this.accounts = source["accounts"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

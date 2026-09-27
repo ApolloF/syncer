@@ -38,12 +38,15 @@ Errors use the standard codes (`-32700` parse error, `-32600` invalid request, `
 | `open` | – | `true` (shows the Syncer window, starting it if needed) |
 | `registerGames` | `{games: [{title, dir?, steamAppId?, gogId?}]}` (at most 20,000) | `{games: n}` |
 | `subscribe` | – | `true`, then `changed` notifications on this connection |
+| `accounts` | – | `{enabled, active?, accounts: [{id, name, color?, active}], split: [{game, label, accounts}]}` |
+| `switchAccount` | `{id}` | `true` once that account's saves are in place on this PC |
 
-**Folder:** `{id, label, path, sync, backup, state, needBytes, errors, conflicts, exists, modified?, backedUp?, newerOn?, newerAt?}`.
+**Folder:** `{id, label, path, sync, backup, state, needBytes, errors, conflicts, exists, modified?, backedUp?, newerOn?, newerAt?, account?}`.
 
 - `sync`: synced with other PCs; `false` means only backed up.
 - `state`: Syncthing's state (`idle`, `scanning`, `syncing`, …), or `backup-only`, `off`, `paused`.
 - `newerOn`: another PC backed up a newer save that hasn't arrived here yet.
+- `account`: the game has separate saves per account and this folder holds this account's (the one playing on this PC). Its `id` is `<game>.u-<account>`; the other accounts' saves aren't listed.
 
 ### Notes
 
@@ -53,3 +56,4 @@ Errors use the standard codes (`-32700` parse error, `-32600` invalid request, `
 - **resolveConflict** keeps one version: with `useCopy` the conflict copy replaces the file, otherwise the current file stays. The other version goes to backup history, never deleted.
 - **registerGames** replaces the previous list. Syncer keeps it in `%APPDATA%\Syncer\launcher-games.json`.
 - **subscribe:** Syncer checks folder states every 3 seconds while someone is subscribed and sends `{"jsonrpc":"2.0","method":"changed","params":{}}` when something changed. Call `games` or `gameStatus` again for the details.
+- **accounts / switchAccount:** with *Accounts* on in Syncer, several people can keep their own saves of the same game. A launcher can ask who's playing before it starts a game and call `switchAccount` to put that person's saves in place. Switching fails (nothing changed) while a game is running or when that account's saves haven't reached this PC yet. A split game's folder `id` changes with the account (`<game>.u-<account>`), so call `games` or `gameStatus` again after switching, before `syncNow`. `enabled: false` means accounts are off; then every game has one set of saves.

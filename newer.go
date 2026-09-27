@@ -7,6 +7,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/store"
 )
@@ -45,6 +46,9 @@ func (a *App) checkNewer(ctx context.Context) {
 			for _, f := range fs {
 				if ctx.Err() != nil {
 					return
+				}
+				if accounts.InVault(f.Path) {
+					continue // another account's saves: nobody plays them here now
 				}
 				if n, ok := newerElsewhere(target, f, s.Exclude[dismissKey(f.Path)], time.Now()); ok {
 					found[f.ID] = n

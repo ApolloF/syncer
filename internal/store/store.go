@@ -46,6 +46,10 @@ type Settings struct {
 	// game switching between synced and backup-only), file patterns that are
 	// neither synced nor backed up on this PC.
 	Exclude map[string][]string `json:"exclude,omitempty"`
+
+	// Accounts shows accounts (separate saves per person) on this PC. It
+	// can only be turned off while no game is split per account.
+	Accounts bool `json:"accounts,omitempty"`
 }
 
 // Paused reports whether syncing and automatic backups are paused right now.
@@ -178,6 +182,9 @@ func UpdateState(fn func(*State)) {
 	fn(&st)
 	_ = SaveState(st)
 }
+
+// FileLock takes the named cross-process lock (see fileLock).
+func FileLock(name string) (unlock func()) { return fileLock(name) }
 
 // fileLock also keeps the other Syncer process (the window and the background
 // task run separately) from updating the same file at the same time, which

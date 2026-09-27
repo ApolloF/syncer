@@ -34,3 +34,9 @@ func TestBackgroundThread(t *testing.T) {
 	defer end()
 	end()
 }
+
+func TestProcessPaths(t *testing.T) {
+	if len(ProcessPaths()) == 0 {
+		t.Error("no processes found")
+	}
+}

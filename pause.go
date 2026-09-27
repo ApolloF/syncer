@@ -11,6 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -146,9 +147,17 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 		exists[f.ID] = true
 	}
 	var left []string
+	busy := map[string]bool{} // saves are moving there: they resume when that's done
+	for _, id := range accounts.OpFolders() {
+		busy[id] = true
+	}
 	for _, id := range held {
 		if !exists[id] {
 			continue // removed meanwhile
+		}
+		if busy[id] {
+			left = append(left, id)
+			continue
 		}
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
 			errs = append(errs, err)

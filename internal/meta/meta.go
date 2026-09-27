@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -35,6 +36,10 @@ type SharedFolder struct {
 	// CopyOf: the publishing PC found this to be a Steam emulator's copy of
 	// the named game's own saves, which other PCs don't add on their own.
 	CopyOf string `json:"copyOf,omitempty"`
+	// Account: one account's saves of a split game (see package accounts).
+	// Root and Rel are then the game's save folder, wherever this PC keeps
+	// the folder right now.
+	Account string `json:"account,omitempty"`
 }
 
 // DeviceFile is what one PC publishes.
@@ -43,6 +48,11 @@ type DeviceFile struct {
 	Name    string         `json:"name"`
 	Updated time.Time      `json:"updated"`
 	Folders []SharedFolder `json:"folders"`
+	// Features this PC's Syncer understands (e.g. accounts.Feature).
+	Features []string `json:"features,omitempty"`
+	// Accounts: this PC's copy of the accounts and split games, and who
+	// plays on it.
+	Accounts *accounts.Shared `json:"accounts,omitempty"`
 }
 
 // Dir is the local path of the meta folder.
@@ -66,10 +76,6 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		return rep, err
 	}
 	me := st.MyID
-	folders, err := c.Folders(ctx)
-	if err != nil {
-		return rep, err
-	}
 	devices, err := c.Devices(ctx)
 	if err != nil {
 		return rep, err
@@ -79,6 +85,23 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		if d.DeviceID != me {
 			others = append(others, d.DeviceID)
 		}
+	}
+
+	// Take in the accounts and split games other PCs published, and carry
+	// out the splits and merges this PC hasn't yet, before looking at the
+	// folders (they change the folder list).
+	combineAccounts(me)
+	if ApplyAccounts != nil {
+		if err := ApplyAccounts(ctx, c, me, others); err != nil {
+			warnOnce("accounts:"+err.Error(), "accounts: %v", err)
+		}
+	}
+	ast := accounts.Load()
+	ast.Clean()
+
+	folders, err := c.Folders(ctx)
+	if err != nil {
+		return rep, err
 	}
 
 	byID := map[string]syncthing.Folder{}
@@ -100,9 +123,27 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 
 	// Publish our own folder list.
-	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now()}
+	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature}}
+	if len(ast.Accounts) > 0 || len(ast.Records) > 0 {
+		pub := ast.Shared
+		pub.Active = ""
+		if settings.Accounts || len(ast.Splits()) > 0 {
+			pub.Active = ast.ActiveID() // who plays here (only with accounts on)
+		}
+		mine.Accounts = &pub
+	}
 	for _, f := range folders {
 		if f.ID == FolderID {
+			continue
+		}
+		if g, a, ok := accounts.ParseFolderID(f.ID); ok {
+			// Published at the game's save folder, not at the vault.
+			if r, ok := ast.Split(g); ok {
+				// The root is marked so older Syncers (which don't know
+				// accounts) can't resolve it and never add one person's
+				// saves at the game's save folder.
+				mine.Folders = append(mine.Folders, SharedFolder{ID: f.ID, Label: r.Label, Root: accountRoot + r.Root, Rel: r.Rel, Account: a})
+			}
 			continue
 		}
 		if root, rel, ok := paths.Portable(f.Path); ok {
@@ -128,6 +169,12 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		if _, ok := byID[sf.ID]; ok {
 			continue
 		}
+		if _, _, ok := accounts.ParseFolderID(sf.ID); ok {
+			continue // added below, per game
+		}
+		if _, ok := ast.Split(sf.ID); ok {
+			continue // split into per-account folders: an older PC still publishes it
+		}
 		p, reason := Adoptable(sf, settings, installed, synced)
 		if reason == SkipUnsafe {
 			warnOnce(sf.ID, "meta: not adopting %q (%s/%s): unsafe id or path", sf.ID, sf.Root, sf.Rel)
@@ -144,6 +191,17 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		synced = append(synced, p)
 		rep.Added = append(rep.Added, sf.Label)
 		logx.Printf("meta: added %s (%s) from another PC", sf.Label, p)
+	}
+	for _, add := range accountFolders(ast, cands, byID, settings, installed, synced) {
+		if err := AddFolder(ctx, c, add.id, add.label, add.path, me, others); err != nil {
+			logx.Printf("meta: add %s: %v", add.id, err)
+			continue
+		}
+		byID[add.id] = syncthing.Folder{ID: add.id, Label: add.label, Path: add.path, Devices: toFD(devList(me, others)),
+			Versioning: syncthing.Versioning{Type: "staggered"}}
+		synced = append(synced, add.path)
+		rep.Added = append(rep.Added, add.label)
+		logx.Printf("meta: added %s (%s) from another PC", add.id, add.path)
 	}
 
 	// Every folder is shared with every paired PC and has versioning on.
@@ -270,13 +328,14 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 // PC; me is this PC's device id), so this PC joins it under the same id
 // instead of creating a second folder for the same saves.
 func PeerFolderAt(me, path string) (SharedFolder, bool) {
+	combineAccounts(me) // a split must be known before joining any of its folders
 	want := filepath.Clean(path)
 	for _, sf := range readOthers(me) {
 		if !paths.ValidID(sf.ID) {
 			continue
 		}
-		if p, ok := paths.Resolve(sf.Root, sf.Rel); ok && strings.EqualFold(filepath.Clean(p), want) {
-			return sf, true
+		if p, ok := paths.Resolve(strings.TrimPrefix(sf.Root, accountRoot), sf.Rel); ok && strings.EqualFold(filepath.Clean(p), want) {
+			return splitPlace(sf), true
 		}
 	}
 	return SharedFolder{}, false
@@ -356,6 +415,32 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 	for _, df := range readOtherFiles(st.MyID) {
 		for _, sf := range df.Folders {
 			if have[sf.ID] {
+				continue
+			}
+			if g, _, ok := accounts.ParseFolderID(sf.ID); ok || isSplit(sf.ID) {
+				// A split game is offered once, as the active account's saves.
+				if !ok {
+					g = sf.ID
+				}
+				if haveGame(have, g) {
+					continue
+				}
+				sf = splitPlace(sf)
+				sf.Root = strings.TrimPrefix(sf.Root, accountRoot)
+				if have[sf.ID] {
+					continue
+				}
+				check := sf
+				check.ID = g
+				p, reason := Adoptable(check, s, installed, synced)
+				if reason == SkipUnsafe || reason == SkipBackupOnly || reason == SkipOverlap {
+					continue
+				}
+				if reason == "" {
+					reason = Pending
+				}
+				have[sf.ID] = true
+				out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
 				continue
 			}
 			p, reason := Adoptable(sf, s, installed, synced)
@@ -471,6 +556,11 @@ func changed(me string, df DeviceFile) bool {
 	}
 	var old DeviceFile
 	if json.Unmarshal(b, &old) != nil || old.Name != df.Name || len(old.Folders) != len(df.Folders) {
+		return true
+	}
+	oa, _ := json.Marshal(old.Accounts)
+	na, _ := json.Marshal(df.Accounts)
+	if string(oa) != string(na) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") {
 		return true
 	}
 	for i := range old.Folders {

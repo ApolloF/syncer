@@ -13,6 +13,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sys/windows/registry"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/store"
@@ -61,17 +62,51 @@ func (a *App) startTray() {
 			})
 			upd := systray.AddMenuItem("Download the new Syncer", "")
 			upd.Click(a.OpenUpdate)
+			// Who plays on this PC: one item per account, filled in by refreshTray.
+			acct := systray.AddMenuItem("Switch account", "")
+			var accts []*systray.MenuItem
+			for i := 0; i < accounts.MaxAccounts; i++ {
+				it := acct.AddSubMenuItem("", "")
+				it.Click(func() { a.traySwitch(i) })
+				it.Hide()
+				accts = append(accts, it)
+			}
 			systray.AddSeparator()
 			systray.AddMenuItem("Quit Syncer", "").Click(a.quit)
 			a.mu.Lock()
-			a.tray = trayItems{pause: pause, resume: resume, update: upd}
+			a.tray = trayItems{pause: pause, resume: resume, update: upd, account: acct, accounts: accts}
 			a.mu.Unlock()
 			a.refreshTray()
 		}, nil)
 	}()
 }
 
-type trayItems struct{ pause, resume, update *systray.MenuItem }
+type trayItems struct {
+	pause, resume, update, account *systray.MenuItem
+	accounts                       []*systray.MenuItem
+	ids                            []string // account shown by each item
+}
+
+// traySwitch switches to the account the i-th item shows.
+func (a *App) traySwitch(i int) {
+	a.mu.Lock()
+	var id string
+	if i < len(a.tray.ids) {
+		id = a.tray.ids[i]
+	}
+	a.mu.Unlock()
+	if id == "" {
+		return
+	}
+	go func() {
+		if err := a.SwitchAccount(id); err != nil {
+			logx.Printf("tray switch account: %v", err)
+			if a.ctx != nil && !a.headless {
+				wruntime.EventsEmit(a.ctx, "toast:error", "Couldn't switch account: "+err.Error())
+			}
+		}
+	}()
+}
 
 // refreshTray shows the menu items that fit the current state: pause or
 // resume, and a download link when a new version is out.
@@ -96,6 +131,32 @@ func (a *App) refreshTray() {
 		t.pause.Show()
 		systray.SetTooltip("Syncer")
 	}
+	st := accounts.Load()
+	ids := make([]string, len(t.accounts))
+	if l := st.Live(); (store.LoadSettings().Accounts || len(st.Splits()) > 0) && len(l) > 0 && t.account != nil {
+		name := st.Name(st.ActiveID())
+		t.account.SetTitle("Playing: " + name)
+		t.account.Show()
+		for i, it := range t.accounts {
+			if i < len(l) {
+				ids[i] = l[i].ID
+				it.SetTitle(l[i].Name)
+				if l[i].ID == st.ActiveID() {
+					it.Check()
+				} else {
+					it.Uncheck()
+				}
+				it.Show()
+			} else {
+				it.Hide()
+			}
+		}
+	} else if t.account != nil {
+		t.account.Hide()
+	}
+	a.mu.Lock()
+	a.tray.ids = ids
+	a.mu.Unlock()
 	if u := availableUpdate(); u != nil {
 		t.update.SetTitle("Download Syncer " + u.Latest)
 		t.update.Show()

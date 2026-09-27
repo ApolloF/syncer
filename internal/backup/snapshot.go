@@ -94,8 +94,15 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 // Keep moves a file into the folder's history as a new restore point (it can
 // be brought back with "As it was before <now>").
 func Keep(target, id, src, rel string) error {
+	// A restore point of its own: two files kept in the same second (or a
+	// snapshot taken just before) must never replace each other.
 	t := time.Now()
-	if err := moveTo(src, filepath.Join(target, VersionsDir, id, t.Format(stampFmt), rel)); err != nil {
+	dir := filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
+	for isDir(dir) {
+		t = t.Add(time.Second)
+		dir = filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
+	}
+	if err := moveTo(src, filepath.Join(dir, rel)); err != nil {
 		return err
 	}
 	pin(target, id, t)
