@@ -60,10 +60,13 @@ type Settings struct {
 	// found on this PC, to be synced by hand. AutoAddMods (experimental)
 	// syncs them without asking, up to ModsMaxGB (-1 = no limit).
 	// SyncDeployedMods (experimental) also offers the mods deployed in a
-	// game's own folder.
+	// game's own folder. ShareVortexMods (experimental) shares Vortex's
+	// mod list (which mods are installed and enabled, with their details)
+	// between PCs, so Vortex manages the same synced mods on each of them.
 	FindMods         bool `json:"findMods"`
 	AutoAddMods      bool `json:"autoAddMods"`
 	SyncDeployedMods bool `json:"syncDeployedMods"`
+	ShareVortexMods  bool `json:"shareVortexMods"`
 	ModsMaxGB        int  `json:"modsMaxGB"`
 	// Mods are the synced (or backup-only) folders that are mod folders, by
 	// folder id: how they are described to other PCs.
@@ -215,7 +218,7 @@ func LoadSettings() Settings {
 		s.ModsMaxGB = 20
 	}
 	if !s.FindMods {
-		s.AutoAddMods, s.SyncDeployedMods = false, false
+		s.AutoAddMods, s.SyncDeployedMods, s.ShareVortexMods = false, false, false
 	}
 	if s.IntervalHours <= 0 {
 		s.IntervalHours = 3

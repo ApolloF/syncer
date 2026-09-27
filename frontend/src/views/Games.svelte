@@ -7,6 +7,9 @@
     available: null as main.AvailableView[] | null,
     others: null as backup.Orphan[] | null,
     tab: 'games' as 'games' | 'found' | 'other',
+    // The Mods page: this PC's mod folders, and how sharing Vortex's mod lists goes.
+    modsFound: null as main.GameView[] | null,
+    shares: [] as main.VortexShareView[],
   })
 </script>
 
@@ -26,9 +29,14 @@
     LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
     ReleaseModHold, MakeModSource, HandOverMods,
     StopSyncingCopies,
-    GetNewer,
+    GetNewer, ScanMods, VortexShares, PushVortexList,
   } from '../../wailsjs/go/main/App'
   import type { conflict, store, mods } from '../../wailsjs/go/models'
+
+  // The same page lists either the games or, with "Find installed mods" on,
+  // the mod folders (the Mods page), grouped by game.
+  let { mode = 'games' }: { mode?: 'games' | 'mods' } = $props()
+  const modsPage = $derived(mode === 'mods')
 
   let loading = $state(false)
   let scanning = $state(false)
@@ -134,6 +142,8 @@
   let cloudAsk = $state<{ name: string; go: () => void; ubisoft: boolean } | null>(null)
 
   const o = $derived(ui.overview)
+  // Mod folders have their own page while "Find installed mods" is on.
+  const hideMods = $derived(!modsPage && !!o?.settings.findMods)
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
   const autoOn = $derived(o?.settings.autoAdd ?? true)
 
@@ -155,6 +165,18 @@
     loadingAvailable = false
   }
 
+  let scanningMods = $state(false)
+  async function scanMods(refreshDb = false) {
+    if (scanningMods) return
+    scanningMods = true
+    try { cache.modsFound = (await ScanMods(refreshDb)) ?? [] } catch (e) { fail(e) }
+    scanningMods = false
+  }
+
+  async function loadShares() {
+    try { cache.shares = (await VortexShares()) ?? [] } catch { cache.shares = [] }
+  }
+
   // Errors stay on the page: this reloads on every change, a toast each time would nag.
   async function loadOthers(refreshList = false) {
     if (loadingOthers) return
@@ -168,9 +190,11 @@
   $effect(() => {
     ui.tick
     const tab = cache.tab
+    const mp = modsPage
     untrack(() => {
       load()
-      if (tab === 'other') { loadAvailable(); loadOthers() }
+      if (mp) { loadAvailable(); scanMods(); loadShares() }
+      else if (tab === 'other') { loadAvailable(); loadOthers() }
     })
   })
   $effect(() => { if (cache.tab === 'found' && cache.found === null && !scanning) scan() })
@@ -180,12 +204,69 @@
   $effect(() => { if (cache.tab === 'other' && cache.available === null && !loadingAvailable) loadAvailable() })
 
   const matches = (...s: string[]) => { const q = query.trim().toLowerCase(); return !q || s.some(x => x.toLowerCase().includes(q)) }
-  const found = $derived((cache.found ?? []).filter(g => !g.syncedBy && (showCloud || !g.steamCloud) && matches(g.name, g.path)))
+  const found = $derived((cache.found ?? []).filter(g => !g.syncedBy && !(hideMods && g.kind) && (showCloud || !g.steamCloud) && matches(g.name, g.path)))
   const hiddenCloud = $derived((cache.found ?? []).filter(g => !g.syncedBy && g.steamCloud).length)
-  const games = $derived(cache.folders.filter(f => matches(f.label, f.path)))
-  const available = $derived((cache.available ?? []).filter(a => matches(a.label, a.path)))
+  const allGames = $derived(cache.folders.filter(f => !(hideMods && f.kind)))
+  const games = $derived(allGames.filter(f => matches(f.label, f.path)))
+  const allAvailable = $derived((cache.available ?? []).filter(a => !(hideMods && a.kind)))
+  const available = $derived(allAvailable.filter(a => matches(a.label, a.path)))
   const others = $derived((cache.others ?? []).filter(b => matches(b.label, b.path)))
-  const elsewhereCount = $derived(cache.available && cache.others ? cache.available.length + cache.others.length : null)
+  const elsewhereCount = $derived(cache.available && cache.others ? allAvailable.length + cache.others.length : null)
+
+  // ---- the Mods page: one card per game with all its mod folders ----
+  const kindOrder: Record<string, number> = { 'mods': 0, 'mods-profiles': 1, 'mods-deployed': 2 }
+  const modGameName = (label: string) => label.replace(/ \((Vortex mods|Vortex load order|deployed mods)\)$/, '')
+  type ModGroup = {
+    game: string; name: string
+    synced: main.FolderView[]; found: main.GameView[]; avail: main.AvailableView[]
+    share?: main.VortexShareView
+  }
+  const modGroups = $derived.by(() => {
+    const m = new Map<string, ModGroup>()
+    const get = (game: string, label: string) => {
+      let g = m.get(game)
+      if (!g) { g = { game, name: modGameName(label), synced: [], found: [], avail: [] }; m.set(game, g) }
+      return g
+    }
+    for (const f of cache.folders) if (f.kind && matches(f.label, f.path)) get(f.modGame || f.label, f.label).synced.push(f)
+    for (const g of cache.modsFound ?? []) if (g.kind && !g.syncedBy && matches(g.name, g.path)) get(g.modGame || g.name, g.name).found.push(g)
+    for (const a of cache.available ?? []) if (a.kind && matches(a.label, a.path)) get(a.modGame || a.label, a.label).avail.push(a)
+    for (const sh of cache.shares) { const g = m.get(sh.game); if (g) { g.share = sh; g.name = sh.name || g.name } }
+    for (const g of m.values()) {
+      g.synced.sort((a, b) => (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9))
+      g.found.sort((a, b) => (kindOrder[a.kind ?? ''] ?? 9) - (kindOrder[b.kind ?? ''] ?? 9))
+    }
+    return [...m.values()].sort((a, b) => a.name.localeCompare(b.name))
+  })
+  const shareOn = $derived(!!o?.settings.shareVortexMods)
+
+  // How sharing a game's Vortex mod list goes, in a line.
+  function shareLine(g: ModGroup): string {
+    const staging = g.synced.some(f => f.kind === 'mods' && f.sync)
+    if (!shareOn) return staging ? "Vortex here keeps its own list: mods from your other PCs arrive disabled, without their details." : ''
+    if (!staging) return g.found.some(f => f.kind === 'mods') || g.avail.some(a => a.kind === 'mods')
+      ? 'Sync the Vortex mods to share the mod list with your other PCs.' : ''
+    const s = g.share
+    if (!s || !isTime(s.checked)) return 'Mod list shared. Syncer reads it the next time Vortex is closed.'
+    const parts = [`${plural(s.mods, 'mod')}, ${s.enabled} enabled here`]
+    parts.push(s.peers?.length ? `shared with ${s.peers.join(', ')}` : 'no other PC shares this list yet')
+    if (s.waiting) parts.push(`${plural(s.waiting, 'mod')} waiting for ${s.waiting === 1 ? 'its' : 'their'} files`)
+    if (isTime(s.applied)) parts.push(`${plural(s.appliedN, 'change')} from your other PCs ${ago(s.applied)}`)
+    return parts.join(' · ')
+  }
+
+  // A receiving PC must not deploy the game with its own Vortex.
+  const receivesDeployed = (g: ModGroup) => g.synced.some(f => f.kind === 'mods-deployed' && f.sync && f.modRole !== 'source')
+
+  let pushFor = $state<ModGroup | null>(null)
+  let pushing = $state(false)
+  async function doPush() {
+    if (!pushFor) return
+    const g = pushFor
+    pushing = true
+    if (await attempt(() => PushVortexList(g.game), `Your other PCs take this PC's mod list of ${g.name}`)) { pushFor = null; loadShares() }
+    pushing = false
+  }
   const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
   const syncedCloud = $derived(cache.folders.filter(f => f.sync && f.steamCloud))
   const syncedCopies = $derived(cache.folders.filter(f => f.sync && f.copyOf))
@@ -253,6 +334,7 @@
     adding = ''
     if (ok) {
       cache.found = cache.found?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as main.GameView : x) ?? null
+      cache.modsFound = cache.modsFound?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as main.GameView : x) ?? null
       load()
       refresh()
     }
@@ -747,6 +829,152 @@
   </div>
 {/snippet}
 
+{#snippet foundRow(g: main.GameView)}
+  <div class="item" transition:slide={{ duration: 150 }}>
+    <div class="grow">
+      <div class="row name-row">
+        <span class="name ellipsis">{g.name}</span>
+        {#if g.kind}<span class="pill accent" title={modKinds[g.kind]?.tip}>{modKinds[g.kind]?.text ?? 'Mods'}</span>
+          {#if g.kind === 'mods-deployed'}<span class="pill warn">Experimental</span>{/if}
+          {#each g.warn ?? [] as w}<span class="pill warn" title={w}>{w.length > 40 ? w.slice(0, 38) + '…' : w}</span>{/each}
+        {/if}
+        {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
+        {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
+        {#if g.copyOf}<span class="pill" title={copyTip(g.copyOf, true)}>Copy of {g.copyOf}</span>
+        {:else if g.emulator}<span class="pill warn" title={emulatorTip(g.emulator)}>{g.emulator} saves</span>{/if}
+        {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
+        {#if !g.installed}<span class="pill" title="Syncer didn't find this game installed on this PC">Not installed</span>{/if}
+        {#if g.oneDrive}<span class="pill" title="These saves are in OneDrive, which already syncs them between your PCs, so Syncer backs them up instead of syncing them. Sync them only if OneDrive isn't on your other PCs.">In OneDrive</span>{/if}
+        {#if g.ubisoftCloud}<span class="pill" title="These saves are in Ubisoft Connect's own save folder, which Ubisoft Connect keeps in its cloud, so Syncer backs them up instead of syncing them.">In Ubisoft Cloud</span>{/if}
+        {@render driveCopy(g.oneDriveCopy, g.oneDriveCopyNewer)}
+        {#if g.dismissed}<span class="pill" title="You removed this game or stopped syncing it on this PC, so Syncer doesn't add it by itself.">Removed</span>{/if}
+      </div>
+      <div class="path faint ellipsis" title={g.path}>{g.path}</div>
+    </div>
+    <span class="meta faint">{bytes(g.size)} · {ago(g.modified)}</span>
+    {#if g.kind}
+    <button class="btn sm" disabled={adding === g.path} onclick={() => addMod(g)}>
+      {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
+      {g.kind === 'mods-deployed' ? 'Send…' : 'Sync'}
+    </button>
+    {:else}
+    <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
+      Back up only
+    </button>
+    <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path, g.steamCloud, g.ubisoftCloud)}>
+      {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
+      Sync
+    </button>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet availRow(a: main.AvailableView)}
+  <div class="item" transition:slide={{ duration: 150 }}>
+    <div class="grow">
+      <div class="name ellipsis">{a.label}</div>
+      <div class="path faint ellipsis" title={a.path}>{a.path}</div>
+    </div>
+    <span class="meta faint">from {a.from}</span>
+    {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
+    {:else if a.reason === 'onedrive'}<span class="pill warn" title="On this PC this folder is in OneDrive, which may already sync it. Sync it here only if OneDrive doesn't.">In OneDrive</span>
+    {:else if a.reason === 'steam-cloud'}<span class="pill" title="Steam Cloud keeps this folder on this PC, so it isn't synced here as well.">Steam Cloud here</span>
+    {:else if a.reason === 'ubisoft-cloud'}<span class="pill" title="Ubisoft Connect keeps this folder in its cloud on this PC, so it isn't synced here as well.">Ubisoft Cloud here</span>
+    {:else if a.reason === 'not-here'}<span class="pill" title="These saves are in Ubisoft Connect's save folder, and Ubisoft Connect isn't installed on this PC.">No Ubisoft Connect here</span>
+    {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
+    {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
+    {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
+    {:else if a.reason === 'mods-experimental-off'}<span class="pill" title="Turn on “Sync deployed mods in the game folder” in Settings to receive deployed mods on this PC.">Experimental option off</span>
+    {:else if a.reason === 'mod-game-missing'}<span class="pill warn" title="Vortex on this PC doesn't manage this game yet. Add the game in Vortex here (with its default or your own mods folder), then it can sync.">Not in Vortex here</span>
+    {:else if a.reason === 'mod-vortex-here'}<span class="pill warn" title="Vortex on this PC deploys this game's mods itself. Receiving deployed mods too would mix two deployments in the game's folder.">Vortex deploys here</span>
+    {:else if a.reason === 'mods-manual'}<span class="pill" title={modKinds[a.kind]?.tip}>{modKinds[a.kind]?.text ?? 'Mods'}</span>
+    {:else}<span class="pill">Removed here</span>{/if}
+    <button class="btn sm" disabled={syncingId === a.id || ['not-here', 'mods-off', 'mods-experimental-off', 'mod-game-missing', 'mod-vortex-here'].includes(a.reason)} onclick={() => syncHere(a)}>
+      {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
+      Sync here
+    </button>
+  </div>
+{/snippet}
+
+{#if modsPage}
+<header class="row">
+  <div class="grow">
+    <h1>Mods</h1>
+    <p class="muted">The mods Vortex installed for your games, their load orders and deployments, and how they sync with your other PCs.</p>
+  </div>
+</header>
+
+<div class="bar row">
+  <div class="search grow">
+    <Icon name="search" size={15} />
+    <input type="search" placeholder="Search" bind:value={query} />
+  </div>
+  <button class="btn icon" title="Look for mod folders again" disabled={scanningMods || loadingAvailable}
+    onclick={() => { scanMods(true); loadAvailable(); loadShares() }}>
+    <Icon name="refresh" size={16} class={scanningMods || loadingAvailable ? 'spin' : ''} />
+  </button>
+</div>
+
+{#if !o?.syncthing.running && !o?.settings.syncDisabled}
+  <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">Sync isn't running. Start it from the Overview.</span></div>
+{/if}
+{#if !shareOn && modGroups.some(g => g.synced.some(f => f.kind === 'mods'))}
+  <div class="card notice row">
+    <Icon name="mods" size={16} />
+    <span class="grow">Vortex on each PC keeps its own list of mods, so mods from your other PCs arrive there disabled and without their details.
+      To manage the same mods with Vortex on every PC, turn on the experimental option in Settings.</span>
+    <button class="btn sm" onclick={() => (ui.view = 'settings')}>Settings</button>
+  </div>
+{/if}
+
+{#if modGroups.length === 0}
+  {#if (scanningMods && !cache.modsFound) || (loading && !cache.folders.length)}
+    <div class="card empty"><Icon name="refresh" size={22} class="spin" /><p>Looking for mod folders…</p></div>
+  {:else}
+    <div class="card empty">
+      <Icon name="mods" size={22} />
+      <p>{query ? 'Nothing matches.' : "No mods found. Syncer lists the games Vortex manages on this PC and on your other PCs."}</p>
+    </div>
+  {/if}
+{:else}
+  {#each modGroups as g (g.game)}
+    {@const line = shareLine(g)}
+    <div class="card flush list modgame">
+      <div class="item ghead">
+        <div class="grow">
+          <div class="row name-row">
+            <span class="name ellipsis">{g.name}</span>
+            {#if shareOn && g.share}
+              {#if g.share.err}<span class="pill err" title={g.share.err}>Mod list not shared</span>
+              {:else if g.share.waiting}<span class="pill accent" title="Mods from your other PCs are added to Vortex here once their files have arrived">Waiting for files</span>
+              {:else if g.share.pushing}<span class="pill accent" title="Your other PCs take this PC's mod list once Vortex is closed here">Handing over list</span>
+              {:else}<span class="pill ok" title="Vortex on each PC has the same mods, enabled the same way. Deploy in Vortex after changes arrive.">Mod list shared</span>{/if}
+              {#if receivesDeployed(g)}<span class="pill warn" title="This PC receives this game's deployed mods from another PC, so don't deploy it with Vortex here. Remove the deployed mods here to deploy with Vortex instead.">Receives deployed mods</span>{/if}
+            {/if}
+          </div>
+          {#if line}<div class="detail faint" title={g.share?.err || line}>{line}</div>{/if}
+          {#if g.share?.err}<div class="detail err small">{g.share.err}</div>{/if}
+        </div>
+        {#if shareOn && g.share}
+          <button class="btn sm" disabled={g.share.pushing} onclick={() => (pushFor = g)}
+            title="Make Vortex on your other PCs match this PC: the same mods enabled, with this PC's details">Use this PC's list…</button>
+        {/if}
+      </div>
+      {#if g.synced.length}
+        <div class="cols faint"><span>Sync</span><span>Backup</span></div>
+        {#each g.synced as f (f.id)}{@render folderRow(f)}{/each}
+      {/if}
+      {#each g.found as f (f.path)}{@render foundRow(f)}{/each}
+      {#each g.avail as a (a.id)}{@render availRow(a)}{/each}
+    </div>
+  {/each}
+  <p class="faint hint">
+    Mod folders {o?.settings.autoAddMods ? 'are added automatically (experimental)' : 'need a click'} and aren't backed up unless you turn their backup on. They pause while Vortex is open.
+    {#if shareOn}Vortex's mod lists are read and updated while Vortex is closed; open Vortex and deploy after changes arrive.{/if}
+    Change how mods sync in <button class="linkbtn" onclick={() => (ui.view = 'settings')}>Settings</button>.
+  </p>
+{/if}
+{:else}
 <header class="row">
   <div class="grow">
     <h1>Games</h1>
@@ -758,7 +986,7 @@
 <div class="bar row">
   <div class="tabs">
     <button class:active={cache.tab === 'games'} onclick={() => (cache.tab = 'games')}>
-      Your games <span class="count">{cache.folders.length}</span>
+      Your games <span class="count">{allGames.length}</span>
     </button>
     <button class:active={cache.tab === 'found'} onclick={() => (cache.tab = 'found')}>
       Found on this PC {#if cache.found}<span class="count">{found.length}</span>{/if}
@@ -851,51 +1079,14 @@
       </div>
     {/if}
     <div class="card flush list">
-      {#each found as g (g.path)}
-        <div class="item" transition:slide={{ duration: 150 }}>
-          <div class="grow">
-            <div class="row name-row">
-              <span class="name ellipsis">{g.name}</span>
-              {#if g.kind}<span class="pill accent" title={modKinds[g.kind]?.tip}>{modKinds[g.kind]?.text ?? 'Mods'}</span>
-                {#if g.kind === 'mods-deployed'}<span class="pill warn">Experimental</span>{/if}
-                {#each g.warn ?? [] as w}<span class="pill warn" title={w}>{w.length > 40 ? w.slice(0, 38) + '…' : w}</span>{/each}
-              {/if}
-              {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
-              {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
-              {#if g.copyOf}<span class="pill" title={copyTip(g.copyOf, true)}>Copy of {g.copyOf}</span>
-              {:else if g.emulator}<span class="pill warn" title={emulatorTip(g.emulator)}>{g.emulator} saves</span>{/if}
-              {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
-              {#if !g.installed}<span class="pill" title="Syncer didn't find this game installed on this PC">Not installed</span>{/if}
-              {#if g.oneDrive}<span class="pill" title="These saves are in OneDrive, which already syncs them between your PCs, so Syncer backs them up instead of syncing them. Sync them only if OneDrive isn't on your other PCs.">In OneDrive</span>{/if}
-              {#if g.ubisoftCloud}<span class="pill" title="These saves are in Ubisoft Connect's own save folder, which Ubisoft Connect keeps in its cloud, so Syncer backs them up instead of syncing them.">In Ubisoft Cloud</span>{/if}
-              {@render driveCopy(g.oneDriveCopy, g.oneDriveCopyNewer)}
-              {#if g.dismissed}<span class="pill" title="You removed this game or stopped syncing it on this PC, so Syncer doesn't add it by itself.">Removed</span>{/if}
-            </div>
-            <div class="path faint ellipsis" title={g.path}>{g.path}</div>
-          </div>
-          <span class="meta faint">{bytes(g.size)} · {ago(g.modified)}</span>
-          {#if g.kind}
-          <button class="btn sm" disabled={adding === g.path} onclick={() => addMod(g)}>
-            {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
-            {g.kind === 'mods-deployed' ? 'Send…' : 'Sync'}
-          </button>
-          {:else}
-          <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
-            Back up only
-          </button>
-          <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path, g.steamCloud, g.ubisoftCloud)}>
-            {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
-            Sync
-          </button>
-          {/if}
-        </div>
+      {#each found as g (g.path)}{@render foundRow(g)}
       {:else}
         <div class="empty inner"><p class="muted">{query ? 'Nothing matches.' : 'Everything found is already in your games.'}</p></div>
       {/each}
     </div>
     <p class="faint hint">
       {autoOn ? `New games are added automatically${o?.settings.installedOnly ? ' once installed' : ''}; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Adding new games automatically is off.'}
-      {#if o?.settings.findMods}Mod folders {o?.settings.autoAddMods ? 'are added automatically (experimental)' : 'need a click'} and aren't backed up unless you turn their backup on.{/if}
+      {#if o?.settings.findMods}Mod folders are on the <button class="linkbtn" onclick={() => (ui.view = 'mods')}>Mods</button> page.{/if}
       {#if hiddenCloud && !showCloud}{plural(hiddenCloud, 'Steam Cloud game')} hidden. <button class="linkbtn" onclick={showCloudGames}>Show them</button>{/if}
     </p>
   {/if}
@@ -907,31 +1098,7 @@
     <p class="faint hint">{query ? 'Nothing matches.' : 'Nothing: every game your other PCs sync is here too.'}</p>
   {:else}
     <div class="card flush list">
-      {#each available as a (a.id)}
-        <div class="item" transition:slide={{ duration: 150 }}>
-          <div class="grow">
-            <div class="name ellipsis">{a.label}</div>
-            <div class="path faint ellipsis" title={a.path}>{a.path}</div>
-          </div>
-          <span class="meta faint">from {a.from}</span>
-          {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
-          {:else if a.reason === 'onedrive'}<span class="pill warn" title="On this PC this folder is in OneDrive, which may already sync it. Sync it here only if OneDrive doesn't.">In OneDrive</span>
-          {:else if a.reason === 'steam-cloud'}<span class="pill" title="Steam Cloud keeps this folder on this PC, so it isn't synced here as well.">Steam Cloud here</span>
-          {:else if a.reason === 'ubisoft-cloud'}<span class="pill" title="Ubisoft Connect keeps this folder in its cloud on this PC, so it isn't synced here as well.">Ubisoft Cloud here</span>
-          {:else if a.reason === 'not-here'}<span class="pill" title="These saves are in Ubisoft Connect's save folder, and Ubisoft Connect isn't installed on this PC.">No Ubisoft Connect here</span>
-          {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
-          {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
-          {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
-          {:else if a.reason === 'mods-experimental-off'}<span class="pill" title="Turn on “Sync deployed mods in the game folder” in Settings to receive deployed mods on this PC.">Experimental option off</span>
-          {:else if a.reason === 'mod-game-missing'}<span class="pill warn" title="Vortex on this PC doesn't manage this game yet. Add the game in Vortex here (with its default or your own mods folder), then it can sync.">Not in Vortex here</span>
-          {:else if a.reason === 'mod-vortex-here'}<span class="pill warn" title="Vortex on this PC deploys this game's mods itself. Receiving deployed mods too would mix two deployments in the game's folder.">Vortex deploys here</span>
-          {:else if a.reason === 'mods-manual'}<span class="pill" title={modKinds[a.kind]?.tip}>{modKinds[a.kind]?.text ?? 'Mods'}</span>
-          {:else}<span class="pill">Removed here</span>{/if}
-          <button class="btn sm" disabled={syncingId === a.id || ['not-here', 'mods-off', 'mods-experimental-off', 'mod-game-missing', 'mod-vortex-here'].includes(a.reason)} onclick={() => syncHere(a)}>
-            {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
-            Sync here
-          </button>
-        </div>
+      {#each available as a (a.id)}{@render availRow(a)}
       {/each}
     </div>
   {/if}
@@ -961,6 +1128,7 @@
     </div>
     <p class="faint hint">Backups of games removed from this PC, or that your other PCs back up. Add one to back it up from here again or to restore its saves.</p>
   {/if}
+{/if}
 {/if}
 
 {#if restoreFor}
@@ -1320,6 +1488,24 @@
   </Modal>
 {/if}
 
+{#if pushFor}
+  {@const g = pushFor}
+  <Modal title="Use this PC's mod list for {g.name}?" onclose={() => { if (!pushing) pushFor = null }}>
+    <p>Vortex on your other PCs takes this PC's list of {g.name} mods: the mods enabled here get enabled there, the others disabled, with this PC's details (names, versions, Nexus ids).</p>
+    <ul class="notes">
+      <li>It happens once Vortex is closed here; each other PC takes it the next time Vortex is closed there.</li>
+      <li>Mods only another PC has stay there. Remove them in Vortex if you don't want them.</li>
+      <li>Syncer keeps a copy of each PC's Vortex database before it changes anything, in <span class="mono">%LOCALAPPDATA%\Syncer\vortex-state</span>.</li>
+    </ul>
+    {#snippet actions()}
+      <button class="btn" disabled={pushing} onclick={() => (pushFor = null)}>Cancel</button>
+      <button class="btn primary" disabled={pushing} onclick={doPush}>
+        {#if pushing}<Icon name="refresh" size={15} class="spin" />{/if} Use this PC's list
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
   .checks { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
   .checks li { display: flex; align-items: baseline; gap: 6px; color: var(--ok, inherit); }
@@ -1394,4 +1580,6 @@
   .picklist { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
   .pick { padding: 6px 8px; border-radius: 7px; gap: 10px; }
   .pick:hover { background: var(--hover); }
+  .modgame + .modgame { margin-top: 12px; }
+  .ghead { background: var(--hover); }
 </style>

@@ -182,6 +182,10 @@ export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
 }
 
+export function PushVortexList(arg1) {
+  return window['go']['main']['App']['PushVortexList'](arg1);
+}
+
 export function ReleaseModHold(arg1) {
   return window['go']['main']['App']['ReleaseModHold'](arg1);
 }
@@ -242,6 +246,10 @@ export function ScanGames(arg1) {
   return window['go']['main']['App']['ScanGames'](arg1);
 }
 
+export function ScanMods(arg1) {
+  return window['go']['main']['App']['ScanMods'](arg1);
+}
+
 export function SetAccountsEnabled(arg1) {
   return window['go']['main']['App']['SetAccountsEnabled'](arg1);
 }
@@ -288,4 +296,8 @@ export function SyncAvailable(arg1) {
 
 export function UndoAll(arg1) {
   return window['go']['main']['App']['UndoAll'](arg1);
+}
+
+export function VortexShares() {
+  return window['go']['main']['App']['VortexShares']();
 }

@@ -564,8 +564,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
 		s.NoCloudPull, s.NoHoldWhilePlaying = in.NoCloudPull, in.NoHoldWhilePlaying
 		s.FindMods, s.AutoAddMods, s.SyncDeployedMods = in.FindMods, in.AutoAddMods, in.SyncDeployedMods
+		s.ShareVortexMods = in.ShareVortexMods
 		if !s.FindMods { // the experimental mod options build on finding mods
-			s.AutoAddMods, s.SyncDeployedMods = false, false
+			s.AutoAddMods, s.SyncDeployedMods, s.ShareVortexMods = false, false, false
 		}
 		if in.ModsMaxGB > 0 || in.ModsMaxGB == -1 {
 			s.ModsMaxGB = in.ModsMaxGB
@@ -598,6 +599,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	}
 	if old.SyncDeployedMods && !s.SyncDeployedMods {
 		go a.holdAllDeployed("the experimental option to sync deployed mods was turned off")
+	}
+	if old.ShareVortexMods != s.ShareVortexMods {
+		go a.kickMods()
 	}
 	return s, nil
 }
