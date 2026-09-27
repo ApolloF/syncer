@@ -1107,3 +1107,71 @@ func ModSource(id string) (Source, bool) {
 	}
 	return best, found
 }
+
+// ---- Vortex mod lists (experimental) ----------------------------------------
+
+// A PC sharing its Vortex mod list (which mods are installed and enabled,
+// with their metadata) publishes it as <device>.vortexmods.
+
+const maxVortexListFile = 32 << 20
+
+func vortexListFile(device string) string { return filepath.Join(Dir(), device+".vortexmods") }
+
+// WriteVortexLists publishes this PC's Vortex mod lists; none removes them.
+func WriteVortexLists(me string, l mods.ShareList) error {
+	if !paths.ValidID(me) {
+		return errors.New("bad device id")
+	}
+	if len(l) == 0 {
+		if err := os.Remove(vortexListFile(me)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return store.WriteJSON(vortexListFile(me), l)
+}
+
+// VortexLists reads the Vortex mod lists a PC published. They come from
+// another PC and are checked before they are returned.
+func VortexLists(device string) mods.ShareList {
+	if !paths.ValidID(device) {
+		return nil
+	}
+	p := vortexListFile(device)
+	fi, err := os.Stat(p)
+	if err != nil || fi.Size() > maxVortexListFile {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var l mods.ShareList
+	if json.Unmarshal(b, &l) != nil {
+		return nil
+	}
+	return l.Valid()
+}
+
+// VortexListStamp changes whenever a PC's published Vortex mod list does.
+func VortexListStamp(device string) string {
+	fi, err := os.Stat(vortexListFile(device))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d|%d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// VortexListWrittenBy reports whether device itself last wrote its Vortex
+// mod list (any paired PC could write any file in the shared metadata).
+func VortexListWrittenBy(ctx context.Context, c *syncthing.Client, device string) error {
+	name := device + ".vortexmods"
+	by, err := c.ModifiedBy(ctx, FolderID, name)
+	if err != nil {
+		return err
+	}
+	if len(device) < 7 || !strings.EqualFold(by, device[:7]) {
+		return fmt.Errorf("%s was last written by another PC (%s)", name, by)
+	}
+	return nil
+}

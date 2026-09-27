@@ -856,7 +856,8 @@ type AvailableView struct {
 	Path   string `json:"path"`
 	From   string `json:"from"`
 	Reason string `json:"reason"` // a meta.Skip* reason, or meta.Pending
-	Kind   string `json:"kind"`   // mod folders: mods.Kind*
+	Kind    string `json:"kind"`    // mod folders: mods.Kind*
+	ModGame string `json:"modGame"` // … and the mod manager's game id
 }
 
 // Available lists games your other PCs sync that this PC doesn't.
@@ -873,7 +874,7 @@ func (a *App) Available() ([]AvailableView, error) {
 	}
 	out := make([]AvailableView, 0, len(av))
 	for _, v := range av {
-		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: v.Kind})
+		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: v.Kind, ModGame: v.ModGame})
 	}
 	return out, nil
 }

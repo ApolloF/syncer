@@ -61,6 +61,7 @@
   const sizes = [1, 5, 10, 25, 50, 100, -1]
   const modSizes = [5, 20, 50, 100, -1]
   let deployedOpen = $state(false)
+  let shareOpen = $state(false)
 
   const themes = [
     { id: 'system', label: 'System' },
@@ -213,7 +214,7 @@
     <div class="grow">
       <div class="name">Find installed mods</div>
       <div class="faint small">
-        List the mods Vortex installed for your games, and their load orders, under “Found on this PC” so you can sync them to your other PCs.
+        List the mods Vortex installed for your games, and their load orders, on a Mods page so you can sync them to your other PCs.
         Mod folders sync only; they aren't backed up to Google Drive unless you turn their backup on.
         They pause while Vortex is open. Open Vortex on the other PC to enable and deploy the mods that arrive.
       </div>
@@ -241,7 +242,32 @@
     <Toggle checked={o?.settings.syncDeployedMods} disabled={!o?.settings.findMods} label="Sync deployed mods in the game folder"
       onchange={(v) => { if (v) deployedOpen = true; else save({ syncDeployedMods: false }) }} />
   </div>
+  <div class="item" class:off={!o?.settings.findMods}>
+    <div class="grow">
+      <div class="name">Manage synced mods with Vortex on every PC <span class="pill warn">Experimental</span></div>
+      <div class="faint small">Share Vortex's mod list along with the synced mods: which mods are installed and enabled, with their names, versions and Nexus ids. Install, update, enable or remove a mod in Vortex on any PC, and Vortex on your other PCs follows. Each PC deploys with its own Vortex.</div>
+    </div>
+    <Toggle checked={o?.settings.shareVortexMods} disabled={!o?.settings.findMods} label="Manage synced mods with Vortex on every PC"
+      onchange={(v) => { if (v) shareOpen = true; else save({ shareVortexMods: false }) }} />
+  </div>
 </div>
+
+{#if shareOpen}
+  <Modal title="Manage mods with Vortex on every PC?" onclose={() => (shareOpen = false)}>
+    <p>This is experimental. Syncer reads and changes Vortex's own database on this PC:</p>
+    <ul class="notes">
+      <li>Turn it on on each PC that uses Vortex, and sync each game's Vortex mods (from the Mods page).</li>
+      <li>Syncer only looks while Vortex is closed. A mod from another PC is added once its files have fully arrived, enabled or disabled like there. Open Vortex and deploy afterwards.</li>
+      <li>When the same mod changed on two PCs, the newer change wins. What each PC has when you turn this on stays; mods only one PC has are added to the others.</li>
+      <li>Only the mod list is touched. Before each change, Syncer saves a copy of Vortex's database in <span class="mono">%LOCALAPPDATA%\Syncer\vortex-state</span>.</li>
+      <li>Don't also receive a game's deployed mods on a PC where Vortex deploys that game.</li>
+    </ul>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (shareOpen = false)}>Cancel</button>
+      <button class="btn primary" onclick={() => { shareOpen = false; save({ shareVortexMods: true }) }}>Turn on</button>
+    {/snippet}
+  </Modal>
+{/if}
 
 {#if deployedOpen}
   <Modal title="Sync deployed mods?" onclose={() => (deployedOpen = false)}>

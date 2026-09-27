@@ -97,6 +97,8 @@ export function PickBackupFolder():Promise<string>;
 
 export function PickFolder():Promise<string>;
 
+export function PushVortexList(arg1:string):Promise<void>;
+
 export function ReleaseModHold(arg1:string):Promise<void>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
@@ -127,6 +129,8 @@ export function SaveSettings(arg1:store.Settings):Promise<store.Settings>;
 
 export function ScanGames(arg1:boolean):Promise<Array<main.GameView>>;
 
+export function ScanMods(arg1:boolean):Promise<Array<main.GameView>>;
+
 export function SetAccountsEnabled(arg1:boolean):Promise<void>;
 
 export function SetExclusions(arg1:string,arg2:Array<string>):Promise<void>;
@@ -150,3 +154,5 @@ export function SwitchAccount(arg1:string):Promise<void>;
 export function SyncAvailable(arg1:string):Promise<void>;
 
 export function UndoAll(arg1:main.UndoOptions):Promise<main.UndoReport>;
+
+export function VortexShares():Promise<Array<main.VortexShareView>>;
