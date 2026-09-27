@@ -93,6 +93,10 @@ export function SetFolderBackup(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetFolderSync(arg1:string,arg2:boolean):Promise<void>;
 
+export function SignInGoogle():Promise<string>;
+
+export function SignOutGoogle():Promise<void>;
+
 export function StartSyncthing():Promise<void>;
 
 export function StopSyncingCopies():Promise<number>;

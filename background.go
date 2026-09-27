@@ -13,6 +13,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
+	"github.com/ApolloF/syncer/internal/gdrive"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -136,12 +137,19 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 	target, ok := backupTarget(s)
 	if !ok {
 		err := errors.New("Google Drive for desktop not found — install it and sign in, or choose a backup folder")
+		if s.BackupBackend == backendGoogle {
+			err = gdrive.ErrSignedOut
+		}
 		record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Errors: []string{err.Error()}})
 		return nil, err
 	}
 	all, listErr := backupFolders()
 	if listErr != nil && len(all) == 0 {
 		return nil, listErr
+	}
+	// Signed in to Google: bring in what other PCs backed up first.
+	if err := googleSync(ctx, 0); err != nil {
+		logx.Printf("Google Drive before the backup: %v", err)
 	}
 	seedHistory(ctx, s, target)
 	// Restore points saved on this PC while there was no backup folder.
@@ -163,6 +171,10 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 	}
 	if listErr != nil {
 		res.Errors = append(res.Errors, "synced games were skipped: "+listErr.Error())
+		res.OK = false
+	}
+	if err := googleSync(ctx, 0); err != nil {
+		res.Errors = append(res.Errors, "upload to Google Drive: "+err.Error())
 		res.OK = false
 	}
 	record(res)
@@ -197,7 +209,12 @@ func seedHistory(ctx context.Context, s store.Settings, target string) {
 
 // backupTarget is where backups go: a custom folder, or the chosen Google
 // account's My Drive.
-func backupTarget(s store.Settings) (string, bool) { return backup.Target(s.BackupRoot, s.DriveRoot) }
+func backupTarget(s store.Settings) (string, bool) {
+	if s.BackupBackend == backendGoogle {
+		return googleDir(), gdrive.HasToken()
+	}
+	return backup.Target(s.BackupRoot, s.DriveRoot)
+}
 
 func record(r *store.BackupRun) {
 	store.UpdateState(func(st *store.State) {

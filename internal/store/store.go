@@ -15,10 +15,13 @@ import (
 
 // Settings are user choices local to this PC.
 type Settings struct {
-	Theme         string          `json:"theme"`         // system | light | dark
-	BackupEnabled bool            `json:"backupEnabled"` // scheduled Drive backup on/off
-	BackupRoot    string          `json:"backupRoot"`    // override for the Drive folder; "" = auto-detect
-	DriveRoot     string          `json:"driveRoot"`     // chosen "My Drive" when several accounts are signed in; "" = first found
+	Theme         string `json:"theme"`         // system | light | dark
+	BackupEnabled bool   `json:"backupEnabled"` // scheduled Drive backup on/off
+	BackupRoot    string `json:"backupRoot"`    // override for the Drive folder; "" = auto-detect
+	DriveRoot     string `json:"driveRoot"`     // chosen "My Drive" when several accounts are signed in; "" = first found
+	// BackupBackend is "google" when Syncer signs in to Google itself and
+	// syncs the backup with Drive (no Google Drive for desktop needed).
+	BackupBackend string          `json:"backupBackend,omitempty"`
 	IntervalHours int             `json:"intervalHours"` // backup schedule
 	KeepDays      int             `json:"keepDays"`      // how long old versions are kept
 	NoBackup      map[string]bool `json:"noBackup"`      // folder ids excluded from backup
@@ -101,7 +104,11 @@ type State struct {
 	GamePaused []string `json:"gamePaused,omitempty"`
 	// GameHeld is when the window last confirmed it holds them.
 	GameHeld time.Time `json:"gameHeld,omitzero"`
-	Update   *Update   `json:"update,omitempty"` // newest release seen
+	// GoogleSynced is when the backup was last synced with Google Drive
+	// through Syncer's own sign-in; GoogleError why the last try failed.
+	GoogleSynced time.Time `json:"googleSynced,omitzero"`
+	GoogleError  string    `json:"googleError,omitempty"`
+	Update       *Update   `json:"update,omitempty"` // newest release seen
 	// Notified remembers which problems were already reported (key -> when).
 	Notified map[string]time.Time `json:"notified,omitempty"`
 	// FolderBackups is when each folder (by id) was last backed up without errors.

@@ -9,7 +9,7 @@
 Syncer is a small desktop app built on two tools that already work well:
 
 - **[Syncthing](https://syncthing.net)** copies saves between your PCs, end-to-end encrypted. There's no account and no cloud storage in between. Your PCs don't have to be on the same network: when they can't reach each other directly, Syncthing's public relays pass the encrypted data along.
-- **[Google Drive for desktop](https://www.google.com/drive/download/)** handles the upload. Syncer copies your saves into `My Drive\GameSaveBackup`, and Drive uploads them from there.
+- **[Google Drive for desktop](https://www.google.com/drive/download/)** handles the upload. Syncer copies your saves into `My Drive\GameSaveBackup`, and Drive uploads them from there. Don't want the Drive app? Syncer can sign in to Google itself instead.
 
 ## Features
 
@@ -20,6 +20,7 @@ Syncer is a small desktop app built on two tools that already work well:
 - **Knows Ubisoft Connect saves.** Ubisoft games (also ones bought on Steam, such as Assassin's Creed Odyssey) keep their saves in Ubisoft Connect's own `savegames\<account>\<game id>` folder, which Ubisoft Connect already keeps in its cloud. Syncer finds them there and backs them up without syncing them, marked *In Ubisoft Cloud*. Turn on *Sync* if Ubisoft Connect's cloud saves don't reach your other PCs. Cracked Ubisoft games save through a Ubisoft Connect emulator instead (`%APPDATA%\Goldberg UplayEmu Saves\<game id>`, or the `SavePath` in the game's `upc_r2.ini`). Syncer lists those as, for example, *Avatar: Frontiers of Pandora (UplayEmu saves)* and syncs them like any other game.
 - **Links PCs with one ID.** Paste the other PC's device ID (or accept its request) and every synced game shows up there at the correct local path, even if the user name or Documents location is different.
 - **Backs up with history.** Only changed files get copied. A file that changes or gets deleted is moved to `.versions\<game>\<time>\` and kept for 30 days by default. Older history is thinned: everything from the last day, then one restore point per day for a week, then one per week. Restoring to any point that's left still gives exactly the saves of that time. Restore points Syncer makes to protect your saves (before a PC starts syncing a game, before a restore, the losing copy of a conflict) are never thinned, and are kept for a year even when history is kept for less. A restore skips files that already match. If a save folder suddenly turns up empty, Syncer won't wipe the backup.
+- **Backs up to Google Drive without the Drive app, if you like.** *Backup → Sign in with Google* lets Syncer sign in to your Google account itself. It asks only for access to the files it creates (it can't see anything else in your Drive), keeps a copy of the backup on this PC and syncs it with `My Drive\GameSaveBackup` before and after every backup. Your PCs share these backups when each signs in this way; backups made through Google Drive for desktop are separate.
 - **Restores any save.** You can restore the latest backup or any earlier point. Your current files are saved as a restore point first, so a restore can be undone.
 - **Lives in the tray if you want.** Settings can start Syncer with Windows (straight into the tray) and keep it running there when you close the window. The tray menu opens it, starts a backup, pauses or resumes, or quits.
 - **Pause for a while.** *Settings* (or the tray) pauses syncing and automatic backups for 1 hour, 4 hours or until tomorrow morning. Every Syncthing folder is paused, and it all resumes on its own through a one-off scheduled task (`\Syncer-Resume`). *Back up now* still works while paused.
@@ -46,7 +47,7 @@ Syncer is a small desktop app built on two tools that already work well:
 
 1. Download **`Syncer-amd64-installer.exe`** from [Releases](https://github.com/ApolloF/syncer/releases) and run it. It installs just for your user (no admin prompt) into `%LOCALAPPDATA%\Programs\Syncer` and adds Start menu and desktop shortcuts. Prefer no installer? `Syncer.exe` from the same release is portable. Keep it in a permanent folder, since the background task points at it. Using [Seaglass](https://github.com/ApolloF/Seaglass)? *Settings → Saves → Install Syncer* does this step for you.
 2. Open Syncer. If Syncthing isn't installed yet, the Overview has a one-click install (via `winget`).
-3. Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in. Syncer finds it on its own. Signed in with more than one Google account (e.g. `G:` and `H:`)? Pick which one gets the backups under **Backup → Account**.
+3. Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in (or use *Backup → Sign in with Google* instead). Syncer finds it on its own. Signed in with more than one Google account (e.g. `G:` and `H:`)? Pick which one gets the backups under **Backup → Account**.
 4. Your games start syncing automatically. Check **Games → Found on this PC** for anything else you want, such as unrecognized folders.
 
 ### Linking a second PC
@@ -84,6 +85,7 @@ Syncer stores its settings in `%APPDATA%\Syncer`. It reads Syncthing's API key f
 - Syncer talks to Syncthing only on this PC, or over HTTPS pinned to Syncthing's own certificate. It never sends the API key in the clear over the network.
 - The launcher API is a named pipe that only your Windows account can open, never over the network. Launchers pass game names and folders; nothing they send is run or trusted as a path to change.
 - System tools (`schtasks`, `tasklist`, `explorer`) are started by their full path, and the scheduled task runs with your normal user rights (no elevation).
+- Signed in to Google through Syncer, it asks only for the `drive.file` scope (the files it creates). Its sign-in token is the one secret Syncer keeps: in `%APPDATA%\Syncer\gdrive.token`, encrypted with Windows' data protection for your account. *Sign out* revokes it at Google.
 
 ## License
 
@@ -101,7 +103,9 @@ go test ./...      # backend tests
 wails build        # build/bin/Syncer.exe
 ```
 
-The backend lives in `internal/`: `syncthing` (REST client), `meta` (cross-PC folder sharing), `discover` (manifest, scan, installed games), `backup` (mirror/versions/restore), `tasks` (Task Scheduler), `paths` (portable paths, sync safety rules) and `winx` (Windows priority, full-screen and foreground checks). The Svelte 5 frontend is in `frontend/src`.
+Release builds that should offer *Sign in with Google* need a Google OAuth client: in the [Google Cloud console](https://console.cloud.google.com), create a project, enable the Google Drive API, set up the OAuth consent screen (External, scope `.../auth/drive.file` only, then **publish** it; in Testing, sign-ins expire after 7 days) and create an OAuth client of type *Desktop app*. Put its id and secret in the repository secrets `GDRIVE_CLIENT_ID` and `GDRIVE_CLIENT_SECRET`; CI passes them in with `-ldflags "-X main.gdriveClientID=… -X main.gdriveClientSecret=…"`. (A desktop app's client secret isn't confidential.)
+
+The backend lives in `internal/`: `syncthing` (REST client), `meta` (cross-PC folder sharing), `discover` (manifest, scan, installed games), `backup` (mirror/versions/restore), `gdrive` (Google sign-in and Drive sync), `tasks` (Task Scheduler), `paths` (portable paths, sync safety rules) and `winx` (Windows priority, full-screen and foreground checks). The Svelte 5 frontend is in `frontend/src`.
 
 ## Uninstall
 

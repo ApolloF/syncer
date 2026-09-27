@@ -449,6 +449,45 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class GoogleView {
+	    available: boolean;
+	    signedIn: boolean;
+	    account: string;
+	    // Go type: time
+	    synced: any;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GoogleView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.signedIn = source["signedIn"];
+	        this.account = source["account"];
+	        this.synced = this.convertValues(source["synced"], null);
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class NewFolder {
 	    label: string;
 	    path: string;
@@ -508,6 +547,7 @@ export namespace main {
 	    conflicts: number;
 	    overlaps: number;
 	    drive: backup.DriveInfo;
+	    google: GoogleView;
 	    target: string;
 	    lastBackup?: store.BackupRun;
 	    backingUp: boolean;
@@ -533,6 +573,7 @@ export namespace main {
 	        this.conflicts = source["conflicts"];
 	        this.overlaps = source["overlaps"];
 	        this.drive = this.convertValues(source["drive"], backup.DriveInfo);
+	        this.google = this.convertValues(source["google"], GoogleView);
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);
 	        this.backingUp = source["backingUp"];
@@ -679,6 +720,7 @@ export namespace store {
 	    backupEnabled: boolean;
 	    backupRoot: string;
 	    driveRoot: string;
+	    backupBackend?: string;
 	    intervalHours: number;
 	    keepDays: number;
 	    noBackup: Record<string, boolean>;
@@ -712,6 +754,7 @@ export namespace store {
 	        this.backupEnabled = source["backupEnabled"];
 	        this.backupRoot = source["backupRoot"];
 	        this.driveRoot = source["driveRoot"];
+	        this.backupBackend = source["backupBackend"];
 	        this.intervalHours = source["intervalHours"];
 	        this.keepDays = source["keepDays"];
 	        this.noBackup = source["noBackup"];

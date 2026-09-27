@@ -161,6 +161,7 @@ type Overview struct {
 	Conflicts  int              `json:"conflicts"` // conflict copies across all folders
 	Overlaps   int              `json:"overlaps"`  // synced folders inside another synced folder
 	Drive      backup.DriveInfo `json:"drive"`
+	Google     GoogleView       `json:"google"`
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
@@ -176,6 +177,7 @@ func (a *App) Overview() Overview {
 	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup,
 		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
+	o.Google = googleView(s)
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -533,7 +535,7 @@ func (a *App) PickBackupFolder() (string, error) {
 	if err != nil || p == "" {
 		return "", err
 	}
-	_, err = store.UpdateSettings(func(s *store.Settings) { s.BackupRoot = p })
+	_, err = store.UpdateSettings(func(s *store.Settings) { s.BackupRoot, s.BackupBackend = p, "" })
 	return p, err
 }
 

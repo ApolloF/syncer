@@ -49,7 +49,12 @@ jobs:
           "SYNCER_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build
-        run: wails build -clean -nsis -trimpath -ldflags "-s -w -X main.version=${{ env.SYNCER_VERSION }}"
+        # The Google OAuth client ("Sign in with Google" for backups without
+        # Google Drive for desktop). Without these secrets the option is hidden.
+        env:
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+        run: wails build -clean -nsis -trimpath -ldflags "-s -w -X main.version=${{ env.SYNCER_VERSION }} -X main.gdriveClientID=$env:GDRIVE_CLIENT_ID -X main.gdriveClientSecret=$env:GDRIVE_CLIENT_SECRET"
 
       - uses: actions/upload-artifact@v4
         with:

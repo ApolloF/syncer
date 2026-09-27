@@ -178,6 +178,14 @@ export function SetFolderSync(arg1, arg2) {
   return window['go']['main']['App']['SetFolderSync'](arg1, arg2);
 }
 
+export function SignInGoogle() {
+  return window['go']['main']['App']['SignInGoogle']();
+}
+
+export function SignOutGoogle() {
+  return window['go']['main']['App']['SignOutGoogle']();
+}
+
 export function StartSyncthing() {
   return window['go']['main']['App']['StartSyncthing']();
 }

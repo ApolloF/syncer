@@ -63,6 +63,9 @@ func pullVerdict(c pullCheck) (auto, canGet bool, why string) {
 // taken). playing reports whether a game is running.
 func pullNewer(ctx context.Context, playing func() bool) (left map[string]newerSave, took []string) {
 	left = map[string]newerSave{}
+	if err := googleSync(ctx, 5*time.Minute); err != nil {
+		logx.Printf("Google Drive: %v", err)
+	}
 	s := store.LoadSettings()
 	target, ok := backupTarget(s)
 	if !ok || s.SyncDisabled {

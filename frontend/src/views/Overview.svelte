@@ -28,8 +28,11 @@
       s.push({ key: 'sterr', icon: 'alert', title: 'Can\'t talk to Syncthing', text: o.syncthing.error })
     else if (!o.syncthing.running)
       s.push({ key: 'start', icon: 'play', title: 'Sync is not running', text: 'Start Syncthing. It will also start automatically when you sign in.', action: 'Start' })
-    if (!o.drive.found && !o.settings.backupRoot)
-      s.push({ key: 'drive', icon: 'cloud', title: 'Connect Google Drive', text: 'Install Google Drive for desktop and sign in. Syncer backs up into it automatically.', action: 'Get Google Drive' })
+    if (o.settings.backupBackend === 'google') {
+      if (!o.google.signedIn)
+        s.push({ key: 'google', icon: 'cloud', title: 'Signed out of Google', text: 'Backups wait until you sign in again under Backup.', action: 'Open Backup' })
+    } else if (!o.drive.found && !o.settings.backupRoot)
+      s.push({ key: 'drive', icon: 'cloud', title: 'Connect Google Drive', text: o.google.available ? 'Install Google Drive for desktop, or sign in to Google under Backup. Syncer backs up into it automatically.' : 'Install Google Drive for desktop and sign in. Syncer backs up into it automatically.', action: 'Get Google Drive' })
     else if (o.drive.found && !o.drive.running && !o.settings.backupRoot)
       s.push({ key: 'driveoff', icon: 'cloud', title: 'Google Drive is not running', text: 'Backups are saved locally and upload once Google Drive for desktop runs again.' })
     if (o.syncthing.running && o.devices === 0)
@@ -47,6 +50,7 @@
     if (key === 'install') run(key, InstallSyncthing, 'Syncthing installed and running')
     else if (key === 'start') run(key, StartSyncthing, 'Sync started')
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
+    else if (key === 'google') ui.view = 'backup'
     else if (key === 'link' || key === 'pending') ui.view = 'devices'
     else if (key === 'conflicts' || key === 'overlaps') ui.view = 'games'
     else if (key === 'paused') run(key, Resume, 'Syncing and backups resumed')
