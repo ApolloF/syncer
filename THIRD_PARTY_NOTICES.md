@@ -11,7 +11,7 @@ Not included, but used at runtime:
 |---|---|---|
 | Go standard library | go1.26.6 | BSD-3-Clause |
 | git.sr.ht/~jackmordaunt/go-toast/v2 | v2.0.3 | MIT |
-| github.com/ApolloF/gamekit | v0.1.0 | MIT |
+| github.com/ApolloF/gamekit | v0.2.0 | MIT |
 | github.com/bep/debounce | v1.2.1 | MIT |
 | github.com/energye/systray | v1.0.3 | Apache-2.0 |
 | github.com/go-ole/go-ole | v1.3.0 | MIT |
