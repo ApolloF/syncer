@@ -139,6 +139,10 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 		return nil, listErr
 	}
 	seedHistory(ctx, s, target)
+	// Restore points saved on this PC while there was no backup folder.
+	if err := backup.MergeHistory(snapshotDir(), target); err != nil && !errors.Is(err, backup.ErrBusy) {
+		logx.Printf("move local restore points into the backup: %v", err)
+	}
 	var fs []backup.Folder
 	for _, f := range all {
 		if !s.NoBackup[f.ID] {

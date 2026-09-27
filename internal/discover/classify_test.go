@@ -3,6 +3,7 @@ package discover
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ApolloF/syncer/internal/steam"
@@ -86,5 +87,47 @@ func TestCloudVerdict(t *testing.T) {
 		if covered != tt.covered || reason != tt.reason {
 			t.Errorf("%s: got %v %q, want %v %q", tt.name, covered, reason, tt.covered, tt.reason)
 		}
+	}
+}
+
+// Hogwarts Legacy on EMPRESS: the emulator keeps the saves under other names,
+// and the game's own saves are spread over two of its save folders.
+func TestMirrorByContent(t *testing.T) {
+	d := t.TempDir()
+	save := func(i int) string { return fmt.Sprintf("save %d %s", i, strings.Repeat("x", 400)) }
+	hl := filepath.Join(d, "Hogwarts Legacy", "Saved", "SaveGames", "123")
+	phoenix := filepath.Join(d, "Phoenix", "Saved", "SaveGames", "123")
+	emu := filepath.Join(d, "EMPRESS", "990080", "remote")
+	for i := 0; i < 4; i++ {
+		own := hl
+		if i >= 2 {
+			own = phoenix
+		}
+		writeStoreFile(t, filepath.Join(own, fmt.Sprintf("HL-%02d-00.sav", i)), save(i))
+		writeStoreFile(t, filepath.Join(emu, fmt.Sprintf("remote_%d.bin", i)), save(i))
+	}
+	if !mirrorIn(emu, []string{hl, phoenix}) {
+		t.Error("renamed copy spread over two save folders not recognised")
+	}
+	if mirrorIn(emu, []string{hl}) {
+		t.Error("two files in common isn't a copy of four") // below mirrorMin
+	}
+
+	// One or two files: only a copy when every one is there byte for byte.
+	small := filepath.Join(d, "EMPRESS", "1", "remote")
+	writeStoreFile(t, filepath.Join(small, "profile.sav"), save(0))
+	if !mirrorIn(small, []string{hl}) {
+		t.Error("single file copy not recognised")
+	}
+	named := filepath.Join(d, "EMPRESS", "2", "remote")
+	writeStoreFile(t, filepath.Join(named, "HL-00-00.sav"), save(9))
+	if mirrorIn(named, []string{hl}) {
+		t.Error("a single file with the same name but other saves isn't a copy")
+	}
+	tiny := filepath.Join(d, "EMPRESS", "3", "remote")
+	writeStoreFile(t, filepath.Join(tiny, "flag.dat"), "1")
+	writeStoreFile(t, filepath.Join(hl, "other.dat"), "1")
+	if mirrorIn(tiny, []string{hl}) {
+		t.Error("a tiny file proves nothing by content")
 	}
 }

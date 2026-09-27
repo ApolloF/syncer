@@ -19,7 +19,10 @@ import (
 	"github.com/ApolloF/syncer/internal/store"
 )
 
-func init() { meta.BeforeJoin = protectExisting }
+func init() {
+	meta.BeforeJoin = protectExisting
+	meta.BeforeShare = protectExisting
+}
 
 // snapshotDir holds pre-sync snapshots when no backup folder is available.
 func snapshotDir() string { return filepath.Join(paths.Root(paths.Local), "Syncer", "snapshots") }
@@ -158,17 +161,53 @@ func (a *App) ResolveConflict(id, copyRel string, useCopy bool) error {
 	return nil
 }
 
+// ResolveConflicts settles a folder's conflicts at once, for a save made of
+// several files: with device "" the current version of every file stays,
+// otherwise every version the PC with that short device id made is used
+// (files with versions from more than one other PC are left alone). It
+// returns how many were settled.
+func (a *App) ResolveConflicts(id, device string) (int, error) {
+	f, err := folderByID(id)
+	if err != nil {
+		return 0, err
+	}
+	cs := conflict.Find(f.Path)
+	if device != "" {
+		cs = conflict.FromDevice(cs, device)
+	}
+	n := 0
+	for _, c := range cs {
+		if err := a.resolveConflict(id, c.Copy, device != ""); err != nil {
+			if n > 0 {
+				runtime.EventsEmit(a.ctx, "changed")
+			}
+			return n, fmt.Errorf("%s: %w", c.Rel, err)
+		}
+		n++
+	}
+	runtime.EventsEmit(a.ctx, "changed")
+	return n, nil
+}
+
 // resolveConflict is ResolveConflict without telling the window.
 func (a *App) resolveConflict(id, copyRel string, useCopy bool) error {
 	f, err := folderByID(id)
 	if err != nil {
 		return err
 	}
-	keep := conflict.StVersionsKeep(f.Path)
-	where := filepath.Join(f.Path, ".stversions")
+	local := conflict.StVersionsKeep(f.Path)
+	keep, where := local, filepath.Join(f.Path, ".stversions")
 	if t, ok := backupTarget(store.LoadSettings()); ok {
 		if err := os.MkdirAll(t, 0o755); err == nil {
-			keep = func(abs, rel string) error { return backup.Keep(t, f.ID, abs, rel) }
+			keep = func(abs, rel string, move bool) error {
+				err := backup.Keep(t, f.ID, abs, rel, move)
+				if errors.Is(err, backup.ErrBusy) {
+					// A long backup is running: don't make the user wait.
+					logx.Printf("conflict in %s: backup busy, keeping the other version in .stversions", f.Label)
+					return local(abs, rel, move)
+				}
+				return err
+			}
 			where = "backup history"
 		}
 	}

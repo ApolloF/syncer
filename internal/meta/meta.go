@@ -140,42 +140,29 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			continue
 		}
 		byID[sf.ID] = syncthing.Folder{ID: sf.ID, Label: sf.Label, Path: p, Devices: toFD(devList(me, others)),
-			Versioning: syncthing.Versioning{Type: "staggered"}}
+			Versioning: syncthing.Versioning{Type: "staggered"}, MaxConflicts: -1}
 		synced = append(synced, p)
 		rep.Added = append(rep.Added, sf.Label)
 		logx.Printf("meta: added %s (%s) from another PC", sf.Label, p)
 	}
 
-	// Every folder is shared with every paired PC and has versioning on.
+	// Every folder is shared with every paired PC, has versioning on and
+	// keeps every conflict copy.
 	for _, f := range byID {
-		have := map[string]bool{}
-		for _, d := range f.Devices {
-			have[d.DeviceID] = true
-		}
-		patch := map[string]any{}
-		missing := false
-		for _, o := range others {
-			if !have[o] {
-				missing = true
+		patch := patchFor(f, me, others)
+		if _, ok := patch["devices"]; ok {
+			// This PC's saves are about to meet another PC's: keep a
+			// restore point of them first, as a PC joining a folder does.
+			if f.ID != FolderID && BeforeShare != nil {
+				if err := BeforeShare(ctx, f.ID, f.Label, f.Path); err != nil {
+					logx.Printf("meta: not sharing %s yet: %v", f.ID, err)
+					delete(patch, "devices")
+				} else {
+					rep.Shared++
+				}
+			} else {
+				rep.Shared++
 			}
-		}
-		if missing {
-			all := map[string]bool{me: true}
-			for _, d := range f.Devices {
-				all[d.DeviceID] = true
-			}
-			for _, o := range others {
-				all[o] = true
-			}
-			var ids []string
-			for id := range all {
-				ids = append(ids, id)
-			}
-			patch["devices"] = devList(ids[0], ids[1:])
-			rep.Shared++
-		}
-		if f.ID != FolderID && f.Versioning.Type == "" {
-			patch["versioning"] = syncthing.StaggeredVersioning()
 		}
 		if len(patch) > 0 {
 			if err := c.PatchFolder(ctx, f.ID, patch); err != nil {
@@ -193,6 +180,54 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 // An error stops the folder from being added (it is retried later).
 var BeforeJoin func(ctx context.Context, id, label, path string) error
 
+// BeforeShare, when set, runs before a folder this PC already syncs is shared
+// with a PC it isn't shared with yet, so the saves here can be protected
+// first. An error stops the sharing (it is retried on the next reconcile).
+var BeforeShare func(ctx context.Context, id, label, path string) error
+
+// patchFor returns the changes folder f needs: shared with every paired PC,
+// and for game folders versioning on and every conflict copy kept (Syncthing
+// deletes all but the newest 10, and a conflict copy may be the only copy of
+// a save). The metadata folder has no versioning: each PC writes only its
+// own file there.
+func patchFor(f syncthing.Folder, me string, others []string) map[string]any {
+	patch := map[string]any{}
+	have := map[string]bool{}
+	for _, d := range f.Devices {
+		have[d.DeviceID] = true
+	}
+	missing := false
+	for _, o := range others {
+		if !have[o] {
+			missing = true
+		}
+	}
+	if missing {
+		all := map[string]bool{me: true}
+		for _, d := range f.Devices {
+			all[d.DeviceID] = true
+		}
+		for _, o := range others {
+			all[o] = true
+		}
+		ids := []string{me}
+		for id := range all {
+			if id != me {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids[1:])
+		patch["devices"] = devList(ids[0], ids[1:])
+	}
+	if f.ID != FolderID && f.Versioning.Type == "" {
+		patch["versioning"] = syncthing.StaggeredVersioning()
+	}
+	if f.ID != FolderID && f.MaxConflicts != -1 {
+		patch["maxConflicts"] = -1
+	}
+	return patch
+}
+
 // BeforeAdd, when set, prepares a folder's directory just before Syncthing
 // starts on it (e.g. writes the game's exclusions into .stignore, so the
 // first scan already skips them), whichever way it started syncing.
@@ -208,6 +243,8 @@ const (
 	SkipOneDrive     = "onedrive"      // OneDrive already syncs that folder on this PC
 	SkipSteamCloud   = "steam-cloud"   // Steam Cloud keeps that folder on this PC
 	SkipCopy         = "copy"          // a Steam emulator's copy of saves the game keeps itself
+	SkipUbisoftCloud = "ubisoft-cloud" // Ubisoft Connect's own save folder, in Ubisoft's cloud
+	SkipNoRoot       = "not-here"      // the folder it's in doesn't exist on this PC (no Ubisoft Connect)
 
 	// Pending: nothing stops adding it, it just hasn't happened yet (syncing
 	// is paused or off here, or the next reconcile hasn't run).
@@ -231,6 +268,9 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 	if !paths.ValidID(sf.ID) || sf.ID == FolderID {
 		return "", SkipUnsafe
 	}
+	if paths.Known(sf.Root) && !paths.Here(sf.Root) {
+		return "", SkipNoRoot
+	}
 	p, ok := paths.Resolve(sf.Root, sf.Rel)
 	if !ok || paths.CheckSyncable(p) != nil {
 		return "", SkipUnsafe
@@ -250,6 +290,8 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 		return p, SkipRemoved
 	case inOneDrive(p):
 		return p, SkipOneDrive
+	case sf.Root == paths.Ubisoft:
+		return p, SkipUbisoftCloud
 	case sf.CopyOf != "":
 		return p, SkipCopy
 	case s.InstalledOnly && !installed(sf.Label):
@@ -415,6 +457,8 @@ func AddFolder(ctx context.Context, c *syncthing.Client, id, label, path, me str
 		"fsWatcherEnabled": true, "rescanIntervalS": 3600, "ignorePerms": true,
 		"devices":    devList(me, others),
 		"versioning": syncthing.StaggeredVersioning(),
+		// Keep every conflict copy: one may be the only copy of a save.
+		"maxConflicts": -1,
 	})
 }
 

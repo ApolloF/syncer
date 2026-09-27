@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 // Root identifiers. Stored in shared metadata, so never rename them.
@@ -24,6 +25,9 @@ const (
 	LocalLow    = "locallow"
 	Public      = "public"
 	ProgramData = "programdata"
+	// Ubisoft is Ubisoft Connect's savegames folder (…\Ubisoft Game
+	// Launcher\savegames), which holds <account id>\<game id> folders.
+	Ubisoft = "ubisoft"
 )
 
 var known = map[string]*windows.KNOWNFOLDERID{
@@ -51,6 +55,38 @@ func init() {
 			roots[Home] = h
 		}
 	}
+	if d := ubisoftSaves(); d != "" {
+		roots[Ubisoft] = d
+	}
+}
+
+// ubisoftSaves returns Ubisoft Connect's savegames folder, "" if it doesn't
+// exist on this PC.
+func ubisoftSaves() string {
+	var dirs []string
+	if k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\WOW6432Node\Ubisoft\Launcher`, registry.QUERY_VALUE); err == nil {
+		if v, _, err := k.GetStringValue("InstallDir"); err == nil && v != "" {
+			dirs = append(dirs, filepath.Clean(filepath.FromSlash(v)))
+		}
+		k.Close()
+	}
+	if pf := os.Getenv("ProgramFiles(x86)"); pf != "" {
+		dirs = append(dirs, filepath.Join(pf, "Ubisoft", "Ubisoft Game Launcher"))
+	}
+	for _, d := range dirs {
+		d = filepath.Join(d, "savegames")
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			return d
+		}
+	}
+	return ""
+}
+
+// Known reports whether root is a root id Syncer knows, whether or not it
+// exists on this PC.
+func Known(root string) bool {
+	_, ok := known[root]
+	return ok || root == Ubisoft
 }
 
 // Root returns the absolute path of a root id ("" if unknown).
@@ -224,7 +260,7 @@ var sensitivePaths = []rootSub{
 	{Home, []string{"Downloads"}},
 }
 
-var errNotSyncable = errors.New("only folders inside your user profile, Documents, AppData or Saved Games can be synced between PCs")
+var errNotSyncable = errors.New("only folders inside your user profile, Documents, AppData, Saved Games or Ubisoft Connect's savegames can be synced between PCs")
 
 // CheckSyncable rejects an absolute path that must never become a shared
 // folder: outside all known roots, a whole root or protected container (or
@@ -242,6 +278,11 @@ func CheckSyncable(abs string) error {
 			return errNotSyncable
 		}
 	}
+	// Ubisoft Connect keeps <account id>\<game id>: an account folder holds
+	// every Ubisoft game's saves.
+	if root, rel, _ := Portable(abs); root == Ubisoft && !strings.Contains(rel, "/") {
+		return errNotSyncable
+	}
 	for _, c := range protectedContainers {
 		if p, ok := c.abs(); ok && Within(abs, p) { // abs == container or an ancestor of it
 			return errNotSyncable
@@ -254,4 +295,28 @@ func CheckSyncable(abs string) error {
 		}
 	}
 	return nil
+}
+
+// Here reports whether root resolves on this PC.
+func Here(root string) bool {
+	_, ok := roots[root]
+	return ok
+}
+
+// SetRootForTest points root at dir ("" removes it) until the returned func
+// is called. Only for tests of code that depends on which roots exist.
+func SetRootForTest(root, dir string) (restore func()) {
+	old, had := roots[root]
+	if dir == "" {
+		delete(roots, root)
+	} else {
+		roots[root] = dir
+	}
+	return func() {
+		if had {
+			roots[root] = old
+		} else {
+			delete(roots, root)
+		}
+	}
 }

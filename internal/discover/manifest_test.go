@@ -2,10 +2,13 @@ package discover
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/paths"
 )
 
 const sample = `Stardew Valley:
@@ -120,5 +123,84 @@ func TestParseReal(t *testing.T) {
 	t.Logf("scan found %d in %v", len(found), time.Since(start))
 	for _, g := range found {
 		t.Logf("  %-40s cloud=%-5v known=%-5v %s", g.Name, g.SteamCloud, g.Known, g.Path)
+	}
+}
+
+const ubisoftSample = `---
+"Assassin's Creed Odyssey":
+  cloud:
+    uplay: true
+  files:
+    "<root>/savegames/<storeUserId>/5059":
+      tags:
+        - save
+      when:
+        - store: uplay
+    "<root>/savegames/<storeUserId>/5092":
+      tags:
+        - save
+      when:
+        - store: steam
+        - store: uplay
+    "<root>/userdata/<storeUserId>/812140/remote":
+      tags:
+        - save
+      when:
+        - store: steam
+  steam:
+    id: 812140
+`
+
+func TestParseUbisoft(t *testing.T) {
+	es, err := Parse(strings.NewReader(ubisoftSample))
+	if err != nil || len(es) != 1 {
+		t.Fatalf("entries=%+v err=%v", es, err)
+	}
+	e := es[0]
+	if want := []string{"<ubisoft>/<storeUserId>/5059", "<ubisoft>/<storeUserId>/5092"}; !reflect.DeepEqual(e.Paths, want) {
+		t.Errorf("paths = %q, want %q (Steam's own folder is Steam Cloud's)", e.Paths, want)
+	}
+	if want := []int{5059, 5092}; !reflect.DeepEqual(e.UbisoftIDs, want) {
+		t.Errorf("ubisoft ids = %v, want %v", e.UbisoftIDs, want)
+	}
+}
+
+func TestResolveUbisoft(t *testing.T) {
+	u := t.TempDir()
+	defer paths.SetRootForTest(paths.Ubisoft, u)()
+	for _, d := range []string{`a1\5092`, `a1\5059`, `b2\5092`, `b2\66088`} {
+		writeStoreFile(t, filepath.Join(u, d, "1.save"), "x")
+	}
+	got := resolve("<ubisoft>/<storeUserId>/5092", "me", newExistCache())
+	want := []string{filepath.Join(u, "a1", "5092"), filepath.Join(u, "b2", "5092")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("resolve = %q, want %q", got, want)
+	}
+	broad := tooBroad()
+	for _, acct := range []string{"a1", "b2"} {
+		if !broad[strings.ToLower(filepath.Join(u, acct))] {
+			t.Errorf("account folder %s isn't too broad", acct)
+		}
+	}
+}
+
+func TestReadIndexFallsBack(t *testing.T) {
+	defer paths.SetRootForTest(paths.Local, t.TempDir())()
+	cacheMu.Lock()
+	cached = nil
+	cacheMu.Unlock()
+	if _, err := readIndex(); err == nil {
+		t.Fatal("read an index that isn't there")
+	}
+	es := []Entry{{Name: "Game", Paths: []string{"<winAppData>/Game"}}}
+	if err := writeIndex(es); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(indexFile(), filepath.Join(cacheDir(), "manifest-index-v3.gob.gz")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readIndex()
+	if err != nil || !reflect.DeepEqual(got, es) {
+		t.Errorf("fallback to the previous index: got %+v, %v", got, err)
 	}
 }

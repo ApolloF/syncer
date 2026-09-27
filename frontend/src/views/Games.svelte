@@ -21,8 +21,9 @@
   import {
     Folders, ScanGames, AddFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
-    Conflicts, ResolveConflict, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
+    Conflicts, ResolveConflict, ResolveConflicts, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
     LeaveToSteamCloud,
+    StopSyncingCopies,
   } from '../../wailsjs/go/main/App'
   import type { conflict, store } from '../../wailsjs/go/models'
 
@@ -86,11 +87,32 @@
       load(); refresh()
     }
   }
+  // Other PCs that made conflict copies, for "use all of that PC's versions".
+  const conflictPCs = $derived.by(() => {
+    const m = new Map<string, string>()
+    for (const c of conflicts) if (!m.has(c.device)) m.set(c.device, c.deviceName || c.device)
+    return [...m.entries()].map(([device, name]) => ({ device, name }))
+  })
+
+  async function resolveAll(device: string, name = '') {
+    if (!conflictsFor) return
+    const f = conflictsFor
+    resolving = '*'
+    try {
+      const n = await ResolveConflicts(f.id, device)
+      toast(device ? `Using ${name}'s version of ${plural(n, 'file')}` : `Kept the current version of ${plural(n, 'file')}`, 'ok')
+    } catch (e) { fail(e) }
+    resolving = ''
+    conflicts = (await Conflicts(f.id).catch(() => [])) ?? []
+    if (!conflicts.length) conflictsFor = null
+    load(); refresh()
+  }
   let stoppingUninstalled = $state(false)
   let leavingCloud = $state(false)
+  let stoppingCopies = $state(false)
   let syncingId = $state('')
   // Syncing a game Steam Cloud keeps too is asked first (see askCloud).
-  let cloudAsk = $state<{ name: string; go: () => void } | null>(null)
+  let cloudAsk = $state<{ name: string; go: () => void; ubisoft: boolean } | null>(null)
 
   const o = $derived(ui.overview)
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
@@ -147,6 +169,7 @@
   const elsewhereCount = $derived(cache.available && cache.others ? cache.available.length + cache.others.length : null)
   const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
   const syncedCloud = $derived(cache.folders.filter(f => f.sync && f.steamCloud))
+  const syncedCopies = $derived(cache.folders.filter(f => f.sync && f.copyOf))
   // Synced folders inside another synced folder, grouped by the outer one.
   const overlaps = $derived.by(() => {
     const m = new Map<string, { outer: main.FolderView; inner: main.FolderView[] }>()
@@ -188,10 +211,10 @@
 
   // Two sync tools on the same saves: Steam asks which copy to keep, and the
   // wrong pick overwrites a save. Syncing such a game is the user's call.
-  function askCloud(name: string, go: () => void) { cloudAsk = { name, go } }
+  function askCloud(name: string, go: () => void, ubisoft = false) { cloudAsk = { name, go, ubisoft } }
 
-  async function add(name: string, path: string, cloud = false) {
-    if (cloud) return askCloud(name, () => add(name, path))
+  async function add(name: string, path: string, cloud = false, ubisoft = false) {
+    if (cloud || ubisoft) return askCloud(name, () => add(name, path), ubisoft && !cloud)
     adding = path
     const ok = await attempt(() => AddFolder(name, path), `Now syncing ${name}`)
     adding = ''
@@ -246,7 +269,7 @@
   }
 
   async function toggleSync(f: main.FolderView, on: boolean, asked = false) {
-    if (on && f.steamCloud && !asked) return askCloud(f.label, () => toggleSync(f, on, true))
+    if (on && (f.steamCloud || f.ubisoftCloud) && !asked) return askCloud(f.label, () => toggleSync(f, on, true), !f.steamCloud)
     f.sync = on
     if (await attempt(() => SetFolderSync(f.id, on))) { load(); refresh() }
     else f.sync = !on
@@ -368,12 +391,23 @@
     leavingCloud = false
   }
 
+  async function stopCopies() {
+    stoppingCopies = true
+    try {
+      const n = await StopSyncingCopies()
+      toast(`Stopped syncing ${n === 1 ? 'the copy' : `${n} copies`}. Syncer keeps backing them up.`, 'ok')
+      cache.found = null
+      load(); refresh()
+    } catch (e) { fail(e); load() }
+    stoppingCopies = false
+  }
+
   async function showCloudGames() {
     if (o && await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: true } as store.Settings))) refresh()
   }
 
   async function syncHere(a: main.AvailableView, asked = false) {
-    if (a.reason === 'steam-cloud' && !asked) return askCloud(a.label, () => syncHere(a, true))
+    if ((a.reason === 'steam-cloud' || a.reason === 'ubisoft-cloud') && !asked) return askCloud(a.label, () => syncHere(a, true), a.reason === 'ubisoft-cloud')
     syncingId = a.id
     if (await attempt(() => SyncAvailable(a.id), `Now syncing ${a.label}`)) {
       cache.available = cache.available?.filter(x => x.id !== a.id) ?? null
@@ -449,6 +483,12 @@
   const cloudNoted = (g: main.GameView) => g.steamCloudUnverified && !(g.steamCloudReason === 'not-installed' && !g.installed)
 
   // A Steam emulator folder holding a copy of the game's own saves.
+  function emulatorTip(emulator: string): string {
+    return emulator === 'UplayEmu'
+      ? 'Saves a Ubisoft Connect emulator keeps for a cracked copy, where Ubisoft Connect would keep them in its cloud'
+      : `Saves a Steam emulator (${emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud`
+  }
+
   function copyTip(game: string, found: boolean): string {
     const why = `${game} writes every save twice: into its own save folder and through the Steam Cloud API, which this Steam emulator keeps here. Its own folder has the same saves, so `
     return why + (found ? "Syncer doesn't add this copy automatically."
@@ -505,6 +545,10 @@
     {#if f.steamCloud}
       {#if f.sync}<span class="pill warn" title="Steam Cloud keeps this folder on this PC too. With two sync tools on the same saves, Steam asks which copy to keep, and the wrong pick overwrites a save. Turn off Sync to leave it to Steam Cloud; Syncer keeps backing it up.">Also in Steam Cloud</span>
       {:else}<span class="pill" title="Steam Cloud syncs these saves between your PCs; Syncer backs them up.">Steam Cloud</span>{/if}
+    {/if}
+    {#if f.ubisoftCloud}
+      {#if f.sync}<span class="pill warn" title="Ubisoft Connect keeps these saves in its cloud too. Two sync tools on the same saves can make conflicting copies. Turn off Sync to leave syncing to Ubisoft Connect; Syncer keeps backing it up.">Also in Ubisoft Cloud</span>
+      {:else}<span class="pill" title="Ubisoft Connect syncs these saves between your PCs through its cloud; Syncer backs them up.">In Ubisoft Cloud</span>{/if}
     {/if}
     {#if f.copyOf}<span class="pill" title={copyTip(f.copyOf, false)}>Copy of {f.copyOf}</span>{/if}
     {@render driveCopy(f.oneDriveCopy, f.oneDriveCopyNewer)}
@@ -589,6 +633,17 @@
       </button>
     </div>
   {/if}
+  {#if syncedCopies.length}
+    <div class="card notice row">
+      <Icon name="alert" size={16} />
+      <span class="grow">
+        <b>{names(syncedCopies)}</b> {syncedCopies.length === 1 ? 'is a copy' : 'are copies'} of saves {syncedCopies.length === 1 ? 'the game keeps' : 'the games keep'} in {syncedCopies.length === 1 ? 'its' : 'their'} own save folder, so the same saves sync twice.
+      </span>
+      <button class="btn sm" disabled={stoppingCopies} onclick={stopCopies} title="Stops syncing the copies on this PC. Syncer keeps backing them up.">
+        {#if stoppingCopies}<Icon name="refresh" size={14} class="spin" />{/if} Stop syncing {syncedCopies.length === 1 ? 'the copy' : 'the copies'}
+      </button>
+    </div>
+  {/if}
   {#if o?.settings.installedOnly && uninstalledCount > 0}
     <div class="card notice row">
       <span class="grow">{plural(uninstalledCount, 'synced game')} {uninstalledCount === 1 ? "isn't" : "aren't"} installed on this PC.</span>
@@ -629,10 +684,11 @@
               {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
               {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
               {#if g.copyOf}<span class="pill" title={copyTip(g.copyOf, true)}>Copy of {g.copyOf}</span>
-              {:else if g.emulator}<span class="pill warn" title="Saves a Steam emulator ({g.emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud">{g.emulator} saves</span>{/if}
+              {:else if g.emulator}<span class="pill warn" title={emulatorTip(g.emulator)}>{g.emulator} saves</span>{/if}
               {#if !g.known}<span class="pill warn">Unrecognized</span>{/if}
               {#if !g.installed}<span class="pill" title="Syncer didn't find this game installed on this PC">Not installed</span>{/if}
               {#if g.oneDrive}<span class="pill" title="These saves are in OneDrive, which already syncs them between your PCs, so Syncer backs them up instead of syncing them. Sync them only if OneDrive isn't on your other PCs.">In OneDrive</span>{/if}
+              {#if g.ubisoftCloud}<span class="pill" title="These saves are in Ubisoft Connect's own save folder, which Ubisoft Connect keeps in its cloud, so Syncer backs them up instead of syncing them.">In Ubisoft Cloud</span>{/if}
               {@render driveCopy(g.oneDriveCopy, g.oneDriveCopyNewer)}
               {#if g.dismissed}<span class="pill" title="You removed this game or stopped syncing it on this PC, so Syncer doesn't add it by itself.">Removed</span>{/if}
             </div>
@@ -642,7 +698,7 @@
           <button class="btn ghost sm" disabled={adding === g.path} onclick={() => addBackupOnly(g.name, g.path)}>
             Back up only
           </button>
-          <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path, g.steamCloud)}>
+          <button class="btn sm" disabled={adding === g.path} onclick={() => add(g.name, g.path, g.steamCloud, g.ubisoftCloud)}>
             {#if adding === g.path}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync
           </button>
@@ -674,10 +730,12 @@
           {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
           {:else if a.reason === 'onedrive'}<span class="pill warn" title="On this PC this folder is in OneDrive, which may already sync it. Sync it here only if OneDrive doesn't.">In OneDrive</span>
           {:else if a.reason === 'steam-cloud'}<span class="pill" title="Steam Cloud keeps this folder on this PC, so it isn't synced here as well.">Steam Cloud here</span>
-          {:else if a.reason === 'copy'}<span class="pill" title="A Steam emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
+          {:else if a.reason === 'ubisoft-cloud'}<span class="pill" title="Ubisoft Connect keeps this folder in its cloud on this PC, so it isn't synced here as well.">Ubisoft Cloud here</span>
+          {:else if a.reason === 'not-here'}<span class="pill" title="These saves are in Ubisoft Connect's save folder, and Ubisoft Connect isn't installed on this PC.">No Ubisoft Connect here</span>
+          {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
           {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
           {:else}<span class="pill">Removed here</span>{/if}
-          <button class="btn sm" disabled={syncingId === a.id} onclick={() => syncHere(a)}>
+          <button class="btn sm" disabled={syncingId === a.id || a.reason === 'not-here'} onclick={() => syncHere(a)}>
             {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
             Sync here
           </button>
@@ -759,7 +817,18 @@
         <p class="faint">No conflicts left.</p>
       {/each}
     </div>
+    {#if conflicts.length > 1}
+      <p class="small">A save made of several files should come from one PC as a whole. Mixing files from two PCs can break it.</p>
+    {/if}
     {#snippet actions()}
+      {#if conflicts.length > 1}
+        <button class="btn" disabled={!!resolving} onclick={() => resolveAll('')}>Keep all current</button>
+        {#each conflictPCs as pc (pc.device)}
+          <button class="btn" disabled={!!resolving} onclick={() => resolveAll(pc.device, pc.name)}>
+            {#if resolving === '*'}<Icon name="refresh" size={14} class="spin" />{/if} Use all from {pc.name}
+          </button>
+        {/each}
+      {/if}
       <button class="btn" onclick={() => (conflictsFor = null)}>Close</button>
     {/snippet}
   </Modal>
@@ -899,8 +968,13 @@
 {#if cloudAsk}
   {@const c = cloudAsk}
   <Modal title="Sync {c.name} anyway?" onclose={() => (cloudAsk = null)}>
-    <p>Steam Cloud already keeps these saves on this PC. With Syncer syncing them too, Steam asks which copy to keep when the two differ, and the wrong pick overwrites a save.</p>
-    <p class="small">Sync them only if Steam Cloud doesn't reach your other PCs, for example where the game isn't a Steam copy.</p>
+    {#if c.ubisoft}
+      <p>Ubisoft Connect already keeps these saves in its cloud. With Syncer syncing them too, Ubisoft Connect may find two different copies and ask which to keep, and the wrong pick overwrites a save.</p>
+      <p class="small">Sync them only if Ubisoft Connect's cloud saves are off or don't reach your other PCs.</p>
+    {:else}
+      <p>Steam Cloud already keeps these saves on this PC. With Syncer syncing them too, Steam asks which copy to keep when the two differ, and the wrong pick overwrites a save.</p>
+      <p class="small">Sync them only if Steam Cloud doesn't reach your other PCs, for example where the game isn't a Steam copy.</p>
+    {/if}
     {#snippet actions()}
       <button class="btn" onclick={() => (cloudAsk = null)}>Cancel</button>
       <button class="btn primary" onclick={() => { cloudAsk = null; c.go() }}>Sync anyway</button>

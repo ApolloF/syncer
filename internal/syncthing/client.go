@@ -246,6 +246,9 @@ type Folder struct {
 	RescanIntervalS  int            `json:"rescanIntervalS"`
 	IgnorePerms      bool           `json:"ignorePerms"`
 	Versioning       Versioning     `json:"versioning"`
+	// MaxConflicts is how many conflict copies of a file Syncthing keeps
+	// (-1: all of them, 0: none, the default is 10).
+	MaxConflicts int `json:"maxConflicts"`
 }
 
 type Device struct {

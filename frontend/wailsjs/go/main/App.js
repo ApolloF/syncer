@@ -138,6 +138,10 @@ export function ResolveConflict(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveConflict'](arg1, arg2, arg3);
 }
 
+export function ResolveConflicts(arg1, arg2) {
+  return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
+}
+
 export function Restore(arg1, arg2) {
   return window['go']['main']['App']['Restore'](arg1, arg2);
 }
@@ -172,6 +176,10 @@ export function SetFolderSync(arg1, arg2) {
 
 export function StartSyncthing() {
   return window['go']['main']['App']['StartSyncthing']();
+}
+
+export function StopSyncingCopies() {
+  return window['go']['main']['App']['StopSyncingCopies']();
 }
 
 export function SyncAvailable(arg1) {

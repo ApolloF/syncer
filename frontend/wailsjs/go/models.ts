@@ -317,6 +317,7 @@ export namespace main {
 	    inside: string;
 	    oneDrive: boolean;
 	    steamCloud: boolean;
+	    ubisoftCloud: boolean;
 	    copyOf: string;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
@@ -351,6 +352,7 @@ export namespace main {
 	        this.inside = source["inside"];
 	        this.oneDrive = source["oneDrive"];
 	        this.steamCloud = source["steamCloud"];
+	        this.ubisoftCloud = source["ubisoftCloud"];
 	        this.copyOf = source["copyOf"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
@@ -384,6 +386,7 @@ export namespace main {
 	    copyOf: string;
 	    steamId: number;
 	    oneDrive: boolean;
+	    ubisoftCloud: boolean;
 	    oneDriveCopy: string;
 	    oneDriveCopyNewer: boolean;
 	    known: boolean;
@@ -410,6 +413,7 @@ export namespace main {
 	        this.copyOf = source["copyOf"];
 	        this.steamId = source["steamId"];
 	        this.oneDrive = source["oneDrive"];
+	        this.ubisoftCloud = source["ubisoftCloud"];
 	        this.oneDriveCopy = source["oneDriveCopy"];
 	        this.oneDriveCopyNewer = source["oneDriveCopyNewer"];
 	        this.known = source["known"];
@@ -605,6 +609,7 @@ export namespace store {
 	    versions: number;
 	    bytes: number;
 	    errors: string[];
+	    held?: string[];
 	    target: string;
 	
 	    static createFrom(source: any = {}) {
@@ -621,6 +626,7 @@ export namespace store {
 	        this.versions = source["versions"];
 	        this.bytes = source["bytes"];
 	        this.errors = source["errors"];
+	        this.held = source["held"];
 	        this.target = source["target"];
 	    }
 	

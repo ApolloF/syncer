@@ -118,6 +118,11 @@
       {:else}<button class="pill err linkish" onclick={() => (showErrors = !showErrors)}>{lb.errors?.length} issue{lb.errors?.length === 1 ? '' : 's'}</button>{/if}
     </div>
     <div class="line"><span class="muted">Uploaded</span><span>{bytes(lb?.bytes ?? 0)}</span></div>
+    {#if lb?.held?.length}
+      <div class="line"><span class="muted">Left as is</span>
+        <span class="pill" title="Another PC backed up newer saves of {lb.held.join('; ')}. This PC doesn't have them yet, so its older files didn't replace them. They're backed up once they've synced here.">Newer from another PC</span>
+      </div>
+    {/if}
   </div>
 </section>
 

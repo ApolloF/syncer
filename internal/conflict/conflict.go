@@ -6,6 +6,7 @@ package conflict
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -87,9 +88,10 @@ func Find(dir string) []Conflict {
 // Count returns how many conflict copies dir holds.
 func Count(dir string) int { return len(Find(dir)) }
 
-// Preserve moves a file out of the way into history; rel is the name it
-// should be restorable under.
-type Preserve func(abs, rel string) error
+// Preserve puts a file into history; rel is the name it should be restorable
+// under. With move the file goes there, otherwise a copy does and the file
+// stays where it is.
+type Preserve func(abs, rel string, move bool) error
 
 // Resolve settles one conflict copy (copyRel, relative to dir). With useCopy
 // the copy becomes the real file and the current real file goes to history;
@@ -110,10 +112,14 @@ func Resolve(dir, copyRel string, useCopy bool, keep Preserve) error {
 	origRel := filepath.Join(filepath.Dir(copyRel), orig)
 	origAbs := filepath.Join(dir, origRel)
 	if !useCopy {
-		return keep(copyAbs, origRel)
+		return keep(copyAbs, origRel, true)
 	}
+	// The current file is copied into history, then the copy replaces it in
+	// one rename: if that fails (the game has the file open), the current
+	// file is still there. Moving it away first would leave the save missing
+	// here, and Syncthing would pass that on to the other PCs as a delete.
 	if _, err := os.Stat(origAbs); err == nil {
-		if err := keep(origAbs, origRel); err != nil {
+		if err := keep(origAbs, origRel, false); err != nil {
 			return err
 		}
 	}
@@ -123,16 +129,64 @@ func Resolve(dir, copyRel string, useCopy bool, keep Preserve) error {
 	return nil
 }
 
-// StVersionsKeep is a Preserve that moves the file into the folder's own
+// StVersionsKeep is a Preserve that puts the file into the folder's own
 // .stversions, named the way Syncthing names its versions.
 func StVersionsKeep(dir string) Preserve {
-	return func(abs, rel string) error {
+	return func(abs, rel string, move bool) error {
 		ext := filepath.Ext(rel)
 		name := strings.TrimSuffix(rel, ext) + "~" + time.Now().Format("20060102-150405") + ext
 		dst := filepath.Join(dir, ".stversions", name)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		return os.Rename(abs, dst)
+		if move {
+			return os.Rename(abs, dst)
+		}
+		return CopyFile(abs, dst)
 	}
+}
+
+// CopyFile copies src to dst, keeping its modification time.
+func CopyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	fi, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return os.Chtimes(dst, fi.ModTime(), fi.ModTime())
+}
+
+// FromDevice returns the conflict copies that the PC with short id device
+// made, for files that have no other conflict copy: taking that PC's version
+// of a whole save means using each of them. A file with copies from several
+// PCs is left for the user to settle one by one.
+func FromDevice(cs []Conflict, device string) []Conflict {
+	n := map[string]int{}
+	for _, c := range cs {
+		n[strings.ToLower(c.Rel)]++
+	}
+	var out []Conflict
+	for _, c := range cs {
+		if c.Device == device && n[strings.ToLower(c.Rel)] == 1 {
+			out = append(out, c)
+		}
+	}
+	return out
 }

@@ -74,8 +74,11 @@ type BackupRun struct {
 	Versions int       `json:"versions"`
 	Bytes    int64     `json:"bytes"`
 	Errors   []string  `json:"errors"`
-	Target   string    `json:"target"`
-	Backed   []string  `json:"-"` // ids of the folders backed up without errors
+	// Held: files left as they are in the backup because another PC backed
+	// up newer saves there (see backup.mirror), per game.
+	Held   []string `json:"held,omitempty"`
+	Target string   `json:"target"`
+	Backed []string `json:"-"` // ids of the folders backed up without errors
 }
 
 // State is machine-written status.
