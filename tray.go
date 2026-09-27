@@ -60,8 +60,15 @@ func (a *App) startTray() {
 					logx.Printf("tray resume: %v", err)
 				}
 			})
-			upd := systray.AddMenuItem("Download the new Syncer", "")
-			upd.Click(a.OpenUpdate)
+			upd := systray.AddMenuItem("Update Syncer", "")
+			upd.Click(func() {
+				go func() {
+					if err := a.InstallUpdate(); err != nil {
+						logx.Printf("tray update: %v", err)
+						a.OpenUpdate() // get it by hand instead
+					}
+				}()
+			})
 			// Who plays on this PC: one item per account, filled in by refreshTray.
 			acct := systray.AddMenuItem("Switch account", "")
 			var accts []*systray.MenuItem
@@ -109,7 +116,7 @@ func (a *App) traySwitch(i int) {
 }
 
 // refreshTray shows the menu items that fit the current state: pause or
-// resume, and a download link when a new version is out.
+// resume, and an update item when a new version is out.
 func (a *App) refreshTray() {
 	a.mu.Lock()
 	t := a.tray
@@ -158,7 +165,7 @@ func (a *App) refreshTray() {
 	a.tray.ids = ids
 	a.mu.Unlock()
 	if u := availableUpdate(); u != nil {
-		t.update.SetTitle("Download Syncer " + u.Latest)
+		t.update.SetTitle("Update to Syncer " + u.Latest)
 		t.update.Show()
 	} else {
 		t.update.Hide()
@@ -175,6 +182,9 @@ func (a *App) showWindow() {
 	if a.ctx == nil {
 		return
 	}
+	a.mu.Lock()
+	a.hidden = false
+	a.mu.Unlock()
 	wruntime.WindowUnminimise(a.ctx)
 	wruntime.WindowShow(a.ctx)
 	wruntime.WindowSetAlwaysOnTop(a.ctx, true) // bring to front…
@@ -199,6 +209,9 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		return false
 	}
 	wruntime.WindowHide(ctx)
+	a.mu.Lock()
+	a.hidden = true
+	a.mu.Unlock()
 	return true
 }
 

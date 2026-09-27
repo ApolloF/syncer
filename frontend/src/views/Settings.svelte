@@ -3,7 +3,7 @@
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
-  import { SaveSettings, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, OpenUpdate } from '../../wailsjs/go/main/App'
+  import { SaveSettings, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, InstallUpdate } from '../../wailsjs/go/main/App'
   import type { store, main } from '../../wailsjs/go/models'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import { pausedUntil, tomorrowMorning } from '../lib/fmt'
@@ -36,6 +36,13 @@
       refresh()
     } catch (e) { fail(e) }
     checking = false
+  }
+
+  let updating = $state(false)
+  async function installUpdate() {
+    updating = true
+    await attempt(() => InstallUpdate()) // on success Syncer restarts
+    updating = false
   }
 
   async function save(patch: Partial<store.Settings>) {
@@ -176,13 +183,19 @@
       </div>
     </div>
     {#if o?.update}
-      <button class="btn sm primary" onclick={() => OpenUpdate()}><Icon name="external" size={14} /> Download</button>
+      <button class="btn sm primary" disabled={updating} onclick={installUpdate}>
+        {#if updating}<Icon name="refresh" size={14} class="spin" />{/if} Update now
+      </button>
     {:else}
       <button class="btn sm" disabled={checking || o?.settings.noUpdateCheck || o?.version === 'dev'} onclick={checkUpdate}>
         {#if checking}<Icon name="refresh" size={14} class="spin" />{/if} Check now
       </button>
     {/if}
     <Toggle checked={!o?.settings.noUpdateCheck} label="Check for updates" onchange={(v) => save({ noUpdateCheck: !v })} />
+  </div>
+  <div class="item">
+    <div class="grow"><div class="name">Install updates automatically</div><div class="faint small">While Syncer runs in the tray (no window open, no game running, no backup in progress), it installs a new version by itself and restarts.</div></div>
+    <Toggle checked={!o?.settings.noAutoUpdate} disabled={o?.settings.noUpdateCheck} label="Install updates automatically" onchange={(v) => save({ noAutoUpdate: !v })} />
   </div>
   <div class="item">
     <div class="grow"><div class="name">Advanced sync settings</div><div class="faint small">Syncthing's own interface, for fine-tuning.</div></div>

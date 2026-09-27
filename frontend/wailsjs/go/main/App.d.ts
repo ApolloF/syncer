@@ -59,6 +59,8 @@ export function HandOverMods(arg1:string):Promise<void>;
 
 export function InstallSyncthing():Promise<void>;
 
+export function InstallUpdate():Promise<void>;
+
 export function LeaveToSteamCloud():Promise<number>;
 
 export function Log():Promise<Array<string>>;

@@ -106,6 +106,10 @@ export function InstallSyncthing() {
   return window['go']['main']['App']['InstallSyncthing']();
 }
 
+export function InstallUpdate() {
+  return window['go']['main']['App']['InstallUpdate']();
+}
+
 export function LeaveToSteamCloud() {
   return window['go']['main']['App']['LeaveToSteamCloud']();
 }

@@ -38,6 +38,8 @@ type App struct {
 	others    *othersCache            // backups in Drive no game here uses
 	quitting  bool                    // quit from the tray: really exit
 	headless  bool                    // the --api helper: no window to tell about changes
+	hidden    bool                    // only the tray icon shows, no window
+	updating  bool                    // installing a new release, see update.go
 	tray      trayItems
 }
 

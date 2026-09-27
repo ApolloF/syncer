@@ -160,7 +160,7 @@ func problems(s store.Settings, st store.State, conflicts map[string]int, labels
 	}
 	if upd != nil {
 		ps = append(ps, problem{"update:" + upd.Latest, "Syncer " + upd.Latest + " is available",
-			"Open Syncer to download it."})
+			"Open Syncer to install it."})
 	}
 	return ps
 }
