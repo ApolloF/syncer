@@ -24,8 +24,8 @@ type newerSave struct {
 
 const (
 	newerEvery = 10 * time.Minute
-	newerSlack = 2 * time.Minute         // clocks and file systems differ a little
-	newerMax   = 60 * 24 * time.Hour     // info older than this is ignored
+	newerSlack = 2 * time.Minute     // clocks and file systems differ a little
+	newerMax   = 60 * 24 * time.Hour // info older than this is ignored
 )
 
 func (a *App) newerLoop(ctx context.Context) {
@@ -45,6 +45,9 @@ func (a *App) checkNewer(ctx context.Context) {
 			for _, f := range fs {
 				if ctx.Err() != nil {
 					return
+				}
+				if isMod(s, f.ID) {
+					continue
 				}
 				if n, ok := newerElsewhere(target, f, s.Exclude[dismissKey(f.Path)], time.Now()); ok {
 					found[f.ID] = n

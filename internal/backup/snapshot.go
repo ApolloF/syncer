@@ -18,6 +18,7 @@ import (
 // It returns how many files were saved.
 func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 	m := LoadMatcher(f.Path, f.Exclude...)
+	sc := f.scope()
 	mirror := filepath.Join(target, f.ID)
 	var rels []string
 	err := filepath.WalkDir(f.Path, func(p string, d fs.DirEntry, err error) error {
@@ -31,7 +32,7 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 		if rel == "." {
 			return nil
 		}
-		if m.Ignored(rel) {
+		if m.Ignored(rel) || sc.skip(rel, d.IsDir()) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}

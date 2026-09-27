@@ -1697,6 +1697,27 @@ func (a *App) followSource(ctx context.Context, c *syncthing.Client, id, device 
 	return nil
 }
 
+// deployedFiles are the mod files of a deployed-mods folder on this PC: the
+// deployment it sends, or the last update it applied (none yet: nothing).
+func deployedFiles(s store.Settings, id string) []string {
+	var inv *mods.Inventory
+	if s.Mods[id].Role == meta.RoleSource {
+		if ss := loadSource(id); ss != nil {
+			inv = &ss.Inv
+		}
+	} else {
+		inv = loadInv(id, "applied")
+	}
+	if inv == nil {
+		return nil
+	}
+	out := make([]string, 0, len(inv.Files))
+	for _, f := range inv.Files {
+		out = append(out, f.Rel)
+	}
+	return out
+}
+
 // ---- view -------------------------------------------------------------------------
 
 // modView fills in a deployed-mods folder's update state.

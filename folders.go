@@ -741,11 +741,6 @@ func cleanMarkers(dir string) string {
 // synced either stays listed as "off": nothing happens to it until one of
 // its toggles is turned back on.
 func (a *App) SetFolderBackup(id string, on bool) error {
-	if on && modKind(store.LoadSettings(), id) == mods.KindDeployed {
-		// The backup would copy the whole game folder: its scope lives in
-		// Syncthing's ignore list only.
-		return errors.New("deployed mods can't be backed up; back up the Vortex mods folder instead")
-	}
 	_, err := store.UpdateSettings(func(s *store.Settings) {
 		if on {
 			delete(s.NoBackup, id)

@@ -491,6 +491,9 @@ func (a *App) RestorePoints(id string) []int64 {
 
 // Restore copies a backup back into place. point 0 = latest backup.
 func (a *App) Restore(id string, point int64) (int, error) {
+	if applying.has(id) {
+		return 0, errApplying
+	}
 	t, ok := backupTarget(store.LoadSettings())
 	if !ok {
 		return 0, errors.New("Google Drive folder not found")

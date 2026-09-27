@@ -358,7 +358,12 @@
     } catch (e) { fail(e) }
   }
 
-  async function toggleBackup(f: main.FolderView, on: boolean) {
+  // Backing up mods is off unless turned on; for deployed mods, ask first.
+  let backupAsk = $state<main.FolderView | null>(null)
+
+  async function toggleBackup(f: main.FolderView, on: boolean, asked = false) {
+    if (on && f.kind === 'mods-deployed' && !asked) { backupAsk = f; return }
+    backupAsk = null
     f.backup = on
     if (await attempt(() => SetFolderBackup(f.id, on))) { if (!f.sync) load() }
     else f.backup = !on
@@ -658,8 +663,7 @@
     </div>
     <span title="Sync between PCs"><Toggle checked={f.sync} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} /></span>
     <span title="Back up to Google Drive">
-      {#if f.kind === 'mods-deployed'}<span class="toggle-gap" title="Deployed mods aren't backed up; the Vortex mods folder can be"></span>
-      {:else}<Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />{/if}
+      <Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />
     </span>
   </div>
 {/snippet}
@@ -1183,6 +1187,18 @@
   </Modal>
 {/if}
 
+{#if backupAsk}
+  <Modal title="Back up the deployed mods of {backupAsk.label}?" onclose={() => (backupAsk = null)}>
+    <p>Only the mod files are backed up to Google Drive: the files {backupAsk.modRole === 'source' ? 'Vortex deployed on this PC' : 'the last update applied here'}, not the game's own files.
+      {#if backupAsk.bytes}They take about {bytes(backupAsk.bytes)}.{/if}</p>
+    <p class="faint small">Mods can usually be downloaded again, so this is mostly worth it for mods that are hard to get. The Vortex mods folder can be backed up instead.</p>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (backupAsk = null)}>Cancel</button>
+      <button class="btn primary" onclick={() => backupAsk && toggleBackup(backupAsk, true, true)}>Back them up</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
   .checks { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
   .checks li { display: flex; align-items: baseline; gap: 6px; color: var(--ok, inherit); }
@@ -1193,7 +1209,6 @@
   .audit:hover { background: var(--hover); }
   .warnbox { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
   .err { color: var(--err); }
-  .toggle-gap { display: inline-block; width: 38px; }
   .warnbox { align-items: flex-start; }
   .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
   .notes li + li { margin-top: 6px; }
