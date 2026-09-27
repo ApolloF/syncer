@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,9 @@ import (
 )
 
 const FolderID = "syncer-meta"
+
+// AppVersion is this Syncer's version, published for the other PCs.
+var AppVersion string
 
 // SharedFolder is a folder described portably.
 type SharedFolder struct {
@@ -64,6 +68,11 @@ type DeviceFile struct {
 	Folders []SharedFolder `json:"folders"`
 	// Features this PC's Syncer understands (e.g. accounts.Feature).
 	Features []string `json:"features,omitempty"`
+	// Version of this PC's Syncer ("" from Syncers before it was published).
+	Version string `json:"version,omitempty"`
+	// Settled: when two versions of a folder's saves (by id) were last
+	// settled on this PC (unix seconds).
+	Settled map[string]int64 `json:"settled,omitempty"`
 	// Accounts: this PC's copy of the accounts and split games, and who
 	// plays on it.
 	Accounts *accounts.Shared `json:"accounts,omitempty"`
@@ -138,6 +147,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 
 	// Publish our own folder list.
 	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature},
+		Version: AppVersion, Settled: settledHere(),
 		Folders: publishable(folders, settings, ast, me, func(id string) int64 {
 			st, _ := c.FolderStatus(ctx, id)
 			return st.GlobalBytes
@@ -874,12 +884,13 @@ func changed(me string, df DeviceFile) bool {
 		return true
 	}
 	var old DeviceFile
-	if json.Unmarshal(b, &old) != nil || old.Name != df.Name || len(old.Folders) != len(df.Folders) {
+	if json.Unmarshal(b, &old) != nil || old.Name != df.Name || old.Version != df.Version || len(old.Folders) != len(df.Folders) {
 		return true
 	}
 	oa, _ := json.Marshal(old.Accounts)
 	na, _ := json.Marshal(df.Accounts)
-	if string(oa) != string(na) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") {
+	if string(oa) != string(na) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") ||
+		!maps.Equal(old.Settled, df.Settled) {
 		return true
 	}
 	for i := range old.Folders {
@@ -950,6 +961,41 @@ func Peers() map[string]string {
 		m[df.Device] = df.Name
 	}
 	return m
+}
+
+// PeerVersions returns the Syncer version each other PC published (device
+// id -> version, "" when its Syncer is too old to publish one).
+func PeerVersions(me string) map[string]string {
+	m := map[string]string{}
+	for _, df := range readOtherFiles(me) {
+		m[df.Device] = df.Version
+	}
+	return m
+}
+
+func settledHere() map[string]int64 {
+	var m map[string]int64
+	for id, t := range store.LoadState().Settled {
+		if m == nil {
+			m = map[string]int64{}
+		}
+		m[id] = t.Unix()
+	}
+	return m
+}
+
+// PeerSettled is the latest time another PC published for settling two
+// versions of a folder's saves.
+func PeerSettled(me, id string) time.Time {
+	var best time.Time
+	for _, df := range readOtherFiles(me) {
+		if s, ok := df.Settled[id]; ok {
+			if t := time.Unix(s, 0); t.After(best) {
+				best = t
+			}
+		}
+	}
+	return best
 }
 
 // ---- folder cache for offline backups ----------------------------------------

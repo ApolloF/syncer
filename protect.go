@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -132,8 +133,30 @@ func (a *App) Conflicts(id string) ([]conflict.Conflict, error) {
 	}
 	cs := conflict.Find(f.Path)
 	names := a.deviceNames()
+	c, err := a.client()
+	if err != nil {
+		for i := range cs {
+			cs[i].DeviceName = names[cs[i].Device]
+		}
+		return cs, nil
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	// Say which version is this PC's: "keep mine" is what people look for.
+	if st, err := c.Status(ctx); err == nil && len(st.MyID) >= 7 {
+		me := st.MyID[:7]
+		names[me] = cmp.Or(names[me], "this PC")
+		if names[me] != "this PC" {
+			names[me] += " (this PC)"
+		}
+	}
 	for i := range cs {
 		cs[i].DeviceName = names[cs[i].Device]
+		if i < 50 { // one Syncthing call each
+			if fi, err := c.DBFile(ctx, id, filepath.ToSlash(cs[i].Rel)); err == nil && fi.ModifiedBy != "" {
+				cs[i].CurrentName = names[fi.ModifiedBy]
+			}
+		}
 	}
 	return cs, nil
 }
@@ -206,32 +229,69 @@ func (a *App) resolveConflict(id, copyRel string, useCopy bool) error {
 	if err != nil {
 		return err
 	}
+	keep, where := keeper(f)
+	curName, copyName := a.versionNames(id, copyRel)
+	put, err := conflict.Resolve(f.Path, copyRel, useCopy, keep)
+	if err != nil {
+		return err
+	}
+	logx.Printf("conflict in %s: kept the %s version of %s, other one moved to %s", f.Label,
+		map[bool]string{true: "other", false: "current"}[useCopy], copyRel, where)
+	d := store.Decision{Folder: id, Rel: conflictRel(copyRel), Kept: curName, Other: copyName, Put: put}
+	if useCopy {
+		d.Kept, d.Other = copyName, curName
+	}
+	decided(d)
+	a.forgetConflicts()
+	return nil
+}
+
+// conflictRel is the save file a conflict copy is of.
+func conflictRel(copyRel string) string {
+	orig, _, _ := conflict.Parse(filepath.Base(copyRel))
+	return filepath.Join(filepath.Dir(filepath.Clean(copyRel)), orig)
+}
+
+// versionNames names the PCs the current file and the conflict copy came
+// from ("" when unknown).
+func (a *App) versionNames(id, copyRel string) (current, copy string) {
+	names := a.deviceNames()
+	if _, dev, ok := conflict.Parse(filepath.Base(copyRel)); ok {
+		copy = names[dev]
+	}
+	if c, err := a.client(); err == nil {
+		ctx, cancel := a.callCtx()
+		defer cancel()
+		if fi, err := c.DBFile(ctx, id, filepath.ToSlash(conflictRel(copyRel))); err == nil {
+			current = names[fi.ModifiedBy]
+		}
+	}
+	return current, copy
+}
+
+// keeper puts files of f into history: its backup history, or the folder's
+// .stversions without a backup folder (or while a long backup runs).
+func keeper(f backup.Folder) (conflict.Preserve, string) {
 	local := conflict.StVersionsKeep(f.Path)
 	keep, where := local, filepath.Join(f.Path, ".stversions")
 	if t, ok := backupTarget(store.LoadSettings()); ok {
 		if err := os.MkdirAll(t, 0o755); err == nil {
-			keep = func(abs, rel string, move bool) error {
+			keep = func(abs, rel string, move bool) (string, error) {
 				if backup.Running() {
 					// Don't make the user wait for it (per file, for "all").
 					logx.Printf("conflict in %s: backup busy, keeping the other version in .stversions", f.Label)
 					return local(abs, rel, move)
 				}
-				err := backup.Keep(t, f.ID, abs, rel, move)
+				put, err := backup.Keep(t, f.ID, abs, rel, move)
 				if errors.Is(err, backup.ErrBusy) {
 					// A long backup is running: don't make the user wait.
 					logx.Printf("conflict in %s: backup busy, keeping the other version in .stversions", f.Label)
 					return local(abs, rel, move)
 				}
-				return err
+				return put, err
 			}
 			where = "backup history"
 		}
 	}
-	if err := conflict.Resolve(f.Path, copyRel, useCopy, keep); err != nil {
-		return err
-	}
-	logx.Printf("conflict in %s: kept the %s version of %s, other one moved to %s", f.Label,
-		map[bool]string{true: "other", false: "current"}[useCopy], copyRel, where)
-	a.forgetConflicts()
-	return nil
+	return keep, where
 }

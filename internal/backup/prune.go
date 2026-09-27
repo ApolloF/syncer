@@ -70,10 +70,13 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 		case pts[i].Before(cut):
 			_ = os.RemoveAll(dir)
 		case last != "":
-			_ = merge(dir, last)
+			if merge(dir, last) == nil {
+				mergeOrigin(dir, last)
+			}
 		}
 	}
 	unpinStale(root)
+	forgetStaleOrigins(root)
 }
 
 // plan says which of pts (newest first) stay: everything from cut on (thinned

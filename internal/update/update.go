@@ -199,6 +199,12 @@ func Newer(a, b string) bool {
 	return false
 }
 
+// Valid reports whether v is a release version (not e.g. "dev").
+func Valid(v string) bool {
+	_, ok := parse(v)
+	return ok
+}
+
 func parse(v string) ([3]int, bool) {
 	var out [3]int
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")

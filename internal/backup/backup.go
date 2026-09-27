@@ -111,10 +111,20 @@ type Options struct {
 
 var pauseEvery = 2 * time.Second // var so tests can pause on every file
 
+// SettledAt is when two versions of a folder's saves were last settled, on
+// this PC or another: the saves other PCs made before then were decided on.
+// The app sets it to take other PCs' word into account too.
+var SettledAt = func(id string) time.Time { return store.LoadState().Settled[id] }
+
 type indexEntry struct {
 	Size  int64 `json:"s"`
 	MTime int64 `json:"m"`
+	// O names the PC the file was last changed on when it was backed up
+	// ("" = unknown), for the restore point it goes into once replaced.
+	O string `json:"o,omitempty"`
 }
+
+func (e indexEntry) same(o indexEntry) bool { return e.Size == o.Size && e.MTime == o.MTime }
 
 // Run backs up all folders into opts.Target.
 func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun, error) {
@@ -213,7 +223,11 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}
 	seen := map[string]bool{}
-	names := map[string]string{} // key -> rel as named
+	names := map[string]string{}    // key -> rel as named
+	org := newOrigins(f.ID, f.Solo) // where the files this run versions came from
+	// Another PC's copy from before two versions were settled here was
+	// decided against: the version kept here is backed up over it.
+	settled := SettledAt(f.ID)
 	errf := func(format string, a ...any) { errs = append(errs, f.Label+": "+fmt.Sprintf(format, a...)) }
 
 	_ = filepath.WalkDir(f.Path, func(path string, d fs.DirEntry, err error) error {
@@ -257,14 +271,21 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		cur := indexEntry{Size: info.Size(), MTime: info.ModTime().UnixNano()}
 		out := filepath.Join(dst, rel)
 		old, known := idx[key]
+		prev := "" // where the backup's copy came from, if this PC put it there
 		if ti, err := os.Stat(out); err == nil {
-			if ti.Size() == cur.Size && ((known && old == cur) || sameTime(ti.ModTime(), info.ModTime())) {
+			if ti.Size() == cur.Size && ((known && old.same(cur)) || sameTime(ti.ModTime(), info.ModTime())) {
+				if cur.O = old.O; !known || !old.same(cur) || cur.O == "" {
+					cur.O = org.lookup(rel)
+				}
 				newIdx[key] = cur // already there
 				p.FilesDone++
 				return nil
 			}
 			ours := f.Solo || (known && ti.Size() == old.Size && sameTime(ti.ModTime(), time.Unix(0, old.MTime)))
-			if !ours && ti.ModTime().After(info.ModTime().Add(2*time.Second)) {
+			if ours && known {
+				prev = old.O
+			}
+			if !ours && ti.ModTime().After(info.ModTime().Add(2*time.Second)) && ti.ModTime().After(settled) {
 				held++ // another PC's newer save
 				if known {
 					newIdx[key] = old
@@ -283,7 +304,9 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		}
 		if v {
 			versioned++
+			org.add(prev)
 		}
+		cur.O = org.lookup(rel)
 		newIdx[key] = cur
 		copied++
 		bytes += cur.Size
@@ -313,7 +336,8 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 			if seen[key] || m.Ignored(rel) {
 				return nil
 			}
-			if _, known := idx[key]; !known && !f.Solo {
+			old, known := idx[key]
+			if !known && !f.Solo {
 				held++ // another PC's file this PC hasn't had yet
 				return nil
 			}
@@ -321,10 +345,14 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 				errf("retire %s: %v", rel, err)
 			} else {
 				versioned++
+				org.add(old.O)
 			}
 			return nil
 		})
 		removeEmptyDirs(dst)
+	}
+	if versioned > 0 {
+		org.save(target, stamp)
 	}
 	if ctx.Err() == nil {
 		saveIndex(f.ID, newIdx)

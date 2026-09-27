@@ -156,6 +156,23 @@ type State struct {
 	ModHeld []string `json:"modHeld,omitempty"`
 	// ModSync is the state of each deployed-mods folder (by id).
 	ModSync map[string]ModSyncState `json:"modSync,omitempty"`
+	// Settled is when two versions of a folder's saves (by id) were last
+	// settled here: the saves other PCs made before then were decided on,
+	// so they're never taken from their backups over the choice.
+	Settled map[string]time.Time `json:"settled,omitempty"`
+	// Decisions are the recent choices between two versions of a save,
+	// newest last, so each can be changed later.
+	Decisions []Decision `json:"decisions,omitempty"`
+}
+
+// Decision is a choice between two versions of a save file.
+type Decision struct {
+	Folder string    `json:"folder"`
+	Rel    string    `json:"rel"` // the save file, relative to the folder
+	At     time.Time `json:"at"`
+	Kept   string    `json:"kept,omitempty"`  // the PC the version kept was from, if known
+	Other  string    `json:"other,omitempty"` // … and the version put aside
+	Put    string    `json:"put"`             // where the version put aside is
 }
 
 // ModSyncState tracks updates of a deployed-mods folder.

@@ -62,11 +62,14 @@ func (a *App) checkNewer(ctx context.Context) {
 }
 
 // newerElsewhere reports the newest save of f another PC backed up, if it's
-// newer than every save here, and that PC's info about it.
+// newer than every save here, and that PC's info about it. Saves made before
+// two versions of f were last settled here don't count: the user already
+// chose between them, and the one kept can well be the older.
 func newerElsewhere(target string, f backup.Folder, exclude []string, now time.Time) (newerSave, backup.Info, bool) {
 	var best backup.Info
+	settled := settledAt(f.ID)
 	for _, in := range backup.ReadInfos(target, f.ID) {
-		if !in.Mine() && now.Sub(in.BackedUp) < newerMax && in.Newest.After(best.Newest) {
+		if !in.Mine() && now.Sub(in.BackedUp) < newerMax && in.Newest.After(best.Newest) && in.Newest.After(settled) {
 			best = in
 		}
 	}

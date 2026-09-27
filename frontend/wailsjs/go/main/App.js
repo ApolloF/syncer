@@ -66,6 +66,10 @@ export function CreateAccount(arg1, arg2) {
   return window['go']['main']['App']['CreateAccount'](arg1, arg2);
 }
 
+export function Decisions(arg1) {
+  return window['go']['main']['App']['Decisions'](arg1);
+}
+
 export function DeleteAccount(arg1) {
   return window['go']['main']['App']['DeleteAccount'](arg1);
 }
@@ -288,6 +292,10 @@ export function StopSyncingCopies() {
 
 export function SwitchAccount(arg1) {
   return window['go']['main']['App']['SwitchAccount'](arg1);
+}
+
+export function SwitchDecision(arg1, arg2) {
+  return window['go']['main']['App']['SwitchDecision'](arg1, arg2);
 }
 
 export function SyncAvailable(arg1) {

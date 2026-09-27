@@ -383,7 +383,7 @@ func TestKeepNeverOverwrites(t *testing.T) {
 	for _, s := range []string{"one", "two", "three"} {
 		p := filepath.Join(src, "save.dat")
 		write(t, p, s)
-		if err := Keep(target, "g", p, "save.dat", true); err != nil {
+		if _, err := Keep(target, "g", p, "save.dat", true); err != nil {
 			t.Fatal(err)
 		}
 	}

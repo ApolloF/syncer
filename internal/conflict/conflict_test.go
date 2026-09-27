@@ -50,15 +50,15 @@ func TestFindResolve(t *testing.T) {
 	d := t.TempDir()
 	hist := t.TempDir()
 	var kept []string
-	keep := func(abs, rel string, move bool) error {
+	keep := func(abs, rel string, move bool) (string, error) {
 		kept = append(kept, rel)
 		dst := filepath.Join(hist, rel)
 		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
 		_ = os.Remove(dst)
 		if !move {
-			return CopyFile(abs, dst)
+			return dst, CopyFile(abs, dst)
 		}
-		return os.Rename(abs, dst)
+		return dst, os.Rename(abs, dst)
 	}
 	write(t, filepath.Join(d, "sub", "save.dat"), "active")
 	write(t, filepath.Join(d, "sub", "save.sync-conflict-20260925-143012-ABCDEFG.dat"), "other")
@@ -74,14 +74,14 @@ func TestFindResolve(t *testing.T) {
 	}
 
 	// Use the other copy: it becomes the real file, the active one goes to history.
-	if err := Resolve(d, cs[1].Copy, true, keep); err != nil {
+	if _, err := Resolve(d, cs[1].Copy, true, keep); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, filepath.Join(d, "sub", "save.dat")) != "other" || read(t, filepath.Join(hist, "sub", "save.dat")) != "active" {
 		t.Fatal("use copy: wrong files")
 	}
 	// Keep current: the copy goes to history under the real name.
-	if err := Resolve(d, cs[0].Copy, false, keep); err != nil {
+	if _, err := Resolve(d, cs[0].Copy, false, keep); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, filepath.Join(hist, "gone.sav")) != "orphan" {
@@ -90,18 +90,18 @@ func TestFindResolve(t *testing.T) {
 	if n := Count(d); n != 0 {
 		t.Fatalf("want 0 conflicts left, got %d", n)
 	}
-	if err := Resolve(d, cs[0].Copy, false, keep); err == nil {
+	if _, err := Resolve(d, cs[0].Copy, false, keep); err == nil {
 		t.Fatal("resolving twice should fail")
 	}
 	for _, bad := range []string{"../x.sync-conflict-20260925-143012-ABCDEFG.dat", "sub/save.dat"} {
-		if err := Resolve(d, bad, true, keep); err == nil {
+		if _, err := Resolve(d, bad, true, keep); err == nil {
 			t.Errorf("Resolve(%q) should fail", bad)
 		}
 	}
 
 	// Syncthing-style fallback history.
 	write(t, filepath.Join(d, "a.sync-conflict-20260925-143012-ABCDEFG.sav"), "c")
-	if err := Resolve(d, "a.sync-conflict-20260925-143012-ABCDEFG.sav", false, StVersionsKeep(d)); err != nil {
+	if _, err := Resolve(d, "a.sync-conflict-20260925-143012-ABCDEFG.sav", false, StVersionsKeep(d)); err != nil {
 		t.Fatal(err)
 	}
 	es, _ := os.ReadDir(filepath.Join(d, ".stversions"))
@@ -131,16 +131,16 @@ func TestResolveLockedKeepsOriginal(t *testing.T) {
 	}()
 	hist := filepath.Join(t.TempDir(), "save.dat")
 	var moved []bool
-	keep := func(abs, rel string, move bool) error {
+	keep := func(abs, rel string, move bool) (string, error) {
 		moved = append(moved, move)
 		if move {
-			return os.Rename(abs, hist)
+			return hist, os.Rename(abs, hist)
 		}
 		// The game only blocks writers and deleters; reading for a copy works
 		// in real life. Here the lock blocks reads too, so fake the copy.
-		return os.WriteFile(hist, []byte("active"), 0o644)
+		return hist, os.WriteFile(hist, []byte("active"), 0o644)
 	}
-	if err := Resolve(d, copyName, true, keep); err == nil {
+	if _, err := Resolve(d, copyName, true, keep); err == nil {
 		t.Fatal("swap over a locked file should fail")
 	}
 	windows.CloseHandle(h)
@@ -151,7 +151,7 @@ func TestResolveLockedKeepsOriginal(t *testing.T) {
 	if read(t, orig) != "active" || read(t, filepath.Join(d, copyName)) != "other" {
 		t.Error("files changed although the swap failed")
 	}
-	if err := Resolve(d, copyName, true, keep); err != nil {
+	if _, err := Resolve(d, copyName, true, keep); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, orig) != "other" || read(t, hist) != "active" {
@@ -208,7 +208,7 @@ func TestStVersionsKeepNeverReplaces(t *testing.T) {
 	write(t, filepath.Join(d, "a.sync-conflict-20260925-143012-AAAAAAA.sav"), "one")
 	write(t, filepath.Join(d, "a.sync-conflict-20260925-150000-BBBBBBB.sav"), "two")
 	for _, c := range Find(d) {
-		if err := Resolve(d, c.Copy, false, StVersionsKeep(d)); err != nil {
+		if _, err := Resolve(d, c.Copy, false, StVersionsKeep(d)); err != nil {
 			t.Fatal(err)
 		}
 	}
