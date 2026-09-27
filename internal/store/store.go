@@ -72,6 +72,8 @@ type ModFolder struct {
 	// Role of this PC for deployed mods: "source" (its deployment is sent
 	// to the other PCs) or "receiver".
 	Role string `json:"role,omitempty"`
+	// SizeGB is the size last published (Syncthing can't tell while paused).
+	SizeGB int `json:"sizeGB,omitempty"`
 }
 
 // Paused reports whether syncing and automatic backups are paused right now.
@@ -137,8 +139,15 @@ type ModSyncState struct {
 	SourceHash string    `json:"sourceHash,omitempty"` // source: what the published inventory was built from
 	Since      int64     `json:"since,omitempty"`      // source: when this PC became the source (unix ns)
 	Held       string    `json:"held,omitempty"`       // why it is held
+	HeldBy     string    `json:"heldBy,omitempty"`     // what held it: off, unreadable, handover, check, interrupted
 	LastAudit  time.Time `json:"lastAudit,omitzero"`
 	Started    time.Time `json:"started,omitzero"` // when the update being applied started
+	PID        int       `json:"pid,omitempty"`    // the process applying it
+	// Source is the PC a receiver takes updates from (its folder is shared
+	// with that PC only); Handover is another PC that claims to send them
+	// now, waiting for the user to agree.
+	Source   string `json:"source,omitempty"`
+	Handover string `json:"handover,omitempty"`
 }
 
 // Update is the newest Syncer release found on GitHub.
@@ -230,6 +239,9 @@ func UpdateState(fn func(*State)) {
 	fn(&st)
 	_ = SaveState(st)
 }
+
+// FileLock locks name across Syncer's processes until unlock is called.
+func FileLock(name string) (unlock func()) { return fileLock(name) }
 
 // fileLock also keeps the other Syncer process (the window and the background
 // task run separately) from updating the same file at the same time, which

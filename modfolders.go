@@ -127,12 +127,6 @@ func addModFolder(ctx context.Context, c *syncthing.Client, f mods.Found) (strin
 	if _, err := store.UpdateSettings(func(s *store.Settings) {
 		delete(s.Ignored, id)
 		delete(s.Dismissed, dismissKey(f.Path))
-		if f.Kind == mods.KindProfiles {
-			// Each PC keeps its own game settings (graphics, resolution).
-			if k := dismissKey(f.Path); len(s.Exclude[k]) == 0 {
-				s.Exclude[k] = []string{"*.ini"}
-			}
-		}
 	}); err != nil {
 		return "", err
 	}
@@ -206,7 +200,7 @@ func (a *App) joinModAvailable(ctx context.Context, c *syncthing.Client, v meta.
 		return err
 	}
 	label := cmpOr(v.Label, v.ID)
-	if err := meta.RegisterMod(v.ID, label, v.SharedFolder); err != nil {
+	if err := meta.RegisterMod(v.ID, mods.NameOf(v.ModGame), v.SharedFolder); err != nil {
 		return err
 	}
 	_, _ = store.UpdateSettings(func(s *store.Settings) {
@@ -407,18 +401,22 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 	for _, f := range fs {
 		exists[f.ID] = true
 	}
-	var left []string
+	done := map[string]bool{}
 	for _, id := range held {
 		if !exists[id] || !holdable(s, id) {
+			done[id] = true // gone, or no longer ours to resume
 			continue
 		}
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
-			left = append(left, id)
 			continue
 		}
+		done[id] = true
 		changed = true
 	}
-	store.UpdateState(func(st *store.State) { st.ModHeld = left })
+	// Only drop what was handled here: the pause may have added ids meanwhile.
+	store.UpdateState(func(st *store.State) {
+		st.ModHeld = slices.DeleteFunc(st.ModHeld, func(id string) bool { return done[id] })
+	})
 	if changed {
 		logx.Printf("mod manager closed: mod folders resumed")
 	}
@@ -430,7 +428,27 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 // only an update resumes.
 func holdable(s store.Settings, id string) bool {
 	mf, ok := s.Mods[id]
-	return ok && !(mf.Kind == mods.KindDeployed && mf.Role != meta.RoleSource)
+	if !ok || mf.Kind == mods.KindDeployed && mf.Role != meta.RoleSource {
+		return false
+	}
+	// A held source stays paused until the user lets it go on.
+	return mf.Kind != mods.KindDeployed || store.LoadState().ModSync[id].Phase != phaseHeld
+}
+
+func init() {
+	// A mod folder added while its mod manager is open starts paused, and
+	// modsTick resumes it once the manager closes.
+	meta.HoldNewMod = func(id string) bool {
+		if !mods.ManagerRunning(processPaths()) {
+			return false
+		}
+		store.UpdateState(func(st *store.State) {
+			if !slices.Contains(st.ModHeld, id) {
+				st.ModHeld = append(st.ModHeld, id)
+			}
+		})
+		return true
+	}
 }
 
 // modKind is a folder's mod kind ("" for a save folder).

@@ -136,7 +136,13 @@ func Forget() {
 	detectCache.Lock()
 	detectCache.out = nil
 	detectCache.Unlock()
+	scanCache.Lock()
+	scanCache.vs = nil
+	scanCache.Unlock()
 }
+
+// NameOf is a game's name, from its mod manager id.
+func NameOf(game string) string { return gameName(game, "") }
 
 // Find returns the mod folder on this PC with the given Key.
 func Find(key string) (Found, bool) {

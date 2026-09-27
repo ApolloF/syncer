@@ -8,6 +8,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/store"
+	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
 func TestScopeLines(t *testing.T) {
@@ -33,6 +34,32 @@ func TestScopeLines(t *testing.T) {
 	}
 }
 
+func TestSharedOnlyWith(t *testing.T) {
+	f := func(ids ...string) syncthing.Folder {
+		var ds []syncthing.FolderDevice
+		for _, id := range ids {
+			ds = append(ds, syncthing.FolderDevice{DeviceID: id})
+		}
+		return syncthing.Folder{Devices: ds}
+	}
+	if !sharedOnlyWith(f("ME", "SRC"), "ME", "SRC") {
+		t.Error("me + source refused")
+	}
+	if sharedOnlyWith(f("ME", "SRC", "OTHER"), "ME", "SRC") || sharedOnlyWith(f("ME"), "ME", "SRC") || sharedOnlyWith(f("ME", "OTHER"), "ME", "SRC") {
+		t.Error("folder shared with another PC, or not with the source, accepted")
+	}
+}
+
+func TestNewGen(t *testing.T) {
+	a := newGen(0)
+	if b := newGen(a); b <= a {
+		t.Errorf("newGen(%d) = %d, not after it", a, b)
+	}
+	if g := newGen(1 << 62); g != 1<<62+1 {
+		t.Errorf("newGen from the future = %d", g)
+	}
+}
+
 func TestGameRunning(t *testing.T) {
 	procs := []string{`C:\Windows\explorer.exe`, `D:\Games\Skyrim\SkyrimSE.exe`, "svchost.exe"}
 	if !gameRunning(`D:\Games\Skyrim`, procs) {
@@ -44,11 +71,12 @@ func TestGameRunning(t *testing.T) {
 }
 
 func TestModHeldProblem(t *testing.T) {
-	s := store.Settings{Mods: map[string]store.ModFolder{"sky": {GameName: "Skyrim Special Edition"}}}
+	s := store.Settings{Mods: map[string]store.ModFolder{"sky": {GameName: "Skyrim Special Edition"}, "blank": {}, "other": {}}}
 	st := store.State{ModSync: map[string]store.ModSyncState{
 		"sky":   {Phase: phaseHeld, Held: "the last update failed its checks"},
 		"other": {Phase: phasePending},
 		"blank": {Phase: phaseHeld},
+		"gone":  {Phase: phaseHeld, Held: "removed meanwhile"}, // not in Syncer any more: no notification
 	}}
 	ps := problems(s, st, nil, nil, nil, nil, time.Now())
 	var got []string

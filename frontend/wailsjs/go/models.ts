@@ -158,6 +158,22 @@ export namespace conflict {
 
 export namespace main {
 	
+	export class ApplyConfirm {
+	    deletes: boolean;
+	    gameFiles: boolean;
+	    code: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplyConfirm(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deletes = source["deletes"];
+	        this.gameFiles = source["gameFiles"];
+	        this.code = source["code"];
+	    }
+	}
 	export class AvailableView {
 	    id: string;
 	    label: string;
@@ -327,6 +343,7 @@ export namespace main {
 	    modRole: string;
 	    modPhase: string;
 	    modHeld: string;
+	    modHeldBy: string;
 	    modPending: string;
 	
 	    static createFrom(source: any = {}) {
@@ -367,6 +384,7 @@ export namespace main {
 	        this.modRole = source["modRole"];
 	        this.modPhase = source["modPhase"];
 	        this.modHeld = source["modHeld"];
+	        this.modHeldBy = source["modHeldBy"];
 	        this.modPending = source["modPending"];
 	    }
 	
@@ -467,8 +485,8 @@ export namespace main {
 	    id: string;
 	    label: string;
 	    from: string;
-	    gen: number;
-	    appliedGen: number;
+	    // Go type: time
+	    updated: any;
 	    added: number;
 	    changed: number;
 	    removed: number;
@@ -476,7 +494,9 @@ export namespace main {
 	    bytes: number;
 	    removedPlugins: string[];
 	    pluginLists: string[];
-	    needConfirm: boolean;
+	    needDeletes: boolean;
+	    gameFiles: string[];
+	    code: string[];
 	    checks: mods.Check[];
 	    ready: boolean;
 	
@@ -489,8 +509,7 @@ export namespace main {
 	        this.id = source["id"];
 	        this.label = source["label"];
 	        this.from = source["from"];
-	        this.gen = source["gen"];
-	        this.appliedGen = source["appliedGen"];
+	        this.updated = this.convertValues(source["updated"], null);
 	        this.added = source["added"];
 	        this.changed = source["changed"];
 	        this.removed = source["removed"];
@@ -498,7 +517,9 @@ export namespace main {
 	        this.bytes = source["bytes"];
 	        this.removedPlugins = source["removedPlugins"];
 	        this.pluginLists = source["pluginLists"];
-	        this.needConfirm = source["needConfirm"];
+	        this.needDeletes = source["needDeletes"];
+	        this.gameFiles = source["gameFiles"];
+	        this.code = source["code"];
 	        this.checks = this.convertValues(source["checks"], mods.Check);
 	        this.ready = source["ready"];
 	    }
@@ -638,7 +659,6 @@ export namespace main {
 	    stamp: string;
 	    // Go type: time
 	    created: any;
-	    gen: number;
 	    files: number;
 	    added: number;
 	    bytes: number;
@@ -651,7 +671,6 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stamp = source["stamp"];
 	        this.created = this.convertValues(source["created"], null);
-	        this.gen = source["gen"];
 	        this.files = source["files"];
 	        this.added = source["added"];
 	        this.bytes = source["bytes"];
@@ -861,6 +880,7 @@ export namespace store {
 	    root: string;
 	    rel: string;
 	    role?: string;
+	    sizeGB?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ModFolder(source);
@@ -875,6 +895,7 @@ export namespace store {
 	        this.root = source["root"];
 	        this.rel = source["rel"];
 	        this.role = source["role"];
+	        this.sizeGB = source["sizeGB"];
 	    }
 	}
 	export class Settings {

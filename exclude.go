@@ -32,8 +32,10 @@ const maxExclusions = 100
 // syncIgnores are never synced, in any folder. steam_autocloud.vdf belongs
 // to the PC it's on: Steam writes it for the account using that PC, and a
 // copy arriving from another PC names the wrong owner, to Steam and to
-// Syncer's Steam Cloud check alike.
-var syncIgnores = []string{backup.SteamMarker}
+// Syncer's Steam Cloud check alike. Vortex's markers and deployment
+// manifests describe this PC's own Vortex; one arriving from another PC
+// could make Syncer take a folder for a Vortex one.
+var syncIgnores = []string{backup.SteamMarker, "vortex.deployment*", "__vortex_staging_folder", "__folder_managed_by_vortex"}
 
 // withSyncIgnores returns the lines of Syncer's .stignore block for a game
 // (or a mod folder of kind) with the exclusions pats.

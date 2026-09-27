@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ApolloF/syncer/internal/paths"
+	"github.com/ApolloF/syncer/internal/store"
 )
 
 // Every step that changes deployed mods is checked and the result logged
@@ -77,6 +78,7 @@ var (
 func LogAudit(e AuditEntry) {
 	auditMu.Lock()
 	defer auditMu.Unlock()
+	defer store.FileLock("mod-audit")()
 	var all []AuditEntry
 	if b, err := os.ReadFile(auditFile()); err == nil {
 		_ = json.Unmarshal(b, &all)

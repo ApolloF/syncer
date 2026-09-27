@@ -42,7 +42,7 @@ func TestAdoptableMods(t *testing.T) {
 	auto.AutoAddMods, auto.ModsMaxGB = true, 20
 	exp := auto
 	exp.SyncDeployedMods = true
-	st := SharedFolder{ID: "skyrim-mods", Label: "Skyrim (Vortex mods)", Root: "vortex:skyrimse", Rel: "staging", Kind: mods.KindStaging, SizeGB: 5}
+	st := SharedFolder{ID: "skyrim-mods", Label: "Skyrim (Vortex mods)", Root: "vortex:skyrimse", Rel: "staging", Kind: mods.KindStaging, ModGame: "skyrimse", SizeGB: 5}
 	with := func(f func(*SharedFolder)) SharedFolder { c := st; f(&c); return c }
 	dep := with(func(s *SharedFolder) { s.Root, s.Rel, s.Kind = "game:skyrimse", "Data", mods.KindDeployed })
 
@@ -64,6 +64,7 @@ func TestAdoptableMods(t *testing.T) {
 		{"kind doesn't match root", with(func(s *SharedFolder) { s.Kind = mods.KindProfiles }), auto, nil, false, SkipUnsafe},
 		{"kind missing on a mod root", with(func(s *SharedFolder) { s.Kind = "" }), auto, nil, false, SkipUnsafe},
 		{"mod kind on a save root", with(func(s *SharedFolder) { s.Root = "roaming" }), auto, nil, false, SkipUnsafe},
+		{"game doesn't match the root", with(func(s *SharedFolder) { s.ModGame = "fallout4" }), auto, nil, false, SkipUnsafe},
 		{"bad game id", with(func(s *SharedFolder) { s.Root = "vortex:../x" }), auto, nil, false, SkipUnsafe},
 		{"unsafe resolved path", with(func(s *SharedFolder) { s.Root = "vortex:bad" }), auto, nil, false, SkipUnsafe},
 		{"removed here", with(func(s *SharedFolder) { s.ID = "gone" }), auto, nil, false, SkipRemoved},

@@ -74,6 +74,10 @@ export function Folders() {
   return window['go']['main']['App']['Folders']();
 }
 
+export function HandOverMods(arg1) {
+  return window['go']['main']['App']['HandOverMods'](arg1);
+}
+
 export function InstallSyncthing() {
   return window['go']['main']['App']['InstallSyncthing']();
 }

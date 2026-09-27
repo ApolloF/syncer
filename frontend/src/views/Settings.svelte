@@ -191,7 +191,7 @@
   <div class="item" class:off={!o?.settings.findMods}>
     <div class="grow">
       <div class="name">Sync new mod folders automatically <span class="pill warn">Experimental</span></div>
-      <div class="faint small">Vortex's mod and load-order folders start syncing without a click, including ones your other PCs sync. Otherwise you add each one by hand.</div>
+      <div class="faint small">Vortex's mod and load-order folders start syncing without a click, including ones your other PCs sync. Otherwise you add each one by hand. Mods contain programs that run with the game, so only link PCs you trust.</div>
     </div>
     <select disabled={!o?.settings.findMods || !o?.settings.autoAddMods} value={o?.settings.modsMaxGB} title="Largest mod folder to add automatically"
       onchange={(e) => save({ modsMaxGB: +e.currentTarget.value })}>

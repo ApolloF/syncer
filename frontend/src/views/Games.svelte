@@ -23,7 +23,7 @@
     PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
     LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
-    ReleaseModHold, MakeModSource,
+    ReleaseModHold, MakeModSource, HandOverMods,
   } from '../../wailsjs/go/main/App'
   import type { conflict, store, mods } from '../../wailsjs/go/models'
 
@@ -68,7 +68,7 @@
   // Deployed mods (experimental): apply an update, audits, rollback.
   let applyFor = $state<main.FolderView | null>(null)
   let preview = $state<main.ModPreview | null>(null)
-  let confirmDeletes = $state(false)
+  let confirm = $state({ deletes: false, gameFiles: false, code: false })
   let applyBusy = $state(false)
   let auditFor = $state<main.FolderView | null>(null)
   let audits = $state<mods.AuditEntry[]>([])
@@ -239,17 +239,23 @@
   async function openApply(f: main.FolderView) {
     applyFor = f
     preview = null
-    confirmDeletes = false
+    confirm = { deletes: false, gameFiles: false, code: false }
     try { preview = await ModUpdatePreview(f.id) } catch (e) { fail(e); applyFor = null }
   }
 
   // Ready once every check passes; "Removals confirmed" is the checkbox.
-  const applyReady = $derived(!!preview && preview.checks.every(c => c.ok || c.warn || (c.name === 'Removals confirmed' && confirmDeletes)))
+  // Ready once every check passes; the ones below are the checkboxes.
+  const confirmed: Record<string, () => boolean> = {
+    'Removals confirmed': () => confirm.deletes,
+    'Replacing game files confirmed': () => confirm.gameFiles,
+    'Program files confirmed': () => confirm.code,
+  }
+  const applyReady = $derived(!!preview && preview.checks.every(c => c.ok || c.warn || !!confirmed[c.name]?.()))
 
   async function doApply() {
     if (!applyFor) return
     applyBusy = true
-    const ok = await attempt(() => ApplyModUpdate(applyFor!.id, confirmDeletes), 'Applying the update…')
+    const ok = await attempt(() => ApplyModUpdate(applyFor!.id, confirm as main.ApplyConfirm), 'Applying the update…')
     applyBusy = false
     if (ok) { applyFor = null; load() }
   }
@@ -275,6 +281,11 @@
   async function releaseHold() {
     if (!auditFor) return
     if (await attempt(() => ReleaseModHold(auditFor!.id), 'Updates can be applied again')) { auditFor = null; load() }
+  }
+
+  async function handOver() {
+    if (!auditFor) return
+    if (await attempt(() => HandOverMods(auditFor!.id), 'The other PC sends these mods now')) { auditFor = null; load() }
   }
 
   async function makeSource() {
@@ -647,7 +658,8 @@
     </div>
     <span title="Sync between PCs"><Toggle checked={f.sync} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} /></span>
     <span title="Back up to Google Drive">
-      <Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />
+      {#if f.kind === 'mods-deployed'}<span class="toggle-gap" title="Deployed mods aren't backed up; the Vortex mods folder can be"></span>
+      {:else}<Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />{/if}
     </span>
   </div>
 {/snippet}
@@ -1081,18 +1093,27 @@
     {#if !preview}
       <p class="faint"><Icon name="refresh" size={14} class="spin" /> Checking…</p>
     {:else}
-      <p>Version {preview.gen} from {preview.from}: <b>{preview.added}</b> new, <b>{preview.changed}</b> changed and <b>{preview.removed}</b> removed files
+      <p>Update from {preview.from} ({new Date(preview.updated).toLocaleString()}): <b>{preview.added}</b> new, <b>{preview.changed}</b> changed and <b>{preview.removed}</b> removed files
         ({bytes(preview.bytes)} to download){preview.same ? `; ${preview.same} already here` : ''}.
         {#if preview.pluginLists?.length}The load order ({preview.pluginLists.join(', ')}) is updated too.{/if}</p>
       <p class="faint small">Syncer first saves a copy of every file it replaces or removes, so you can roll back. Only these mod files change; the game's own files are checked before and after.</p>
       <ul class="checks">
-        {#each preview.checks.filter(c => c.name !== 'Removals confirmed') as c}
+        {#each preview.checks.filter(c => !confirmed[c.name]) as c}
           <li class:bad={!c.ok && !c.warn}><Icon name={c.ok ? 'check' : 'alert'} size={14} /> {c.name}{#if c.detail && !c.ok} <span class="faint">({c.detail})</span>{/if}</li>
         {/each}
       </ul>
-      {#if preview.needConfirm}
-        <label class="chk warnbox"><input type="checkbox" bind:checked={confirmDeletes} />
-          This update removes {preview.removed} files{preview.removedPlugins?.length ? `, including the plugins ${preview.removedPlugins.join(', ')}` : ''}. Remove them.</label>
+      {#if preview.needDeletes}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirm.deletes} />
+          <span>This update removes {preview.removed} files{preview.removedPlugins?.length ? `, including the plugins ${preview.removedPlugins.join(', ')}` : ''}. Remove them.</span></label>
+      {/if}
+      {#if preview.gameFiles?.length}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirm.gameFiles} />
+          <span>It replaces {preview.gameFiles.length === 1 ? 'one of the game\'s own files' : `${preview.gameFiles.length} of the game's own files`}: {preview.gameFiles.join(', ')}.
+          Syncer keeps the game's copies and puts them back when the mod goes. Replace them.</span></label>
+      {/if}
+      {#if preview.code?.length}
+        <label class="chk warnbox"><input type="checkbox" bind:checked={confirm.code} />
+          <span>It adds or changes program files, which run with the game: {preview.code.join(', ')}. Only apply updates from a PC you trust. Apply them.</span></label>
       {/if}
     {/if}
     {#snippet actions()}
@@ -1126,8 +1147,13 @@
       {/each}
     </div>
     {#snippet actions()}
-      {#if auditFor?.modRole !== 'source'}<button class="btn ghost" onclick={makeSource} title="Only where Vortex deploys this game">Send from this PC instead</button>{/if}
-      {#if auditFor?.modPhase === 'held'}<button class="btn" onclick={releaseHold}>Allow updates again</button>{/if}
+      {#if auditFor?.modRole !== 'source' && auditFor?.modHeldBy !== 'handover'}<button class="btn ghost" onclick={makeSource} title="Only where Vortex deploys this game">Send from this PC instead</button>{/if}
+      {#if auditFor?.modHeldBy === 'handover' && auditFor?.modRole === 'source'}
+        <button class="btn" onclick={handOver}>Let the other PC send them</button>
+        <button class="btn" onclick={releaseHold}>Keep sending from this PC</button>
+      {:else if auditFor?.modHeldBy === 'handover'}
+        <button class="btn" onclick={releaseHold}>Take updates from the other PC</button>
+      {:else if auditFor?.modPhase === 'held'}<button class="btn" onclick={releaseHold}>Allow updates again</button>{/if}
       <button class="btn primary" disabled={auditBusy} onclick={runAudit}>
         {#if auditBusy}<Icon name="refresh" size={15} class="spin" />{/if} Check now
       </button>
@@ -1137,9 +1163,9 @@
 
 {#if rollbackFor}
   <Modal title="Roll back {rollbackFor.label}" onclose={() => { if (!rollbackBusy) rollbackFor = null }}>
-    <p>Put the game folder back the way it was before an update: the files it replaced come back and the files it added go. Close Vortex and the game first.</p>
+    <p>Put the game folder back the way it was before the last update: the files it replaced come back and the files it added go. Close Vortex and the game first.</p>
     <div class="audits">
-      {#each snapshots as sn (sn.stamp)}
+      {#each snapshots.slice(0, 1) as sn (sn.stamp)}
         <div class="audit">
           <span class="grow">Before the update of {new Date(sn.created).toLocaleString()}
             <span class="faint small">· {sn.files} saved, {sn.added} added · {bytes(sn.bytes)}</span></span>
@@ -1167,6 +1193,8 @@
   .audit:hover { background: var(--hover); }
   .warnbox { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
   .err { color: var(--err); }
+  .toggle-gap { display: inline-block; width: 38px; }
+  .warnbox { align-items: flex-start; }
   .notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
   .notes li + li { margin-top: 6px; }
   .bar { gap: 12px; }

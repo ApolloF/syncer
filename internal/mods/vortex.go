@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/discover"
@@ -133,7 +134,8 @@ func (Vortex) Ignores(kind string) []string {
 		// are Vortex's bookkeeping for this PC's deployment.
 		return []string{"/" + stagingMarker, "(?d)*.vortex_backup", "vortex.deployment*", "(?d)desktop.ini", "(?d)Thumbs.db"}
 	case KindProfiles:
-		return []string{"(?d)*.bak", "(?d)desktop.ini"}
+		// Each PC keeps its own game settings (graphics, resolution).
+		return []string{"*.ini", "(?d)*.bak", "(?d)desktop.ini"}
 	case KindDeployed:
 		return []string{"vortex.deployment*.json", "/" + managedMarker, "(?d)*.vortex_backup"}
 	}
@@ -147,7 +149,26 @@ type vortexScan struct {
 	manifests []gameManifest
 }
 
+var scanCache struct {
+	sync.Mutex
+	at time.Time
+	vs *vortexScan
+}
+
+// scanVortex looks at Vortex's folders, reusing the last look for a minute:
+// it walks every installed game's folder.
 func scanVortex() vortexScan {
+	scanCache.Lock()
+	defer scanCache.Unlock()
+	if scanCache.vs != nil && time.Since(scanCache.at) < time.Minute {
+		return *scanCache.vs
+	}
+	vs := scanVortexNow()
+	scanCache.vs, scanCache.at = &vs, time.Now()
+	return vs
+}
+
+func scanVortexNow() vortexScan {
 	vs := vortexScan{root: vortexRoot(), games: map[string]bool{}}
 	if es, err := os.ReadDir(vs.root); err == nil {
 		for _, e := range es {
@@ -357,9 +378,51 @@ func validRel(rel string) bool {
 		return false
 	}
 	for _, seg := range strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if seg == ".." {
+		// Windows drops trailing dots and spaces ("x." is "x") and maps
+		// device names (CON, NUL.dll) to devices: never accept them.
+		if seg == ".." || seg != "." && (strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ")) || reservedName(seg) {
 			return false
 		}
 	}
 	return true
+}
+
+func reservedName(seg string) bool {
+	name := strings.ToUpper(seg)
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		name = name[:i]
+	}
+	switch strings.TrimRight(name, " ") {
+	case "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$", "CONOUT$":
+		return true
+	}
+	return false
+}
+
+// SafeUnder reports whether rel can be used inside base on disk: no folder
+// between base and the file is a link (junction or symlink) that could lead
+// out of base.
+func SafeUnder(base, rel string) bool {
+	if !ValidInvRel(rel) {
+		return false
+	}
+	dir := base
+	parts := strings.Split(filepath.FromSlash(rel), string(filepath.Separator))
+	for _, seg := range parts[:len(parts)-1] {
+		dir = filepath.Join(dir, seg)
+		if isReparse(dir) {
+			return false
+		}
+	}
+	return !isReparse(filepath.Join(base, filepath.FromSlash(rel)))
+}
+
+// GameOf is the game id in a mod root ("vortex:skyrimse" -> "skyrimse").
+func GameOf(root string) string {
+	if g, ok := strings.CutPrefix(root, vortexRootPrefix); ok {
+		return g
+	}
+	g, _ := strings.CutPrefix(root, rootGame)
+	return g
 }

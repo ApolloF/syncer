@@ -18,6 +18,7 @@ import (
 	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -65,6 +66,7 @@ type FolderView struct {
 	ModRole    string `json:"modRole"`
 	ModPhase   string `json:"modPhase"`   // idle, pending, applying, held
 	ModHeld    string `json:"modHeld"`    // why updates are held
+	ModHeldBy  string `json:"modHeldBy"`  // what held them (see held* in deployed.go)
 	ModPending string `json:"modPending"` // what the next update changes
 }
 
@@ -83,13 +85,18 @@ func (a *App) Folders() ([]FolderView, error) {
 		defer cancel()
 		var fs []syncthing.Folder
 		if fs, err = c.Folders(ctx); err == nil {
-			var bf []backup.Folder
+			var bf, saves []backup.Folder
 			for _, f := range fs {
 				if f.ID != meta.FolderID {
 					bf = append(bf, backup.Folder{ID: f.ID, Label: f.Label, Path: f.Path})
+					if !isMod(s, f.ID) {
+						saves = append(saves, bf[len(bf)-1])
+					}
 				}
 			}
-			conflicts := a.conflictCounts(bf)
+			// Mod folders are big: looking for save conflicts in them
+			// would walk a whole game folder on every refresh.
+			conflicts := a.conflictCounts(saves)
 			inside := nestedIn(bf)
 			for _, f := range fs {
 				if f.ID != meta.FolderID {
@@ -154,6 +161,9 @@ func (a *App) ScanGames(refresh bool) ([]GameView, error) {
 	es, err := discover.Manifest(refresh)
 	if err != nil {
 		return nil, err
+	}
+	if refresh {
+		mods.Forget()
 	}
 	found := append(discover.Scan(es), modFounds(store.LoadSettings())...)
 	a.mu.Lock()
@@ -474,6 +484,9 @@ func (a *App) share(ctx context.Context, c *syncthing.Client, id, label, path st
 // backed up carries over both ways, so a game with both toggles off stays off
 // whichever one the user flips first.
 func (a *App) SetFolderSync(id string, on bool) error {
+	if applying.has(id) {
+		return errApplying
+	}
 	c, err := a.client()
 	if err != nil {
 		return err
@@ -609,6 +622,9 @@ func findFolder(ctx context.Context, c *syncthing.Client, id string) (syncthing.
 // backing it up and removes Syncthing's marker files. Save files are never
 // deleted; with deleteBackup its Drive backup and history go too.
 func (a *App) RemoveFolder(id string, deleteBackup bool) error {
+	if applying.has(id) {
+		return errApplying
+	}
 	if lf, ok := store.LoadSettings().BackupOnly[id]; ok {
 		if err := forgetBackup(id, deleteBackup); err != nil {
 			return err
@@ -725,6 +741,11 @@ func cleanMarkers(dir string) string {
 // synced either stays listed as "off": nothing happens to it until one of
 // its toggles is turned back on.
 func (a *App) SetFolderBackup(id string, on bool) error {
+	if on && modKind(store.LoadSettings(), id) == mods.KindDeployed {
+		// The backup would copy the whole game folder: its scope lives in
+		// Syncthing's ignore list only.
+		return errors.New("deployed mods can't be backed up; back up the Vortex mods folder instead")
+	}
 	_, err := store.UpdateSettings(func(s *store.Settings) {
 		if on {
 			delete(s.NoBackup, id)

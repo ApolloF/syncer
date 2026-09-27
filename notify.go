@@ -148,7 +148,7 @@ func problems(s store.Settings, st store.State, conflicts map[string]int, labels
 				n.Host + " on and let it sync before you play here."})
 	}
 	for id, ms := range st.ModSync {
-		if ms.Phase != phaseHeld {
+		if _, ok := s.Mods[id]; !ok || ms.Phase != phaseHeld {
 			continue
 		}
 		game := cmpOr(s.Mods[id].GameName, cmpOr(labels[id], id))

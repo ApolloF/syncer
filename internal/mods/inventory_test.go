@@ -31,7 +31,7 @@ func setupDeployed(t *testing.T) fakeVortex {
 
 func TestBuildInventory(t *testing.T) {
 	fv := setupDeployed(t)
-	inv, err := BuildInventory("skyrimse", fv.data, fv.game)
+	inv, err := BuildInventory("skyrimse", fv.data, fv.game, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +80,10 @@ func TestBuildInventoryRefusesSymlinks(t *testing.T) {
 	fv := setupDeployed(t)
 	b, _ := json.Marshal(Manifest{GameID: "skyrimse", DeploymentMethod: MethodSymlink, Files: []DeployedFile{{RelPath: "SkyUI_SE.esp"}}})
 	write(t, filepath.Join(fv.data, "vortex.deployment.json"), string(b))
-	if _, err := BuildInventory("skyrimse", fv.data, fv.game); err == nil {
+	if _, err := BuildInventory("skyrimse", fv.data, fv.game, nil); err == nil {
 		t.Error("symlink deployment accepted")
 	}
-	if _, err := BuildInventory("fallout4", fv.data, fv.game); err == nil {
+	if _, err := BuildInventory("fallout4", fv.data, fv.game, nil); err == nil {
 		t.Error("another game's deployment accepted")
 	}
 }

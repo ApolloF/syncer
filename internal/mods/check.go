@@ -80,6 +80,14 @@ func CheckModSyncable(kind, abs string) error {
 		if !in {
 			return errors.New("not inside a game's install folder")
 		}
+		for d := abs; ; d = filepath.Dir(d) {
+			if isReparse(d) {
+				return errors.New("a linked folder (symlink or junction) can't be synced")
+			}
+			if isGameDir(games, d) || filepath.Dir(d) == d {
+				break
+			}
+		}
 		if paths.Within(root, abs) {
 			return errors.New("not a game folder")
 		}
@@ -87,6 +95,15 @@ func CheckModSyncable(kind, abs string) error {
 		return errors.New("unknown kind of mod folder")
 	}
 	return nil
+}
+
+func isGameDir(games []string, d string) bool {
+	for _, gd := range games {
+		if strings.EqualFold(filepath.Clean(gd), d) {
+			return true
+		}
+	}
+	return false
 }
 
 // isVortexGameSub reports whether abs is <root>\<game>\<sub> for a valid game id.

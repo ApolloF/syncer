@@ -31,7 +31,7 @@ func TestSnapshotRollback(t *testing.T) {
 	}
 
 	prev := &Inventory{Gen: 4, Files: []InvFile{{Rel: "SkyUI_SE.esp"}, {Rel: "meshes/sky.nif"}}}
-	sn, err := TakeSnapshot("sky-data", "skyrimse", fv.data, prev, []string{"SkyUI_SE.esp", "meshes/sky.nif", "not-here.esp"}, []string{"new/added.esp"})
+	sn, err := TakeSnapshot("sky-data", "skyrimse", fv.data, prev, []string{"SkyUI_SE.esp", "meshes/sky.nif", "not-here.esp"}, []string{"new/added.esp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,28 @@ func TestSnapshotRollback(t *testing.T) {
 	}
 }
 
+// A file the update shouldn't change is linked into the snapshot; if the
+// update replaces it anyway (as Syncthing does: a new file, renamed over
+// the old one), rollback brings the old content back.
+func TestSnapshotLinksUnchanged(t *testing.T) {
+	fv := setupDeployed(t)
+	sn, err := TakeSnapshot("sky-data", "cyberpunk2077", fv.data, nil, nil, nil, []string{"SkyUI_SE.esp"})
+	if err != nil || sn.Linked != 1 {
+		t.Fatalf("snapshot = %+v, %v", sn, err)
+	}
+	p := filepath.Join(fv.data, "SkyUI_SE.esp")
+	write(t, p+".tmp", "replaced")
+	if err := os.Rename(p+".tmp", p); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rollback(sn, fv.data); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "plugin" {
+		t.Errorf("after rollback %q", b)
+	}
+}
+
 func TestRollbackStaysInside(t *testing.T) {
 	fv := setupDeployed(t)
 	outsideFile := filepath.Join(fv.base, "keep.txt")
@@ -90,7 +112,7 @@ func TestRollbackStaysInside(t *testing.T) {
 func TestPruneSnapshots(t *testing.T) {
 	fv := setupDeployed(t)
 	for i := 0; i < 4; i++ {
-		if _, err := TakeSnapshot("sky-data", "cyberpunk2077", fv.data, nil, []string{"SkyUI_SE.esp"}, nil); err != nil {
+		if _, err := TakeSnapshot("sky-data", "cyberpunk2077", fv.data, nil, []string{"SkyUI_SE.esp"}, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -212,6 +212,20 @@ func processPath(pid uint32, name string) string {
 	return windows.UTF16ToString(buf[:n])
 }
 
+// ProcessAlive reports whether the process pid is still running.
+func ProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	var code uint32
+	return windows.GetExitCodeProcess(h, &code) == nil && code == 259 // STILL_ACTIVE
+}
+
 // DiskFree returns the bytes free for this user on the drive holding path.
 func DiskFree(path string) (uint64, error) {
 	p, err := windows.UTF16PtrFromString(path)

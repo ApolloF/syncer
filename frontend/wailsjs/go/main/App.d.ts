@@ -18,7 +18,7 @@ export function AddModFolder(arg1:string):Promise<void>;
 
 export function AdoptBackup(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<number>;
 
-export function ApplyModUpdate(arg1:string,arg2:boolean):Promise<void>;
+export function ApplyModUpdate(arg1:string,arg2:main.ApplyConfirm):Promise<void>;
 
 export function Available():Promise<Array<main.AvailableView>>;
 
@@ -41,6 +41,8 @@ export function Devices():Promise<main.DevicesView>;
 export function DismissDevice(arg1:string):Promise<void>;
 
 export function Folders():Promise<Array<main.FolderView>>;
+
+export function HandOverMods(arg1:string):Promise<void>;
 
 export function InstallSyncthing():Promise<void>;
 

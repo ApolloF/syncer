@@ -29,6 +29,7 @@ type Snapshot struct {
 	Copied  []string  `json:"copied"`  // files saved (relative to Target)
 	Added   []string  `json:"added"`   // files the update adds: removed on rollback
 	Bytes   int64     `json:"bytes"`   // size of the copies
+	Linked  int       `json:"linked"`  // unchanged files hard-linked (no space used)
 	Plugins []string  `json:"plugins"` // plugin lists saved (names)
 	// NoPlugins are plugin lists that didn't exist: removed on rollback.
 	NoPlugins []string `json:"noPlugins,omitempty"`
@@ -43,8 +44,11 @@ func SnapshotDir(folder, stamp string) string { return filepath.Join(snapshotRoo
 
 // TakeSnapshot copies the files rels (relative to target) that exist, and
 // game's plugin lists, and records added as the files an update will add
-// and prev as the inventory applied before it (nil for none).
-func TakeSnapshot(folder, game, target string, prev *Inventory, rels, added []string) (Snapshot, error) {
+// and prev as the inventory applied before it (nil for none). The files
+// linked (ones the update shouldn't change) are hard-linked where the
+// snapshot is on the same drive, at no cost: Syncthing replaces a file
+// rather than writing into it, so the link keeps the old content.
+func TakeSnapshot(folder, game, target string, prev *Inventory, rels, added, linked []string) (Snapshot, error) {
 	var gen int64
 	if prev != nil {
 		gen = prev.Gen
@@ -60,7 +64,7 @@ func TakeSnapshot(folder, game, target string, prev *Inventory, rels, added []st
 		return Snapshot{}, fmt.Errorf("couldn't save the files it replaces: %w", err)
 	}
 	for _, rel := range rels {
-		if !ValidInvRel(rel) {
+		if !SafeUnder(target, rel) {
 			continue
 		}
 		src := filepath.Join(target, filepath.FromSlash(rel))
@@ -76,6 +80,24 @@ func TakeSnapshot(folder, game, target string, prev *Inventory, rels, added []st
 		}
 		sn.Copied = append(sn.Copied, rel)
 		sn.Bytes += fi.Size()
+	}
+	have := map[string]bool{}
+	for _, rel := range sn.Copied {
+		have[strings.ToLower(rel)] = true
+	}
+	for _, rel := range linked {
+		if have[strings.ToLower(rel)] || !SafeUnder(target, rel) {
+			continue
+		}
+		src := filepath.Join(target, filepath.FromSlash(rel))
+		dst := filepath.Join(dir, "files", filepath.FromSlash(rel))
+		if fi, err := os.Lstat(src); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if os.MkdirAll(filepath.Dir(dst), 0o755) == nil && os.Link(src, dst) == nil {
+			sn.Copied = append(sn.Copied, rel)
+			sn.Linked++
+		}
 	}
 	for name := range pluginListNames {
 		p := PluginListPath(game, name)
@@ -153,7 +175,7 @@ func Rollback(sn Snapshot, target string) error {
 	dir := SnapshotDir(sn.Folder, sn.Stamp)
 	var errs []error
 	for _, rel := range sn.Added {
-		if !ValidInvRel(rel) {
+		if !SafeUnder(target, rel) {
 			continue
 		}
 		p := filepath.Join(target, filepath.FromSlash(rel))
@@ -165,7 +187,7 @@ func Rollback(sn Snapshot, target string) error {
 		}
 	}
 	for _, rel := range sn.Copied {
-		if !ValidInvRel(rel) {
+		if !SafeUnder(target, rel) {
 			continue
 		}
 		dst := filepath.Join(target, filepath.FromSlash(rel))

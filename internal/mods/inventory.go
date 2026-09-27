@@ -58,11 +58,40 @@ type Version struct {
 // MaxInventoryFiles caps a deployment: every file is one ignore line.
 const MaxInventoryFiles = 100_000
 
-const hashLimit = 1 << 20
+const hashLimit = 64 << 20
+
+// MustHash says whether a deployed file is hashed: every file up to 64 MB,
+// and every plugin and program file (the ones that run) whatever its size.
+func MustHash(rel string, size int64) bool {
+	return size <= hashLimit || isPlugin(rel) || IsCode(rel)
+}
+
+// IsCode reports whether a file is a program or script Windows or a game
+// may run.
+func IsCode(rel string) bool {
+	switch strings.ToLower(filepath.Ext(rel)) {
+	case ".exe", ".dll", ".asi", ".bat", ".cmd", ".com", ".scr", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".msi", ".lnk", ".sys", ".cpl":
+		return true
+	}
+	return false
+}
+
+// HashCache remembers files' hashes by size and modification time, so a
+// deployment is only hashed again where it changed.
+type HashCache map[string]CachedHash
+
+// CachedHash is one file's hash as last computed.
+type CachedHash struct {
+	Size   int64  `json:"size"`
+	Mod    int64  `json:"mod"`
+	SHA256 string `json:"sha256"`
+}
 
 // BuildInventory lists what Vortex deployed into target (a folder inside
-// gameDir) according to its manifests there.
-func BuildInventory(game, target, gameDir string) (Inventory, error) {
+// gameDir) according to its manifests there. Every file is hashed except
+// big archives and media (hashing tens of GB on every change would take
+// too long); program files and plugins always are. cache may be nil.
+func BuildInventory(game, target, gameDir string, cache HashCache) (Inventory, error) {
 	inv := Inventory{Game: game, Updated: time.Now().UTC()}
 	ms, err := manifestsIn(target)
 	if err != nil {
@@ -89,13 +118,18 @@ func BuildInventory(game, target, gameDir string) (Inventory, error) {
 			}
 			p := filepath.Join(target, filepath.FromSlash(rel))
 			fi, err := os.Lstat(p)
-			if err != nil || !fi.Mode().IsRegular() {
+			if err != nil || !fi.Mode().IsRegular() || !SafeUnder(target, rel) {
 				continue // listed but not there (or not a plain file): nothing to send
 			}
 			e := InvFile{Rel: rel, Size: fi.Size()}
-			if isPlugin(rel) || fi.Size() <= hashLimit {
-				if e.SHA256, err = hashFile(p); err != nil {
+			if MustHash(rel, fi.Size()) {
+				c, ok := cache[k]
+				if ok && c.Size == fi.Size() && c.Mod == fi.ModTime().UnixNano() {
+					e.SHA256 = c.SHA256
+				} else if e.SHA256, err = hashFile(p); err != nil {
 					return inv, err
+				} else if cache != nil {
+					cache[k] = CachedHash{fi.Size(), fi.ModTime().UnixNano(), e.SHA256}
 				}
 			}
 			inv.Files = append(inv.Files, e)
@@ -170,9 +204,15 @@ func (inv Inventory) Valid() error {
 	if len(inv.Files) > MaxInventoryFiles {
 		return errors.New("too many files")
 	}
+	seen := map[string]bool{}
 	for _, f := range inv.Files {
-		if !ValidInvRel(f.Rel) || f.Size < 0 {
+		k := strings.ToLower(f.Rel)
+		if !ValidInvRel(f.Rel) || f.Size < 0 || seen[k] {
 			return fmt.Errorf("bad file %q", f.Rel)
+		}
+		seen[k] = true
+		if MustHash(f.Rel, f.Size) && len(f.SHA256) != 64 {
+			return fmt.Errorf("%q has no checksum", f.Rel)
 		}
 	}
 	for n, c := range inv.PluginLists {
@@ -236,6 +276,8 @@ type Diff struct {
 	// Bytes to download; RemovedPlugins are plugins that go away.
 	Bytes          int64    `json:"bytes"`
 	RemovedPlugins []string `json:"removedPlugins,omitempty"`
+	// Unsafe are files whose folder here is a link: never written through.
+	Unsafe []string `json:"unsafe,omitempty"`
 }
 
 // DiffLocal compares target with inventory next; prev is the inventory
@@ -246,6 +288,10 @@ func DiffLocal(target string, prev *Inventory, next Inventory) Diff {
 	want := map[string]bool{}
 	for _, f := range next.Files {
 		want[strings.ToLower(f.Rel)] = true
+		if !SafeUnder(target, f.Rel) {
+			d.Unsafe = append(d.Unsafe, f.Rel)
+			continue
+		}
 		p := filepath.Join(target, filepath.FromSlash(f.Rel))
 		fi, err := os.Lstat(p)
 		switch {
@@ -261,7 +307,7 @@ func DiffLocal(target string, prev *Inventory, next Inventory) Diff {
 	}
 	if prev != nil {
 		for _, f := range prev.Files {
-			if want[strings.ToLower(f.Rel)] {
+			if want[strings.ToLower(f.Rel)] || !SafeUnder(target, f.Rel) {
 				continue
 			}
 			if _, err := os.Lstat(filepath.Join(target, filepath.FromSlash(f.Rel))); err == nil {

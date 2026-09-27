@@ -169,10 +169,11 @@ func TestWantAutoSkipsEmulatorCopies(t *testing.T) {
 }
 
 func TestWithSyncIgnores(t *testing.T) {
-	if got := withSyncIgnores("", nil); !slices.Equal(got, []string{"steam_autocloud.vdf"}) {
+	base := []string{"steam_autocloud.vdf", "vortex.deployment*", "__vortex_staging_folder", "__folder_managed_by_vortex"}
+	if got := withSyncIgnores("", nil); !slices.Equal(got, base) {
 		t.Errorf("no exclusions: %v", got)
 	}
-	if got := withSyncIgnores("", []string{"*.log", "STEAM_AUTOCLOUD.VDF"}); !slices.Equal(got, []string{"steam_autocloud.vdf", "*.log"}) {
+	if got := withSyncIgnores("", []string{"*.log", "STEAM_AUTOCLOUD.VDF"}); !slices.Equal(got, append(base, "*.log")) {
 		t.Errorf("with exclusions: %v", got)
 	}
 }
