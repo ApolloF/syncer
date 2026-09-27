@@ -41,6 +41,8 @@ export function GetNewer(arg1:string):Promise<number>;
 
 export function InstallSyncthing():Promise<void>;
 
+export function InstallUpdate():Promise<void>;
+
 export function LeaveToSteamCloud():Promise<number>;
 
 export function Log():Promise<Array<string>>;

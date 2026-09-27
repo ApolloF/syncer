@@ -44,6 +44,7 @@ type Settings struct {
 	PausedUntil   time.Time `json:"pausedUntil,omitzero"` // syncing and automatic backups are paused until then
 	Notify        bool      `json:"notify"`               // Windows notifications about problems
 	NoUpdateCheck bool      `json:"noUpdateCheck"`        // don't look for new Syncer releases
+	NoAutoUpdate  bool      `json:"noAutoUpdate"`         // don't install new releases by themselves
 	// NoCloudPull: don't take newer saves from another PC's backup by
 	// yourself (see cloudpull.go); "Get it" still does.
 	NoCloudPull bool `json:"noCloudPull"`

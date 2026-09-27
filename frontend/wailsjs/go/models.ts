@@ -740,6 +740,7 @@ export namespace store {
 	    pausedUntil: any;
 	    notify: boolean;
 	    noUpdateCheck: boolean;
+	    noAutoUpdate: boolean;
 	    noCloudPull: boolean;
 	    noHoldWhilePlaying: boolean;
 	    exclude?: Record<string, Array<string>>;
@@ -773,6 +774,7 @@ export namespace store {
 	        this.pausedUntil = this.convertValues(source["pausedUntil"], null);
 	        this.notify = source["notify"];
 	        this.noUpdateCheck = source["noUpdateCheck"];
+	        this.noAutoUpdate = source["noAutoUpdate"];
 	        this.noCloudPull = source["noCloudPull"];
 	        this.noHoldWhilePlaying = source["noHoldWhilePlaying"];
 	        this.exclude = source["exclude"];

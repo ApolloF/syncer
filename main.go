@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -23,6 +24,10 @@ var version = "dev"
 func main() {
 	startHidden := false
 	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, afterUpdateArg) { // started by the Syncer it updated
+			waitForUpdated(a)
+			continue
+		}
 		switch a {
 		case "--tray": // started with Windows: only the tray icon, no window
 			startHidden = true
@@ -44,6 +49,7 @@ func main() {
 	}
 
 	app := NewApp()
+	app.hidden = startHidden
 	err := wails.Run(&options.App{
 		Title:     "Syncer",
 		Width:     1040,

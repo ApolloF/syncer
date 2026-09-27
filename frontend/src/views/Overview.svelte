@@ -2,7 +2,7 @@
   import Icon from '../lib/Icon.svelte'
   import { ui, attempt, refresh } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
-  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, OpenUpdate } from '../../wailsjs/go/main/App'
+  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
   const o = $derived(ui.overview)
@@ -21,7 +21,7 @@
     if (o.paused)
       s.push({ key: 'paused', icon: 'pause', title: `Paused until ${pausedUntil(o.settings.pausedUntil)}`, text: 'Syncing and automatic backups are paused on this PC. They pick up again on their own.', action: 'Resume now' })
     if (o.update)
-      s.push({ key: 'update', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}. Download the new version from GitHub and run the installer.`, action: 'Download' })
+      s.push({ key: 'update', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}. Syncer downloads the new version from GitHub and restarts.`, action: 'Update now' })
     if (!o.syncthing.installed)
       s.push({ key: 'install', icon: 'sync', title: 'Install the sync engine', text: 'Syncer uses Syncthing to move saves between your PCs directly. One click, no account.', action: 'Install' })
     else if (o.syncthing.error)
@@ -54,7 +54,7 @@
     else if (key === 'link' || key === 'pending') ui.view = 'devices'
     else if (key === 'conflicts' || key === 'overlaps') ui.view = 'games'
     else if (key === 'paused') run(key, Resume, 'Syncing and backups resumed')
-    else if (key === 'update') OpenUpdate()
+    else if (key === 'update') run(key, InstallUpdate)
   }
 
   const lb = $derived(o?.lastBackup)

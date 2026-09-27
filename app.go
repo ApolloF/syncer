@@ -36,6 +36,8 @@ type App struct {
 	session   sessionTracker          // the game running, see session.go
 	others    *othersCache            // backups in Drive no game here uses
 	quitting  bool                    // quit from the tray: really exit
+	hidden    bool                    // only the tray icon shows, no window
+	updating  bool                    // installing a new release, see update.go
 	tray      trayItems
 }
 
