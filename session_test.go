@@ -45,6 +45,7 @@ func TestPullVerdict(t *testing.T) {
 		{"changed here", with(ok, func(c *pullCheck) { c.Changed = true }), false, true},
 		{"paused", with(ok, func(c *pullCheck) { c.Paused = true }), false, true},
 		{"switched off", with(ok, func(c *pullCheck) { c.Auto = false }), false, true},
+		{"Syncthing not answering", with(ok, func(c *pullCheck) { c.Unknown = true }), false, true},
 	} {
 		auto, canGet, why := pullVerdict(tt.c)
 		if auto != tt.auto || canGet != tt.canGet || (!auto && why == "") {

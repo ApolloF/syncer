@@ -172,3 +172,22 @@ func TestMergeHistory(t *testing.T) {
 		t.Errorf("nothing left to merge: %v", err)
 	}
 }
+
+// A backed-up-only game: only this PC writes its backup, so nothing is held.
+func TestMirrorSoloHoldsNothing(t *testing.T) {
+	p := newTwoPCs(t)
+	p.f.Solo = true
+	write(t, p.local("slot1.sav"), "mine, older")
+	setTime(t, p.local("slot1.sav"), time.Now().Add(-time.Hour))
+	write(t, p.backup("slot1.sav"), "seeded, newer")
+	write(t, p.backup("seeded-only.sav"), "x")
+	if r := p.run(); r.held != 0 {
+		t.Errorf("held = %d", r.held)
+	}
+	if read(t, p.backup("slot1.sav")) != "mine, older" {
+		t.Error("this PC's save wasn't backed up")
+	}
+	if _, err := os.Stat(p.backup("seeded-only.sav")); err == nil {
+		t.Error("a file this PC doesn't have stayed in its own backup")
+	}
+}

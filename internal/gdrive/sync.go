@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/store"
 )
 
@@ -43,9 +44,10 @@ type drive interface {
 
 // State is what was in sync after the last sync.
 type State struct {
-	RootID string                `json:"rootID"`
-	Files  map[string]stateEntry `json:"files"` // by lower-case path
-	Synced time.Time             `json:"synced,omitzero"`
+	Account string                `json:"account,omitempty"` // the Google account synced with
+	RootID  string                `json:"rootID"`
+	Files   map[string]stateEntry `json:"files"` // by lower-case path
+	Synced  time.Time             `json:"synced,omitzero"`
 }
 
 type stateEntry struct {
@@ -73,13 +75,22 @@ func LoadState() State {
 
 func saveState(st State) { _ = store.WriteJSON(statePath(), st) }
 
-// ForgetState drops the state (signing out, or another account).
+// ForgetState drops the state (another account).
 func ForgetState() { _ = os.Remove(statePath()) }
+
+// SetAccount records which Google account the folder is synced with.
+func SetAccount(account string) {
+	st := LoadState()
+	st.Account = account
+	saveState(st)
+}
 
 // Report says what a sync did.
 type Report struct {
 	Up, Down, Moved, DeletedHere, DeletedThere int
-	Errors                                     []string
+	Kept                                       int      // losing versions put into history
+	Errors                                     []string // files that failed
+	Notes                                      []string // worth a log line, not an error
 }
 
 // tmpSuffix marks files being downloaded; they're never uploaded.
@@ -124,19 +135,25 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	for _, f := range all {
 		byID[f.ID] = f
 	}
-	if r, ok := byID[st.RootID]; !ok || !r.Folder() {
-		root, err := findRoot(ctx, d)
-		if err != nil {
-			return rep, err
-		}
-		if root.ID != st.RootID {
-			// Another folder than last time (first sync, or it was deleted
-			// in Drive): nothing is known to be in sync with it.
-			st.RootID, st.Files = root.ID, map[string]stateEntry{}
-		}
-		byID[root.ID] = root
+	// Drive can hold two folders of one name (two PCs made it at once, or a
+	// retried request made it twice). All of them count as the same folder,
+	// at the top as below it; new files go into the oldest.
+	roots, err := findRoots(ctx, d)
+	if err != nil {
+		return rep, err
 	}
-	dirs, remote := tree(byID, st.RootID)
+	isRoot := map[string]bool{}
+	for _, r := range roots {
+		isRoot[r.ID] = true
+		byID[r.ID] = r
+	}
+	if !isRoot[st.RootID] {
+		// Another folder than last time (first sync, or it was deleted in
+		// Drive): nothing is known to be in sync with it.
+		st.Files = map[string]stateEntry{}
+	}
+	st.RootID = roots[0].ID
+	dirs, remote := tree(byID, isRoot, st.RootID)
 	here, err := walkLocal(local)
 	if err != nil {
 		return rep, err
@@ -181,11 +198,23 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 			case changedThere && !changedHere:
 				down = append(down, k)
 			default:
+				// Both changed: the newer one wins, and the other goes into
+				// the game's history, as a replaced save would.
 				if sum, err := md5File(filepath.Join(local, filepath.FromSlash(l.rel))); err == nil && sum == r.MD5 {
 					st.Files[k] = entry(l, r.File) // the same on both sides
 				} else if l.mtime.After(r.Modified) {
+					if err := keepRemote(ctx, d, local, r); err != nil {
+						rep.Errors = append(rep.Errors, r.rel+": keep the other version: "+err.Error())
+						continue
+					}
+					rep.Kept++
 					up = append(up, k)
 				} else {
+					if err := keepLocal(local, l); err != nil {
+						rep.Errors = append(rep.Errors, l.rel+": keep this version: "+err.Error())
+						continue
+					}
+					rep.Kept++
 					down = append(down, k)
 				}
 			}
@@ -205,13 +234,22 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 			delete(st.Files, k)
 		}
 	}
-	if len(delHere) > massDelete && 2*len(delHere) > len(here) {
-		rep.Errors = append(rep.Errors, fmt.Sprintf("not deleting %d files here that are gone from Google Drive: that's most of the backup", len(delHere)))
-		delHere = nil
+	// Most of the backups gone from Drive at once (not history, which
+	// thinning deletes by the hundreds) looks like an accident in Drive,
+	// not another PC at work: they go back up instead of being deleted here.
+	var saves []string
+	for _, k := range delHere {
+		if !strings.HasPrefix(k, versionsPrefix) {
+			saves = append(saves, k)
+		}
 	}
-	if len(delThere) > massDelete && 2*len(delThere) > len(remote) {
-		rep.Errors = append(rep.Errors, fmt.Sprintf("not deleting %d files in Google Drive that are gone here: that's most of the backup", len(delThere)))
-		delThere = nil
+	if n := countSaves(here); len(saves) > massDelete && 2*len(saves) > n {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("%d backed-up files are gone from Google Drive; putting them back", len(saves)))
+		for _, k := range saves {
+			delete(st.Files, k)
+			delHere = remove(delHere, k)
+			fresh = append(fresh, k)
+		}
 	}
 
 	fail := func(k string, err error) {
@@ -349,28 +387,27 @@ func firstParent(f File) string {
 	return ""
 }
 
-// findRoot returns the RootName folder at the top of My Drive (the oldest,
-// if there are several), creating it when there's none.
-func findRoot(ctx context.Context, d drive) (File, error) {
+// findRoots returns the RootName folders at the top of My Drive, oldest
+// first, creating one when there's none.
+func findRoots(ctx context.Context, d drive) ([]File, error) {
 	fs, err := d.FindTop(ctx, RootName)
-	if err != nil {
-		return File{}, err
+	if err != nil || len(fs) > 0 {
+		sort.SliceStable(fs, func(i, j int) bool { return fs[i].Created.Before(fs[j].Created) })
+		return fs, err
 	}
-	if len(fs) > 0 {
-		return fs[0], nil
-	}
-	return d.Mkdir(ctx, "root", RootName)
+	f, err := d.Mkdir(ctx, "root", RootName)
+	return []File{f}, err
 }
 
-// tree turns Drive's flat list into paths below root: folders by lower-case
-// path, and files by lower-case path (the newest wins when Drive holds two
-// files of one name).
-func tree(byID map[string]File, root string) (dirs map[string]string, files map[string]remoteFile) {
+// tree turns Drive's flat list into paths below the root folders: folders
+// by lower-case path (the oldest of same-named ones gets new files), and
+// files by lower-case path (the newest wins when Drive holds two).
+func tree(byID map[string]File, roots map[string]bool, root string) (dirs map[string]string, files map[string]remoteFile) {
 	dirs, files = map[string]string{".": root}, map[string]remoteFile{}
 	var relOf func(id string, depth int) (string, bool)
 	memo := map[string]string{}
 	relOf = func(id string, depth int) (string, bool) {
-		if id == root {
+		if roots[id] {
 			return ".", true
 		}
 		if r, ok := memo[id]; ok {
@@ -391,7 +428,7 @@ func tree(byID map[string]File, root string) (dirs map[string]string, files map[
 		return r, true
 	}
 	for id, f := range byID {
-		if id == root {
+		if roots[id] {
 			continue
 		}
 		rel, ok := relOf(id, 0)
@@ -410,14 +447,95 @@ func tree(byID map[string]File, root string) (dirs map[string]string, files map[
 		}
 		files[k] = remoteFile{File: f, rel: rel}
 	}
-	// A file below a folder that lost to a same-named older one isn't
-	// reachable the way paths are resolved here; skip it.
-	for k, f := range files {
-		if d := path.Dir(k); dirs[d] != firstParent(f.File) {
-			delete(files, k)
+	return dirs, files
+}
+
+// versionsPrefix starts the paths of the history (restore points).
+const versionsPrefix = ".versions/"
+
+// countSaves counts the files that aren't history.
+func countSaves(here map[string]localFile) int {
+	n := 0
+	for k := range here {
+		if !strings.HasPrefix(k, versionsPrefix) {
+			n++
 		}
 	}
-	return dirs, files
+	return n
+}
+
+// loserPath is where the losing version of a backed-up save goes: a pinned
+// restore point of its game (.versions\<id>\<stamp>\…), and the pin. Only
+// the backups themselves (<id>\…) have one; the history and the info files
+// don't need one.
+func loserPath(rel string, now time.Time) (dst, pin string, ok bool) {
+	id, rest, found := strings.Cut(rel, "/")
+	if !found || id == ".versions" || id == ".syncer" || rest == "" {
+		return "", "", false
+	}
+	stamp := backup.Stamp(now)
+	return path.Join(".versions", id, stamp, rest), path.Join(".versions", id, backup.PinnedDir, stamp), true
+}
+
+// keepLocal copies this PC's version of a file into its game's history
+// before Drive's newer one replaces it.
+func keepLocal(local string, l localFile) error {
+	dst, pin, ok := loserPath(l.rel, time.Now())
+	if !ok {
+		return nil
+	}
+	src := filepath.Join(local, filepath.FromSlash(l.rel))
+	to := filepath.Join(local, filepath.FromSlash(dst))
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
+	if err := copyLocal(src, to); err != nil {
+		return err
+	}
+	_ = os.Chtimes(to, l.mtime, l.mtime)
+	return touch(filepath.Join(local, filepath.FromSlash(pin)))
+}
+
+// keepRemote saves Drive's version of a file into its game's history (on
+// this PC; it goes up with the next sync) before this PC's newer one
+// replaces it.
+func keepRemote(ctx context.Context, d drive, local string, r remoteFile) error {
+	dst, pin, ok := loserPath(r.rel, time.Now())
+	if !ok {
+		return nil
+	}
+	if _, err := download(ctx, d, local, remoteFile{File: r.File, rel: dst}); err != nil {
+		return err
+	}
+	return touch(filepath.Join(local, filepath.FromSlash(pin)))
+}
+
+func touch(p string) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func copyLocal(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // validName rejects names that can't be a file name here, or could step out

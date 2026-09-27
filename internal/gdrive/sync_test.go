@@ -256,20 +256,94 @@ func TestSyncNeverWipesOnEmptySide(t *testing.T) {
 	}
 }
 
-func TestSyncMassDeleteHeld(t *testing.T) {
+func TestSyncMassDeleteInDrive(t *testing.T) {
 	d := newFake()
 	a := newPC(t)
 	t0 := time.Now().Add(-time.Hour)
 	for i := 0; i < 30; i++ {
 		a.write(fmt.Sprintf("g/%d.sav", i), "x", t0)
+		a.write(fmt.Sprintf(".versions/g/s/%d.sav", i), "old", t0)
 	}
 	a.write("keep.txt", "k", t0)
 	a.sync(d)
+
+	// Thinning history (another PC's prune) goes through.
+	for i := 0; i < 30; i++ {
+		_ = d.Delete(context.Background(), d.path(fmt.Sprintf(".versions/g/s/%d.sav", i)))
+	}
+	if r := a.sync(d); r.DeletedHere != 30 {
+		t.Errorf("history thinned in Drive: %+v", r)
+	}
+	// Most of the backups gone from Drive: they go back up.
+	for i := 0; i < 30; i++ {
+		_ = d.Delete(context.Background(), d.path(fmt.Sprintf("g/%d.sav", i)))
+	}
+	if r := a.sync(d); r.DeletedHere != 0 || r.Up != 30 || len(r.Notes) == 0 {
+		t.Errorf("backups deleted in Drive: %+v", r)
+	}
+	// This PC deleting its own files (a removed game's backup) goes through.
 	for i := 0; i < 30; i++ {
 		_ = os.Remove(filepath.Join(a.local, "g", fmt.Sprintf("%d.sav", i)))
 	}
-	if r := a.sync(d); r.DeletedThere != 0 || len(r.Errors) == 0 {
-		t.Errorf("mass delete went through: %+v", r)
+	if r := a.sync(d); r.DeletedThere != 30 {
+		t.Errorf("deleted here: %+v", r)
+	}
+}
+
+// Two PCs made the same folder at once: files in either copy count.
+func TestSyncDuplicateFolders(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	a.write("g/a.sav", "a", t0)
+	a.sync(d) // makes GameSaveBackup and g
+	// B made its own "g" before it saw A's.
+	var g File
+	for _, f := range d.files {
+		if f.Name == "g" && f.Folder() {
+			g = f
+		}
+	}
+	dup, _ := d.Mkdir(context.Background(), firstParent(g), "g")
+	d.put(d.id(), dup.ID, "b.sav", []byte("b"), t0)
+	if r := a.sync(d); r.Down != 1 || a.read("g/b.sav") != "b" {
+		t.Errorf("file in the duplicate folder: %+v", r)
+	}
+	if r := a.sync(d); r.DeletedHere+r.DeletedThere != 0 {
+		t.Errorf("deleted something: %+v", r)
+	}
+	// A second GameSaveBackup at the top counts as well.
+	top, _ := d.Mkdir(context.Background(), "root", RootName)
+	d.put(d.id(), top.ID, "top.json", []byte("{}"), t0)
+	if a.sync(d); a.read("top.json") != "{}" {
+		t.Error("file in the second GameSaveBackup not brought over")
+	}
+}
+
+// Both PCs changed a backed-up save: the newer wins, the other goes into
+// the game's history.
+func TestSyncKeepsLosingVersion(t *testing.T) {
+	d := newFake()
+	a, b := newPC(t), newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	a.write("game/slot.sav", "old", t0)
+	a.sync(d)
+	b.sync(d)
+	a.write("game/slot.sav", "a, older", t0.Add(time.Minute))
+	b.write("game/slot.sav", "b, newer", t0.Add(2*time.Minute))
+	b.sync(d)
+	if r := a.sync(d); r.Kept != 1 || a.read("game/slot.sav") != "b, newer" {
+		t.Fatalf("a: %+v %q", r, a.read("game/slot.sav"))
+	}
+	es, _ := filepath.Glob(filepath.Join(a.local, ".versions", "game", "*", "slot.sav"))
+	if len(es) != 1 {
+		t.Fatalf("losing version not in history: %v", es)
+	}
+	if b, _ := os.ReadFile(es[0]); string(b) != "a, older" {
+		t.Errorf("history holds %q", b)
+	}
+	if pins, _ := filepath.Glob(filepath.Join(a.local, ".versions", "game", ".pinned", "*")); len(pins) != 1 {
+		t.Errorf("not pinned: %v", pins)
 	}
 }
 
@@ -281,7 +355,7 @@ func TestTreeSkipsUnsafeNames(t *testing.T) {
 		"c": {ID: "c", Name: `x\y`, Parents: []string{"r"}},
 		"d": {ID: "d", Name: "elsewhere", Parents: []string{"other"}},
 	}
-	_, files := tree(byID, "r")
+	_, files := tree(byID, map[string]bool{"r": true}, "r")
 	if len(files) != 1 || files["ok.sav"].ID != "a" {
 		t.Errorf("files: %+v", files)
 	}

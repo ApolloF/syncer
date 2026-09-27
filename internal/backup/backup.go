@@ -29,6 +29,9 @@ const (
 	tmpSuffix   = ".syncer-tmp"
 )
 
+// Stamp names a restore point made at t (a folder in .versions\<id>).
+func Stamp(t time.Time) string { return t.Format(stampFmt) }
+
 // ErrBusy means another backup is already running.
 var ErrBusy = errors.New("a backup is already running")
 
@@ -38,6 +41,9 @@ type Folder struct {
 	Label   string   `json:"label"`
 	Path    string   `json:"path"`
 	Exclude []string `json:"exclude,omitempty"` // the game's exclusions (ignore patterns)
+	// Solo: only this PC backs it up (backed up only, not synced), so every
+	// file in its backup is this PC's.
+	Solo bool `json:"-"`
 }
 
 // Progress is reported while a backup runs.
@@ -115,14 +121,16 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 		if len(errs) == 0 && ctx.Err() == nil {
 			res.Backed = append(res.Backed, f.ID)
 			// A backup that left another PC's newer files in place isn't
-			// this PC's saves: it says nothing about them.
+			// this PC's saves: no file list then (other PCs don't take
+			// from it), only how new the saves here are.
+			hash := ""
 			if held == 0 {
-				hash, err := writeFiles(opts.Target, f.ID, files)
-				if err != nil {
+				var err error
+				if hash, err = writeFiles(opts.Target, f.ID, files); err != nil {
 					res.Errors = append(res.Errors, f.Label+": file list: "+err.Error())
 				}
-				writeInfo(opts.Target, f, newest, opts.Device, hash)
 			}
+			writeInfo(opts.Target, f, newest, opts.Device, hash)
 		}
 	}
 	if opts.KeepDays > 0 {
@@ -211,7 +219,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 				p.FilesDone++
 				return nil
 			}
-			ours := known && ti.Size() == old.Size && sameTime(ti.ModTime(), time.Unix(0, old.MTime))
+			ours := f.Solo || (known && ti.Size() == old.Size && sameTime(ti.ModTime(), time.Unix(0, old.MTime)))
 			if !ours && ti.ModTime().After(info.ModTime().Add(2*time.Second)) {
 				held++ // another PC's newer save
 				if known {
@@ -261,7 +269,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 			if seen[key] || m.Ignored(rel) {
 				return nil
 			}
-			if _, known := idx[key]; !known {
+			if _, known := idx[key]; !known && !f.Solo {
 				held++ // another PC's file this PC hasn't had yet
 				return nil
 			}

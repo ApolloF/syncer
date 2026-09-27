@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,8 +98,11 @@ func googleSync(ctx context.Context, maxAge time.Duration) error {
 		err = errors.New(rep.Errors[0])
 	}
 	if n := rep.Up + rep.Down + rep.Moved + rep.DeletedHere + rep.DeletedThere; n > 0 || err != nil {
-		logx.Printf("Google Drive: %d up, %d down, %d moved, %d deleted here, %d deleted there, %d error(s)",
-			rep.Up, rep.Down, rep.Moved, rep.DeletedHere, rep.DeletedThere, len(rep.Errors))
+		logx.Printf("Google Drive: %d up, %d down, %d moved, %d deleted here, %d deleted there, %d kept in history, %d error(s)",
+			rep.Up, rep.Down, rep.Moved, rep.DeletedHere, rep.DeletedThere, rep.Kept, len(rep.Errors))
+	}
+	for _, n := range rep.Notes {
+		logx.Printf("Google Drive: %s", n)
 	}
 	if errors.Is(err, gdrive.ErrSignedOut) {
 		_ = gdrive.DeleteToken()
@@ -129,10 +135,19 @@ func (a *App) SignInGoogle() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	old, _ := gdrive.LoadToken()
-	if old.Account != "" && old.Account != account {
-		gdrive.ForgetState() // another account: its Drive is another folder
+	if prev := gdrive.LoadState().Account; prev != "" && !strings.EqualFold(prev, account) {
+		// The copy here is the other account's backup: it mustn't go up
+		// into this one. It's kept aside (that account's Drive has it too).
+		if _, err := os.Stat(googleDir()); err == nil {
+			aside := googleDir() + " (" + safeName(prev) + ")"
+			if err := os.Rename(googleDir(), aside); err != nil {
+				return "", fmt.Errorf("can't set aside the backup of %s: %w", prev, err)
+			}
+			logx.Printf("set aside the backup copy of %s in %s", prev, aside)
+		}
+		gdrive.ForgetState()
 	}
+	gdrive.SetAccount(account)
 	tok.Account = account
 	if err := gdrive.SaveToken(tok); err != nil {
 		return "", err
@@ -152,7 +167,8 @@ func (a *App) SignInGoogle() (string, error) {
 }
 
 // SignOutGoogle signs out of Google and goes back to Google Drive for
-// desktop. The backup already in Drive stays there; the copy on this PC too.
+// desktop. The backup already in Drive stays there; the copy on this PC too
+// (signing in to the same account again carries on with it).
 func (a *App) SignOutGoogle() error {
 	if tok, err := gdrive.LoadToken(); err == nil {
 		ctx, cancel := a.callCtx()
@@ -162,11 +178,20 @@ func (a *App) SignOutGoogle() error {
 	if err := gdrive.DeleteToken(); err != nil {
 		return err
 	}
-	gdrive.ForgetState()
 	if _, err := store.UpdateSettings(func(s *store.Settings) { s.BackupBackend = "" }); err != nil {
 		return err
 	}
 	logx.Printf("signed out of Google")
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
+}
+
+// safeName makes an account name usable in a folder name.
+func safeName(s string) string {
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`<>:"/\|?*`, r) || r < 32 {
+			return '_'
+		}
+		return r
+	}, s)
 }

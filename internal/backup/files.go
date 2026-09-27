@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ApolloF/syncer/internal/fsx"
+	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
 )
 
@@ -205,7 +206,12 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 	defer unlock()
 	m := LoadMatcher(f.Path, f.Exclude...)
 	stage := filepath.Join(f.Path, ".stversions", ".syncer-take-"+time.Now().Format(stampFmt))
-	defer os.RemoveAll(stage)
+	keepStage := false // an original couldn't be put back: it's still in there
+	defer func() {
+		if !keepStage {
+			_ = os.RemoveAll(stage)
+		}
+	}()
 
 	type swap struct{ rel, staged, to, old string }
 	var swaps []swap
@@ -243,10 +249,17 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 	undo := func() {
 		for i := len(done) - 1; i >= 0; i-- {
 			s := done[i]
-			_ = os.Remove(s.to)
 			if _, err := os.Stat(s.old); err == nil {
-				_ = os.Rename(s.old, s.to)
+				// Rename replaces the new file with the original.
+				if os.Rename(s.old, s.to) != nil {
+					keepStage = true
+				}
+			} else {
+				_ = os.Remove(s.to)
 			}
+		}
+		if keepStage {
+			logx.Printf("taking saves for %s failed and some originals couldn't be put back; they're in %s", f.Label, filepath.Join(stage, "old"))
 		}
 	}
 	for _, s := range swaps {
@@ -260,7 +273,9 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 			return 0, err
 		}
 		if err := os.Rename(s.staged, s.to); err != nil {
-			_ = os.Rename(s.old, s.to)
+			if _, serr := os.Stat(s.old); serr == nil && os.Rename(s.old, s.to) != nil {
+				keepStage = true
+			}
 			undo()
 			return 0, fmt.Errorf("%s: %w", s.rel, err)
 		}

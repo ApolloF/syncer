@@ -34,6 +34,7 @@ type pullCheck struct {
 	Playing   bool // a game is running
 	Conflicts int  // two versions of a save wait to be settled
 	Changed   bool // the saves here changed since this PC's last backup
+	Unknown   bool // Syncthing couldn't be asked whether it's bringing them
 }
 
 // pullVerdict says whether to take the newer save now (auto), whether the
@@ -44,6 +45,8 @@ func pullVerdict(c pullCheck) (auto, canGet bool, why string) {
 		return false, false, "it's arriving through Syncthing"
 	case !c.Ready:
 		return false, false, "its backup hasn't fully reached this PC through Google Drive yet"
+	case c.Unknown:
+		return false, true, "Syncthing isn't answering, so it's unclear whether it's bringing them"
 	case c.Playing:
 		return false, false, "a game is running"
 	case c.Conflicts > 0:
@@ -108,11 +111,16 @@ func gatherPull(ctx context.Context, c *syncthing.Client, target string, f backu
 	chk := pullCheck{Auto: !s.NoCloudPull, Paused: s.Paused(), Conflicts: conflict.Count(f.Path)}
 	files, err := backup.ReadFiles(target, in)
 	chk.Ready = err == nil && backup.MirrorMatches(target, f.ID, files)
+	chk.Unknown = c == nil
 	if c != nil {
-		if conns, err := c.Connections(ctx); err == nil && in.Device != "" {
+		if conns, err := c.Connections(ctx); err != nil {
+			chk.Unknown = true
+		} else if in.Device != "" {
 			chk.Online = conns.Connections[in.Device].Connected
 		}
-		if st, err := c.FolderStatus(ctx, f.ID); err == nil {
+		if st, err := c.FolderStatus(ctx, f.ID); err != nil {
+			chk.Unknown = true
+		} else {
 			chk.Incoming = st.NeedBytes > 0 || st.NeedFiles > 0
 			chk.Paused = chk.Paused || st.State == "paused"
 		}

@@ -181,10 +181,20 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 	if err != nil {
 		return err
 	}
+	// Folders a pause the user set holds count too: if that pause ends
+	// first, they must stay paused until the game exits.
+	userPaused := map[string]bool{}
+	for _, id := range store.LoadState().PausedFolders {
+		userPaused[id] = true
+	}
 	var now []string
 	var errs []error
 	for _, f := range fs {
-		if f.ID == meta.FolderID || f.Paused {
+		if f.ID == meta.FolderID || (f.Paused && !userPaused[f.ID]) {
+			continue // paused by hand: not Syncer's to resume
+		}
+		if f.Paused {
+			now = append(now, f.ID)
 			continue
 		}
 		if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {

@@ -6,6 +6,7 @@ package conflict
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -134,8 +135,16 @@ func Resolve(dir, copyRel string, useCopy bool, keep Preserve) error {
 func StVersionsKeep(dir string) Preserve {
 	return func(abs, rel string, move bool) error {
 		ext := filepath.Ext(rel)
-		name := strings.TrimSuffix(rel, ext) + "~" + time.Now().Format("20060102-150405") + ext
-		dst := filepath.Join(dir, ".stversions", name)
+		base := strings.TrimSuffix(rel, ext) + "~" + time.Now().Format("20060102-150405")
+		dst := filepath.Join(dir, ".stversions", base+ext)
+		// Two versions of one file kept within a second: never replace the
+		// first (a rename would).
+		for i := 2; ; i++ {
+			if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
+				break
+			}
+			dst = filepath.Join(dir, ".stversions", fmt.Sprintf("%s-%d%s", base, i, ext))
+		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}

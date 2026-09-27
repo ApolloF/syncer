@@ -199,3 +199,25 @@ func TestDropIdentical(t *testing.T) {
 		t.Errorf("left: %+v", cs)
 	}
 }
+
+// "Keep all current" on a file with two conflict copies, within a second:
+// both copies must survive in .stversions.
+func TestStVersionsKeepNeverReplaces(t *testing.T) {
+	d := t.TempDir()
+	write(t, filepath.Join(d, "a.sav"), "current")
+	write(t, filepath.Join(d, "a.sync-conflict-20260925-143012-AAAAAAA.sav"), "one")
+	write(t, filepath.Join(d, "a.sync-conflict-20260925-150000-BBBBBBB.sav"), "two")
+	for _, c := range Find(d) {
+		if err := Resolve(d, c.Copy, false, StVersionsKeep(d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	es, _ := os.ReadDir(filepath.Join(d, ".stversions"))
+	got := map[string]bool{}
+	for _, e := range es {
+		got[read(t, filepath.Join(d, ".stversions", e.Name()))] = true
+	}
+	if !got["one"] || !got["two"] {
+		t.Errorf("kept: %v", got)
+	}
+}

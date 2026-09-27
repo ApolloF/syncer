@@ -295,7 +295,7 @@ next:
 				continue next
 			}
 		}
-		extra = append(extra, backup.Folder{ID: lf.ID, Label: lf.Label, Path: lf.Path})
+		extra = append(extra, backup.Folder{ID: lf.ID, Label: lf.Label, Path: lf.Path, Solo: true})
 	}
 	sort.Slice(extra, func(i, j int) bool { return extra[i].ID < extra[j].ID })
 	return append(out, extra...)

@@ -205,6 +205,11 @@ func (a *App) resolveConflict(id, copyRel string, useCopy bool) error {
 	if t, ok := backupTarget(store.LoadSettings()); ok {
 		if err := os.MkdirAll(t, 0o755); err == nil {
 			keep = func(abs, rel string, move bool) error {
+				if backup.Running() {
+					// Don't make the user wait for it (per file, for "all").
+					logx.Printf("conflict in %s: backup busy, keeping the other version in .stversions", f.Label)
+					return local(abs, rel, move)
+				}
 				err := backup.Keep(t, f.ID, abs, rel, move)
 				if errors.Is(err, backup.ErrBusy) {
 					// A long backup is running: don't make the user wait.
