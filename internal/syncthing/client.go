@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/paths"
@@ -56,15 +57,47 @@ type Client struct {
 	http   *http.Client
 }
 
-// New reads config.xml and returns a client. It does not contact Syncthing.
-func New() (*Client, error) {
-	b, err := os.ReadFile(ConfigPath())
+// cfgCache holds the last parsed config.xml. Syncer makes a client for
+// nearly every call; reading config.xml each time kept a handle open on it
+// often enough that Syncthing's own save (a rename over config.xml) failed
+// with "Access is denied" on Windows. A stat takes no handle.
+var cfgCache struct {
+	sync.Mutex
+	mod  time.Time
+	size int64
+	cfg  xmlConfig
+	ok   bool
+}
+
+// readConfig returns config.xml's GUI settings, reading the file only when
+// its size or modification time changed.
+func readConfig(path string) (xmlConfig, error) {
+	st, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("syncthing config not found: %w", err)
+		return xmlConfig{}, fmt.Errorf("syncthing config not found: %w", err)
+	}
+	cfgCache.Lock()
+	defer cfgCache.Unlock()
+	if cfgCache.ok && st.ModTime().Equal(cfgCache.mod) && st.Size() == cfgCache.size {
+		return cfgCache.cfg, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return xmlConfig{}, fmt.Errorf("syncthing config not found: %w", err)
 	}
 	var c xmlConfig
 	if err := xml.Unmarshal(b, &c); err != nil {
-		return nil, fmt.Errorf("parse syncthing config: %w", err)
+		return xmlConfig{}, fmt.Errorf("parse syncthing config: %w", err)
+	}
+	cfgCache.mod, cfgCache.size, cfgCache.cfg, cfgCache.ok = st.ModTime(), st.Size(), c, true
+	return c, nil
+}
+
+// New reads config.xml and returns a client. It does not contact Syncthing.
+func New() (*Client, error) {
+	c, err := readConfig(ConfigPath())
+	if err != nil {
+		return nil, err
 	}
 	if c.GUI.APIKey == "" {
 		return nil, errors.New("syncthing config has no API key")
@@ -200,21 +233,66 @@ type StatusError struct {
 
 func (e *StatusError) Error() string { return e.msg }
 
+// configRetries is how long a config change waits between tries when
+// Syncthing could not save config.xml (tests shorten it).
+var configRetries = []time.Duration{300 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second}
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	var rd io.Reader
+	var b []byte
 	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
+		var err error
+		if b, err = json.Marshal(body); err != nil {
 			return err
 		}
-		rd = bytes.NewReader(b)
+	}
+	for i := 0; ; i++ {
+		err := c.once(ctx, method, path, b, body != nil, out)
+		if i >= len(configRetries) || !configSaveFailed(method, path, err) {
+			if i > 0 && method == http.MethodDelete && isStatus(err, http.StatusNotFound) {
+				// The first try removed it from the running config before
+				// the save failed; the retry that saved it finds it gone.
+				return nil
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(configRetries[i]):
+		}
+	}
+}
+
+// configSaveFailed reports a config change Syncthing applied but could not
+// write to config.xml, typically "Access is denied" on the rename over it
+// while another program (antivirus, a backup, an indexer) had it open.
+// Syncthing keeps the change in memory, so sending it again is safe: the
+// same folder or device is set to the same values, then saved.
+func configSaveFailed(method, path string, err error) bool {
+	var se *StatusError
+	if method == http.MethodGet || !strings.HasPrefix(path, "/rest/config") ||
+		!errors.As(err, &se) || se.Code != http.StatusInternalServerError {
+		return false
+	}
+	return strings.Contains(strings.ToLower(se.msg), "config.xml")
+}
+
+func isStatus(err error, code int) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Code == code
+}
+
+func (c *Client) once(ctx context.Context, method, path string, body []byte, hasBody bool, out any) error {
+	var rd io.Reader
+	if hasBody {
+		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rd)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("X-API-Key", c.apiKey)
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
@@ -226,6 +304,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		cfgCache.Lock()
+		cfgCache.ok = false // the key may have changed; read config.xml again next time
+		cfgCache.Unlock()
 		return ErrUnauthorized
 	}
 	if resp.StatusCode >= 300 {
