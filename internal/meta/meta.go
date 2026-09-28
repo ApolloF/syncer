@@ -50,6 +50,9 @@ type SharedFolder struct {
 	// SourceSince when it became the source (the newest claim wins).
 	Source      string `json:"source,omitempty"`
 	SourceSince int64  `json:"sourceSince,omitempty"`
+	// Launcher: a game launcher's own data (see KnownLauncher), which is
+	// never split per account or removed as an uninstalled game.
+	Launcher string `json:"launcher,omitempty"`
 	// Account: one account's saves of a split game (see package accounts).
 	// Root and Rel are then the game's save folder, wherever this PC keeps
 	// the folder right now.
@@ -199,6 +202,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		rep.Added = append(rep.Added, sf.Label)
 		logx.Printf("meta: added %s (%s) from another PC", sf.Label, p)
 	}
+	markLaunchers(cands, byID)
 	for _, add := range accountFolders(ast, cands, byID, settings, installed, synced) {
 		if err := AddFolder(ctx, c, add.id, add.label, add.path, me, others); err != nil {
 			logx.Printf("meta: add %s: %v", add.id, err)
@@ -290,12 +294,52 @@ func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.Stat
 			continue
 		}
 		if root, rel, ok := paths.Portable(f.Path); ok {
+			if l := s.Launchers[f.ID]; l != "" {
+				out = append(out, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel, Launcher: l})
+				continue
+			}
 			out = append(out, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel,
 				CopyOf: classify(f.Label, f.Path).CopyOf})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// knownLaunchers are the launchers whose own data Syncer syncs, by the
+// lower-case name of their folder in AppData. Only these: any program
+// running as the user can call the launcher API, and a made-up name
+// ("discord") must not get another program's data synced.
+var knownLaunchers = map[string]string{"seaglass": "Seaglass"}
+
+// KnownLauncher returns a launcher's name as Syncer knows it.
+func KnownLauncher(name string) (string, bool) {
+	n, ok := knownLaunchers[strings.ToLower(name)]
+	return n, ok
+}
+
+// markLaunchers notes the folders other PCs published as a launcher's own
+// data, so this PC doesn't take them for a game's saves before its own
+// launcher asks.
+func markLaunchers(cands []SharedFolder, synced map[string]syncthing.Folder) {
+	s := store.LoadSettings()
+	add := map[string]string{}
+	for _, sf := range cands {
+		if _, here := synced[sf.ID]; !here || sf.Launcher == "" || s.Launchers[sf.ID] != "" {
+			continue
+		}
+		if l, ok := KnownLauncher(sf.Launcher); ok {
+			add[sf.ID] = l
+		}
+	}
+	if len(add) == 0 {
+		return
+	}
+	_, _ = store.UpdateSettings(func(s *store.Settings) {
+		for id, l := range add {
+			s.Launchers[id] = l
+		}
+	})
 }
 
 // rememberModSizes keeps the sizes published for mod folders, to publish

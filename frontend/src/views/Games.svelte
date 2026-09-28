@@ -261,6 +261,7 @@
   const modKinds: Record<string, { text: string; tip: string }> = {
     'mods': { text: 'Vortex mods', tip: "The mods Vortex installed for this game (its staging folder). On your other PCs they appear in Vortex, to be enabled and deployed there. Synced while Vortex is closed." },
     'mods-profiles': { text: 'Vortex load order', tip: "Vortex's profiles for this game: plugin lists and load orders. Each PC keeps its own game settings (.ini files)." },
+    'launcher': { text: 'Launcher data', tip: "A game launcher's own playtime, achievements and settings (Seaglass). The launcher keeps each account's apart, so it isn't split per account." },
     'mods-deployed': { text: 'Deployed mods', tip: "The mod files Vortex deployed into the game's folder, for other PCs to play with right away. Experimental: one PC sends, the others apply checked updates." },
   }
 
@@ -731,7 +732,7 @@
         title={f.exclude?.length ? `Skipped files: ${f.exclude.join(', ')}` : 'Skip files (logs, screenshots, …)'}
         onclick={() => openExclude(f)}><Icon name="filter" size={16} /></button>
       <button class="btn ghost icon sm" title="Restore from backup" onclick={() => openRestore(f)}><Icon name="history" size={16} /></button>
-      {#if canSplit && f.sync && !f.split}
+      {#if canSplit && f.sync && !f.split && f.kind !== 'launcher'}
         <button class="btn ghost icon sm" title="Separate saves per account" onclick={() => (splitFor = f)}><Icon name="split" size={16} /></button>
       {/if}
       {#if !f.split}
@@ -986,7 +987,7 @@
 {#if conflictsFor}
   <Modal title="Two versions of {conflictsFor.label}" onclose={() => (conflictsFor = null)}>
     <p>Two PCs changed the same save. The game loads the current one; the other was kept aside. Close the game, then pick which to keep. The version you don't pick goes into the backup history, so you can still restore it.</p>
-    {#if canSplit && !conflictsFor.split}
+    {#if canSplit && !conflictsFor.split && conflictsFor.kind !== 'launcher'}
       {@const f = conflictsFor}
       <div class="notice row splitask">
         <Icon name="users" size={16} />

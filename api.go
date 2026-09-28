@@ -172,6 +172,7 @@ type apiBackend interface {
 	open() error
 	accounts() apiAccounts
 	switchAccount(ctx context.Context, id string) error
+	launcherData(ctx context.Context, launcher, path string) (apiLauncherData, error)
 }
 
 // ---- the server ----
@@ -507,6 +508,23 @@ func (s *apiServer) call(ctx context.Context, ac *apiConn, method string, raw js
 		}
 		return true, nil
 
+	case "launcherData":
+		p, perr := rpcParams[struct {
+			Launcher string `json:"launcher"`
+			Path     string `json:"path"`
+		}](raw)
+		if perr != nil {
+			return nil, perr
+		}
+		if p.Launcher == "" || p.Path == "" {
+			return nil, &rpcError{rpcInvalidParams, "give the launcher and its folder"}
+		}
+		d, err := s.b.launcherData(ctx, p.Launcher, p.Path)
+		if err != nil {
+			return nil, failed(err)
+		}
+		return d, nil
+
 	case "subscribe":
 		s.subscribe(ac)
 		return true, nil
@@ -820,6 +838,10 @@ func (b appBackend) switchAccount(_ context.Context, id string) error {
 		return errors.New("accounts are off in Syncer's settings")
 	}
 	return b.a.SwitchAccount(id)
+}
+
+func (b appBackend) launcherData(ctx context.Context, launcher, path string) (apiLauncherData, error) {
+	return b.a.launcherData(ctx, launcher, path)
 }
 
 func (b appBackend) open() error {

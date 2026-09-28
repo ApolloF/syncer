@@ -62,6 +62,13 @@ func (f *fakeBackend) switchAccount(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeBackend) launcherData(_ context.Context, launcher, path string) (apiLauncherData, error) {
+	if path != `C:\Users\x\AppData\Roaming\Seaglass\Profile` {
+		return apiLauncherData{}, fmt.Errorf("the folder must be in AppData")
+	}
+	return apiLauncherData{ID: "seaglass", Label: launcher, Sync: true, Backup: true, Added: true}, nil
+}
+
 type client struct {
 	t  *testing.T
 	c  net.Conn
@@ -232,5 +239,20 @@ func TestAPIAccounts(t *testing.T) {
 	}
 	if r := c.call("switchAccount", map[string]any{"id": "aaaaaa"}); r["result"] != true {
 		t.Errorf("switchAccount = %v", r)
+	}
+}
+
+func TestAPILauncherData(t *testing.T) {
+	name, _ := startTest(t, &fakeBackend{})
+	c := dial(t, name)
+	if e := c.call("launcherData", map[string]any{"launcher": "Seaglass"})["error"].(map[string]any); e["code"].(float64) != rpcInvalidParams {
+		t.Errorf("launcherData without path = %v", e)
+	}
+	if e := c.call("launcherData", map[string]any{"launcher": "Seaglass", "path": `C:\Windows`})["error"].(map[string]any); e["code"].(float64) != rpcFailed {
+		t.Errorf("launcherData outside AppData = %v", e)
+	}
+	r := c.call("launcherData", map[string]any{"launcher": "Seaglass", "path": `C:\Users\x\AppData\Roaming\Seaglass\Profile`})["result"].(map[string]any)
+	if r["id"] != "seaglass" || r["sync"] != true || r["added"] != true {
+		t.Errorf("launcherData = %v", r)
 	}
 }

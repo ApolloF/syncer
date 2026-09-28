@@ -142,6 +142,10 @@ func (a *App) Folders() ([]FolderView, error) {
 	}
 	od := paths.OneDriveRoots()
 	for i := range out {
+		if _, ok := s.Launchers[out[i].ID]; ok {
+			out[i].Kind, out[i].Installed = "launcher", true
+			continue // a launcher's own data, not a game's saves
+		}
 		if mf, ok := s.Mods[out[i].ID]; ok {
 			out[i].Kind, out[i].ModGame, out[i].ModRole, out[i].Installed = mf.Kind, mf.Game, mf.Role, true
 			a.modView(&out[i])
@@ -603,6 +607,9 @@ func toBackupOnly(s *store.Settings, syncID, label, path string) string {
 	}
 	bid := backupOnlyID(label, taken)
 	s.BackupOnly[bid] = store.LocalFolder{ID: bid, Label: label, Path: path, SyncID: syncID}
+	if l, ok := s.Launchers[syncID]; ok {
+		s.Launchers[bid] = l // kept under syncID too, for syncing it again
+	}
 	if mf, ok := s.Mods[syncID]; ok {
 		s.Mods[bid] = mf // syncing it again needs to know it's a mod folder
 		delete(s.Mods, syncID)
@@ -927,7 +934,7 @@ func (a *App) RemoveUninstalled() (int, error) {
 		// Not converted to backup-only: the PCs that have the game installed
 		// keep backing these saves up into the same Drive folder. Mod
 		// folders only exist where the mod manager has the game.
-		if f.ID == meta.FolderID || isMod(s, f.ID) || splitGuard(f.ID) != nil || inst.Has(cmpOr(f.Label, f.ID)) {
+		if f.ID == meta.FolderID || isMod(s, f.ID) || isLauncherData(s, f.ID) || splitGuard(f.ID) != nil || inst.Has(cmpOr(f.Label, f.ID)) {
 			continue
 		}
 		if err := c.RemoveFolder(ctx, f.ID); err != nil {

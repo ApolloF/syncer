@@ -77,6 +77,12 @@ func accountsEnv(c *syncthing.Client, me string, others []string) accounts.Env {
 			}
 		},
 		Busy: noGameRunning,
+		NoSplit: func(game string) error {
+			if l, ok := store.LoadSettings().Launchers[game]; ok {
+				return fmt.Errorf("this is %s's own data; it keeps each account's apart by itself", l)
+			}
+			return nil
+		},
 		HoldBackups: func(ctx context.Context) (func(), error) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 			defer cancel()
@@ -636,6 +642,9 @@ func (a *App) SplitGame(id string, assign map[string]string) error {
 	}
 	if _, _, ok := accounts.ParseFolderID(id); ok {
 		return errors.New("this game already has separate saves per account")
+	}
+	if l, ok := store.LoadSettings().Launchers[id]; ok {
+		return fmt.Errorf("this is %s's own data; it keeps each account's apart by itself", l)
 	}
 	return a.withEnv(func(ctx context.Context, c *syncthing.Client, env accounts.Env) error {
 		f, err := findFolder(ctx, c, id)
