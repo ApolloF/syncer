@@ -134,6 +134,9 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 			if mf, ok := s.Mods[f.ID]; ok {
 				s.Mods[id] = mf
 			}
+			if l, ok := s.Launchers[f.ID]; ok {
+				s.Launchers[id] = l
+			}
 			converted = append(converted, [2]string{f.ID, id})
 		}
 	})

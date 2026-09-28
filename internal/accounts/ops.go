@@ -51,6 +51,9 @@ type Env struct {
 	// HoldBackups waits for a running backup and keeps new ones from
 	// starting while saves move (nil: no lock).
 	HoldBackups func(ctx context.Context) (release func(), err error)
+	// NoSplit refuses to split a folder that must stay whole (a launcher's
+	// own data), even when another PC split it (nil: no check).
+	NoSplit func(game string) error
 }
 
 func (env Env) hold(ctx context.Context) (func(), error) {
@@ -177,6 +180,13 @@ func Apply(ctx context.Context, env Env) (bool, error) {
 	s.Clean()
 	var errs []error
 	for _, r := range s.Pending() {
+		if r.Kind == KindSplit && env.NoSplit != nil {
+			if err := env.NoSplit(r.Game); err != nil {
+				noteError(r.Game, err)
+				errs = append(errs, fmt.Errorf("%s: %w", r.Label, err))
+				continue
+			}
+		}
 		j := Journal{Kind: r.Kind, Record: r, Started: time.Now()}
 		err := run(ctx, env, &j)
 		noteError(r.Game, err)

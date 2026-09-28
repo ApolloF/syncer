@@ -303,6 +303,9 @@ func CheckSyncable(abs string) error {
 // this PC alone and never taken from a peer.
 func CheckSensitive(abs string) error {
 	abs = filepath.Clean(abs)
+	if trailingDotOrSpace(abs) {
+		return errNotSyncable
+	}
 	for _, s := range sensitivePaths {
 		p, ok := s.abs()
 		if ok && (Within(p, abs) || Within(abs, p)) { // abs inside/== sensitive, or an ancestor of it
@@ -310,6 +313,18 @@ func CheckSensitive(abs string) error {
 		}
 	}
 	return nil
+}
+
+// trailingDotOrSpace reports whether a folder or file name in p ends in a
+// dot or a space. Windows drops those ("Microsoft." opens Microsoft), so
+// such a path would get past every check that compares paths as text.
+func trailingDotOrSpace(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if seg != "." && seg != ".." && (strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ")) {
+			return true
+		}
+	}
+	return false
 }
 
 // Here reports whether root resolves on this PC.

@@ -79,6 +79,10 @@ type Settings struct {
 	// Accounts shows accounts (separate saves per person) on this PC. It
 	// can only be turned off while no game is split per account.
 	Accounts bool `json:"accounts,omitempty"`
+	// Launchers are synced folders that hold a game launcher's own data
+	// (Seaglass's playtime, achievements and settings), by folder id: the
+	// launcher that asked for it. They aren't games.
+	Launchers map[string]string `json:"launchers,omitempty"`
 }
 
 // ModFolder is a mod manager's folder that Syncer syncs.
@@ -271,6 +275,9 @@ func LoadSettings() Settings {
 	}
 	if s.Mods == nil {
 		s.Mods = map[string]ModFolder{}
+	}
+	if s.Launchers == nil {
+		s.Launchers = map[string]string{}
 	}
 	if s.ModsMaxGB == 0 || s.ModsMaxGB < -1 {
 		s.ModsMaxGB = 20
