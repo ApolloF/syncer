@@ -67,6 +67,8 @@ type DeviceFile struct {
 	// Accounts: this PC's copy of the accounts and split games, and who
 	// plays on it.
 	Accounts *accounts.Shared `json:"accounts,omitempty"`
+	// Mods: this PC's mod options (see ModSettings).
+	Mods *ModSettings `json:"mods,omitempty"`
 }
 
 // Dir is the local path of the meta folder.
@@ -112,6 +114,10 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 	ast := accounts.Load()
 	ast.Clean()
+	// Mod options changed on another PC apply here too, before deciding
+	// which mod folders to adopt.
+	adoptModSettings(ctx, c, me)
+	settings = store.LoadSettings()
 
 	folders, err := c.Folders(ctx)
 	if err != nil {
@@ -143,6 +149,8 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			return st.GlobalBytes
 		})}
 	rememberModSizes(settings, mine.Folders)
+	ms := ModSettingsOf(settings)
+	mine.Mods = &ms
 	if len(ast.Accounts) > 0 || len(ast.Records) > 0 {
 		pub := ast.Shared
 		pub.Active = ""
@@ -879,7 +887,9 @@ func changed(me string, df DeviceFile) bool {
 	}
 	oa, _ := json.Marshal(old.Accounts)
 	na, _ := json.Marshal(df.Accounts)
-	if string(oa) != string(na) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") {
+	om, _ := json.Marshal(old.Mods)
+	nm, _ := json.Marshal(df.Mods)
+	if string(oa) != string(na) || string(om) != string(nm) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") {
 		return true
 	}
 	for i := range old.Folders {

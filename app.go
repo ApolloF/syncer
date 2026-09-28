@@ -580,6 +580,9 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		if in.KeepDays > 0 {
 			s.KeepDays = in.KeepDays
 		}
+		if !meta.ModSettingsOf(*s).Same(meta.ModSettingsOf(old)) {
+			s.ModsChanged = meta.NewModStamp() // your other PCs take it over
+		}
 	})
 	if err != nil {
 		return s, err
@@ -592,9 +595,8 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	if s.NoUpdateCheck != old.NoUpdateCheck {
 		a.refreshTray()
 	}
-	modsAuto := s.FindMods && s.AutoAddMods
 	if s.AutoAdd && (!old.AutoAdd || s.IncludeSteamCloud != old.IncludeSteamCloud || s.AutoAddMaxGB != old.AutoAddMaxGB) ||
-		modsAuto && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB) {
+		modsAutoOn(old, s) {
 		go a.runAutoAdd()
 	}
 	if old.SyncDeployedMods && !s.SyncDeployedMods {
@@ -603,7 +605,52 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	if old.ShareVortexMods != s.ShareVortexMods {
 		go a.kickMods()
 	}
+	if !s.ModsChanged.Equal(old.ModsChanged) {
+		go a.publishSettings()
+	}
 	return s, nil
+}
+
+// modsAutoOn reports whether adding mod folders automatically just started
+// (or its size limit changed), so it should run now.
+func modsAutoOn(old, s store.Settings) bool {
+	return s.FindMods && s.AutoAddMods && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB)
+}
+
+// publishSettings shares a change of the mod options with the other PCs now.
+func (a *App) publishSettings() {
+	c, err := a.client()
+	if err != nil {
+		return
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	_, _ = meta.Reconcile(ctx, c)
+}
+
+// ModSettingsDiffer names your other PCs that use different mod options
+// (from before they were shared).
+func (a *App) ModSettingsDiffer() []string {
+	c, err := a.client()
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	st, err := c.Status(ctx)
+	if err != nil {
+		return nil
+	}
+	return meta.ModSettingsDiffer(st.MyID)
+}
+
+// UseModSettingsEverywhere makes your other PCs take this PC's mod options.
+func (a *App) UseModSettingsEverywhere() error {
+	if _, err := store.UpdateSettings(func(s *store.Settings) { s.ModsChanged = meta.NewModStamp() }); err != nil {
+		return err
+	}
+	a.publishSettings()
+	return nil
 }
 
 func (a *App) applyTheme(t string) {

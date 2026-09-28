@@ -470,5 +470,20 @@ func init() {
 	}
 }
 
+func init() {
+	// Mod options another PC changed: do here what changing them here does.
+	meta.ModSettingsAdopted = func(ctx context.Context, c *syncthing.Client, old, s store.Settings) {
+		if old.SyncDeployedMods && !s.SyncDeployedMods {
+			for id, mf := range s.Mods {
+				if mf.Kind == mods.KindDeployed && !applying.has(id) {
+					holdMods(ctx, c, id, heldOff, "the experimental option to sync deployed mods was turned off on another PC")
+				}
+			}
+		}
+		// Sharing Vortex's mod list and adding mod folders automatically
+		// follow on their own next round (modsLoop, autoAddLoop).
+	}
+}
+
 // modKind is a folder's mod kind ("" for a save folder).
 func modKind(s store.Settings, id string) string { return s.Mods[id].Kind }

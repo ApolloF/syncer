@@ -267,7 +267,8 @@
     if (await attempt(() => PushVortexList(g.game), `Your other PCs take this PC's mod list of ${g.name}`)) { pushFor = null; loadShares() }
     pushing = false
   }
-  const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed).length)
+  // Only what RemoveUninstalled stops: split games are merged first (Accounts).
+  const uninstalledCount = $derived(cache.folders.filter(f => f.sync && !f.installed && !f.split && !f.kind).length)
   const syncedCloud = $derived(cache.folders.filter(f => f.sync && f.steamCloud))
   const syncedCopies = $derived(cache.folders.filter(f => f.sync && f.copyOf))
   // Synced folders inside another synced folder, grouped by the outer one.
@@ -584,7 +585,8 @@
     stoppingUninstalled = true
     try {
       const n = await RemoveUninstalled()
-      toast(`Stopped syncing ${plural(n, 'game')}. They sync again once installed here.`, 'ok')
+      if (n) toast(`Stopped syncing ${plural(n, 'game')}. They sync again once installed here.`, 'ok')
+      else toast('Nothing to stop: the games turned out to be installed here.', 'ok')
       cache.found = null
       load(); refresh()
     } catch (e) { fail(e) }
@@ -926,6 +928,20 @@
     <button class="btn sm" onclick={() => (ui.view = 'settings')}>Settings</button>
   </div>
 {/if}
+
+<details class="card guide" open={!modGroups.some(g => g.synced.some(f => f.kind === 'mods' && f.sync))}>
+  <summary>How to use the same mods on two PCs</summary>
+  <ol>
+    <li><b>On the PC that has the mods:</b> sync the game's <i>Vortex mods</i> and <i>Vortex load order</i> below.</li>
+    <li><b>On the other PC:</b> install the game and add it in Vortex (with Vortex's default mods folder or your own), then close Vortex.
+      The game's mod folders show up there under this page; sync them{o?.settings.autoAddMods ? ' (they are added automatically)' : ''}.</li>
+    <li><b>Wait until the mods have arrived</b> (the folders show as up to date). Keep Vortex closed meanwhile: syncing pauses while it's open.</li>
+    <li><b>Open Vortex on the other PC and deploy.</b>
+      {#if shareOn}The mods are already there, enabled like on the first PC, with their names and versions.
+      {:else}They arrive disabled and without their details; enable them, or turn on <i>Manage synced mods with Vortex on every PC</i> in Settings.{/if}</li>
+  </ol>
+  <p class="faint small">Mod settings are the same on all your PCs. To play on a PC without Vortex, send the deployed mods from a PC with Vortex instead (experimental, in Settings); Vortex there must deploy with hardlinks.</p>
+</details>
 
 {#if modGroups.length === 0}
   {#if (scanningMods && !cache.modsFound) || (loading && !cache.folders.length)}
@@ -1561,6 +1577,10 @@
   .versions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .ver { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 10px; border-radius: 8px; background: var(--hover); }
   .notice { gap: 12px; padding: 12px 16px; margin-bottom: 12px; align-items: center; }
+  .guide { padding: 12px 16px; margin-bottom: 12px; }
+  .guide summary { cursor: pointer; font-weight: 600; }
+  .guide ol { margin: 10px 0 8px; padding-left: 20px; display: grid; gap: 6px; }
+  .guide p { margin: 0; }
   .chk { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text); }
   .chk input { accent-color: var(--accent); }
   .chk:has(input:disabled) { opacity: .5; cursor: default; }
