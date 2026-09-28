@@ -31,9 +31,21 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 		return 0, fmt.Errorf("no backup found for %s", f.Label)
 	}
 
+	// A point of its own: never add to (or overwrite in) another one made
+	// in the same second.
 	now := time.Now()
 	safety := filepath.Join(target, VersionsDir, f.ID, now.Format(stampFmt))
+	for isDir(safety) {
+		now = now.Add(time.Second)
+		safety = filepath.Join(target, VersionsDir, f.ID, now.Format(stampFmt))
+	}
 	pinned := false
+	org := newOrigins(f.ID, f.Solo)
+	defer func() {
+		if pinned {
+			org.save(target, now.Format(stampFmt))
+		}
+	}()
 	n := 0
 	for k, from := range src {
 		rel := rels[k]
@@ -52,6 +64,7 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 			if err := copyFile(to, keep); err != nil {
 				return n, fmt.Errorf("could not save current %s: %w", rel, err)
 			}
+			org.add(org.lookup(rel))
 		}
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 			return n, err

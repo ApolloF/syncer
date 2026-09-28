@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -176,6 +177,8 @@ type Overview struct {
 	Settings   store.Settings   `json:"settings"`
 	Version    string           `json:"version"`
 	Update     *UpdateInfo      `json:"update"` // a newer release, if one is out
+	// VersionGaps: linked PCs running an older or newer Syncer than this one.
+	VersionGaps []VersionGap `json:"versionGaps"`
 }
 
 func (a *App) Overview() Overview {
@@ -208,6 +211,13 @@ func (a *App) Overview() Overview {
 	o.Syncthing.Running, o.Syncthing.MyID, o.Syncthing.GUI = true, st.MyID, c.GUIURL()
 	if ds, err := c.Devices(ctx); err == nil {
 		o.Devices = len(ds) - 1
+		peers, linked := meta.Peers(), map[string]string{}
+		for _, d := range ds {
+			if d.DeviceID != st.MyID {
+				linked[d.DeviceID] = cmp.Or(d.Name, peers[d.DeviceID], d.DeviceID[:7])
+			}
+		}
+		o.VersionGaps = versionGaps(st.MyID, linked)
 	}
 	if cs, err := c.Connections(ctx); err == nil {
 		for id, cn := range cs.Connections {
@@ -294,6 +304,8 @@ type DeviceView struct {
 	Via        string  `json:"via"` // lan, direct or relay (see syncthing.Connection.Via)
 	Completion float64 `json:"completion"`
 	NeedBytes  int64   `json:"needBytes"`
+	Version    string  `json:"version"`    // its Syncer's version, if it published one
+	VersionGap string  `json:"versionGap"` // see VersionGap.Gap
 }
 
 type PendingView struct {
@@ -332,13 +344,16 @@ func (a *App) Devices() (DevicesView, error) {
 		return v, err
 	}
 	conns, _ := c.Connections(ctx)
-	peers := meta.Peers()
+	peers, versions := meta.Peers(), meta.PeerVersions(st.MyID)
 	for _, d := range ds {
 		if d.DeviceID == st.MyID {
 			v.MyName = d.Name
 			continue
 		}
 		dv := DeviceView{ID: d.DeviceID, Name: d.Name}
+		if pv, ok := versions[d.DeviceID]; ok {
+			dv.Version, dv.VersionGap = pv, versionGap(pv)
+		}
 		if n := peers[d.DeviceID]; dv.Name == "" && n != "" {
 			dv.Name = n
 		}
@@ -492,16 +507,31 @@ func (a *App) CancelBackup() {
 	}
 }
 
-func (a *App) RestorePoints(id string) []int64 {
+// RestorePoint is a restore point and where it came from.
+type RestorePoint struct {
+	At int64 `json:"at"` // unix seconds
+	backup.Origin
+}
+
+// RestorePointsView is a folder's restore points, newest first, and where
+// its latest backup came from.
+type RestorePointsView struct {
+	Latest backup.Origin  `json:"latest"`
+	Points []RestorePoint `json:"points"`
+}
+
+func (a *App) RestorePoints(id string) RestorePointsView {
+	v := RestorePointsView{Points: []RestorePoint{}}
 	t, ok := backupTarget(store.LoadSettings())
 	if !ok {
-		return nil
+		return v
 	}
-	var out []int64
+	origins, latest := backup.PointOrigins(t, id)
+	v.Latest = latest
 	for _, p := range backup.Points(t, id) {
-		out = append(out, p.Unix())
+		v.Points = append(v.Points, RestorePoint{At: p.Unix(), Origin: origins[p]})
 	}
-	return out
+	return v
 }
 
 // Restore copies a backup back into place. point 0 = latest backup.

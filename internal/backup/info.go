@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,9 @@ type Info struct {
 	// files its last backup left in the backup (see ReadFiles).
 	Device string `json:"device,omitempty"`
 	Files  string `json:"files,omitempty"`
+	// Rejected are versions of the folder's files decided against on the
+	// PC: its Newest may be one of them.
+	Rejected []store.Rejected `json:"rejected,omitempty"`
 
 	mine bool
 	key  string // the PC's file name
@@ -91,16 +95,34 @@ func writeInfo(target string, f Folder, newest time.Time, device, files string) 
 	}
 	root, rel, _ := paths.Portable(f.Path)
 	in := Info{ID: f.ID, Label: f.Label, Root: root, Rel: rel, Host: hostName, Newest: newest.UTC().Round(time.Second), BackedUp: time.Now().UTC(),
-		Device: device, Files: files}
+		Device: device, Files: files, Rejected: store.LoadState().RejectedIn(f.ID)}
 	p := infoPath(target, f.ID, hostKey)
 	if old, err := readInfo(p); err == nil && old.Label == in.Label && old.Root == in.Root && old.Rel == in.Rel &&
 		old.Host == in.Host && old.Newest.Equal(in.Newest) && old.Device == in.Device && old.Files == in.Files &&
+		slices.Equal(old.Rejected, in.Rejected) &&
 		time.Since(old.BackedUp) < 24*time.Hour {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
 		_ = store.WriteJSON(p, in)
 	}
+}
+
+// NoteRejected writes, right away, into this PC's info about a folder which
+// versions of its files were decided against here. The info's Newest may be
+// one of them; without this, a PC that stays off until its next backup would
+// leave the others taking that version from its backup.
+func NoteRejected(target, id string) {
+	if target == "" || !paths.ValidID(id) {
+		return
+	}
+	p := infoPath(target, id, hostKey)
+	in, err := readInfo(p)
+	if err != nil || in.ID != id {
+		return // never backed up here: no Newest to correct
+	}
+	in.Rejected = store.LoadState().RejectedIn(id)
+	_ = store.WriteJSON(p, in)
 }
 
 func readInfo(p string) (Info, error) {

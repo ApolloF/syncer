@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/store"
 )
 
 // twoPCs is a folder this PC syncs and backs up, with a backup another PC
@@ -116,7 +118,7 @@ func TestKeep(t *testing.T) {
 	target := t.TempDir()
 	src := filepath.Join(t.TempDir(), "save.dat")
 	write(t, src, "x")
-	if err := Keep(target, "game", src, "save.dat", false); err != nil {
+	if _, err := Keep(target, "game", src, "save.dat", false); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, src) != "x" {
@@ -127,7 +129,7 @@ func TestKeep(t *testing.T) {
 		t.Fatalf("want one pinned point, got %v", pts)
 	}
 	// A second Keep in the same second gets a point of its own.
-	if err := Keep(target, "game", src, "save.dat", true); err != nil {
+	if _, err := Keep(target, "game", src, "save.dat", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(src); err == nil {
@@ -146,7 +148,7 @@ func TestKeep(t *testing.T) {
 	keepWait = 100 * time.Millisecond
 	defer func() { keepWait = old }()
 	write(t, src, "y")
-	if err := Keep(target, "game", src, "save.dat", true); err != ErrBusy {
+	if _, err := Keep(target, "game", src, "save.dat", true); err != ErrBusy {
 		t.Errorf("Keep during a backup = %v, want ErrBusy", err)
 	}
 }
@@ -189,5 +191,41 @@ func TestMirrorSoloHoldsNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(p.backup("seeded-only.sav")); err == nil {
 		t.Error("a file this PC doesn't have stayed in its own backup")
+	}
+}
+
+// Two versions were settled here in favour of this PC's older save: the other
+// PC's newer copy in the backup was decided against, so it's replaced (and
+// kept in the history) instead of held. Another file's newer copy is still held.
+func TestMirrorBacksUpSettledOlderSave(t *testing.T) {
+	p := newTwoPCs(t)
+	old := time.Now().Add(-2 * time.Hour)
+	write(t, p.local("slot1.sav"), "kept")
+	write(t, p.local("slot2.sav"), "old")
+	setTime(t, p.local("slot1.sav"), old)
+	setTime(t, p.local("slot2.sav"), old)
+	p.run()
+
+	theirs := time.Now().Add(-time.Hour)
+	write(t, p.backup("slot1.sav"), "the other PC's")
+	write(t, p.backup("slot2.sav"), "the other PC's newer")
+	setTime(t, p.backup("slot1.sav"), theirs)
+	setTime(t, p.backup("slot2.sav"), theirs)
+	defer func(f func(string) []store.Rejected) { RejectedFor = f }(RejectedFor)
+	RejectedFor = func(string) []store.Rejected {
+		return []store.Rejected{{Rel: "slot1.sav", Mod: theirs.Unix()}}
+	}
+	time.Sleep(1100 * time.Millisecond) // a new stamp
+	if r := p.run(); r.held != 1 {
+		t.Errorf("held = %d, want 1 (slot2 only)", r.held)
+	}
+	if read(t, p.backup("slot1.sav")) != "kept" {
+		t.Error("the save kept here wasn't backed up")
+	}
+	if read(t, p.backup("slot2.sav")) != "the other PC's newer" {
+		t.Error("another file's newer copy was replaced")
+	}
+	if pts := Points(p.target, p.f.ID); len(pts) != 1 {
+		t.Errorf("the other PC's copy wasn't kept in the history: %v", pts)
 	}
 }

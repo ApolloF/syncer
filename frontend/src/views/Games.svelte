@@ -24,7 +24,7 @@
   import { bytes, ago, when, err } from '../lib/fmt'
   import {
     Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
-    PickFolder, RestorePoints, Restore, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
+    PickFolder, RestorePoints, Restore, Decisions, SwitchDecision, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, ResolveConflicts, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
     LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
     ReleaseModHold, MakeModSource, HandOverMods,
@@ -46,7 +46,10 @@
   let query = $state('')
   let adding = $state('')
   let restoreFor = $state<main.FolderView | null>(null)
-  let points = $state<number[]>([])
+  let points = $state<main.RestorePoint[]>([])
+  let latestOrigin = $state<backup.Origin | null>(null)
+  let decisions = $state<main.DecisionView[]>([])
+  let switching = $state('')
   let point = $state(0)
   let restoring = $state(false)
   let removeFor = $state<main.FolderView | null>(null)
@@ -490,7 +493,32 @@
   async function openRestore(f: main.FolderView) {
     restoreFor = f
     point = 0
-    points = (await RestorePoints(f.id)) ?? []
+    points = []
+    latestOrigin = null
+    decisions = []
+    Decisions(f.id).then((d) => (decisions = d ?? [])).catch(() => {})
+    const v = await RestorePoints(f.id)
+    points = v?.points ?? []
+    latestOrigin = v?.latest ?? null
+  }
+
+  // Which PCs a restore point's saves came from, and which PC made it.
+  function originText(o?: backup.Origin | null): string {
+    const from = o?.from ?? [], by = o?.by ?? []
+    if (!from.length) return by.length ? `backed up by ${by.join(', ')}` : ''
+    const same = by.length === 0 || (by.length === from.length && by.every((b) => from.includes(b)))
+    return `from ${from.join(', ')}${same ? '' : ` · backed up by ${by.join(', ')}`}`
+  }
+
+  async function switchDecision(d: main.DecisionView) {
+    if (!restoreFor) return
+    const f = restoreFor
+    switching = d.rel
+    if (await attempt(() => SwitchDecision(f.id, d.rel), `Now using ${d.other ? `${d.other}'s` : 'the other'} version of ${d.rel}`)) {
+      decisions = (await Decisions(f.id).catch(() => [])) ?? []
+      load(); refresh()
+    }
+    switching = ''
   }
 
   async function doRestore() {
@@ -838,7 +866,6 @@
         <span class="name ellipsis">{g.name}</span>
         {#if g.kind}<span class="pill accent" title={modKinds[g.kind]?.tip}>{modKinds[g.kind]?.text ?? 'Mods'}</span>
           {#if g.kind === 'mods-deployed'}<span class="pill warn">Experimental</span>{/if}
-          {#each g.warn ?? [] as w}<span class="pill warn" title={w}>{w.length > 40 ? w.slice(0, 38) + '…' : w}</span>{/each}
         {/if}
         {#if g.steamCloud}<span class="pill" title="Steam installed this game, Steam Cloud keeps this folder for your Steam account on this PC, and it has the latest save">Steam Cloud</span>
         {:else if cloudNoted(g)}{@const n = cloudNote(g.steamCloudReason)}<span class="pill warn" title={n.tip}>{n.text}</span>{/if}
@@ -852,6 +879,7 @@
         {#if g.dismissed}<span class="pill" title="You removed this game or stopped syncing it on this PC, so Syncer doesn't add it by itself.">Removed</span>{/if}
       </div>
       <div class="path faint ellipsis" title={g.path}>{g.path}</div>
+      {#each g.warn ?? [] as w}<div class="detail warn-text">{w}</div>{/each}
     </div>
     <span class="meta faint">{bytes(g.size)} · {ago(g.modified)}</span>
     {#if g.kind}
@@ -1152,10 +1180,30 @@
     {#if restoreFor.backup || restoreFor.points}<p class="faint small">{backupLine(restoreFor)}</p>{/if}
     <p>Close the game first. Your current files are kept as a restore point, so this can be undone.</p>
     {#if restoreFor.steamCloud}<p class="small">Steam Cloud keeps these saves too: the next time the game starts through Steam, Steam uploads the restored files over its cloud copy (or asks which to keep).</p>{/if}
+    {#if decisions.length}
+      <h3 class="sub">Two versions you chose between</h3>
+      <div class="points">
+        {#each decisions as d (d.rel)}
+          <div class="pt">
+            <div class="grow">
+              <div class="mono ellipsis" title={d.rel}>{d.rel}</div>
+              <div class="faint small">{when(d.at)} · using {d.kept ? `${d.kept}'s` : 'one'} version, {d.other ? `${d.other}'s` : 'the other'} is in the history</div>
+            </div>
+            <button class="btn sm" disabled={!!switching} onclick={() => switchDecision(d)}
+              title="Bring the other version back. The one used now goes into the history, so you can switch again.">
+              {#if switching === d.rel}<Icon name="refresh" size={14} class="spin" />{/if} Use {d.other ? `${d.other}'s` : 'the other'} instead
+            </button>
+          </div>
+        {/each}
+      </div>
+      <h3 class="sub">Restore the whole game</h3>
+    {/if}
     <div class="points">
-      <label class="pt"><input type="radio" bind:group={point} value={0} /> Latest backup</label>
-      {#each points as p}
-        <label class="pt"><input type="radio" bind:group={point} value={p} /> As it was before {when(p)}</label>
+      <label class="pt"><input type="radio" bind:group={point} value={0} /> <span class="grow">Latest backup</span>
+        {#if originText(latestOrigin)}<span class="origin faint" title="The PCs these saves were last changed on">{originText(latestOrigin)}</span>{/if}</label>
+      {#each points as p (p.at)}
+        <label class="pt"><input type="radio" bind:group={point} value={p.at} /> <span class="grow">As it was before {when(p.at)}</span>
+          {#if originText(p)}<span class="origin faint" title="The PCs these saves were last changed on, and the PC that made this restore point">{originText(p)}</span>{/if}</label>
       {/each}
     </div>
     {#snippet actions()}
@@ -1184,7 +1232,7 @@
           <div class="mono ellipsis" title={c.rel}>{c.rel}</div>
           <div class="versions">
             <div class="ver">
-              <div class="faint small">Current{c.missing ? ' (deleted)' : ''}</div>
+              <div class="faint small">Current{c.missing ? ' (deleted)' : ''}{c.currentName && !c.missing ? ` · from ${c.currentName}` : ''}</div>
               <div>{c.missing ? '—' : `${when(Date.parse(c.modified) / 1000)} · ${bytes(c.size)}`}</div>
               <button class="btn sm" disabled={!!resolving} onclick={() => resolve(c, false)}>Keep current</button>
             </div>
@@ -1550,7 +1598,10 @@
   .search :global(svg) { position: absolute; left: 10px; top: 9px; color: var(--faint); }
   .search input { width: 100%; padding-left: 32px; }
   .name { font-weight: 500; }
-  .name-row { gap: 8px; }
+  .name-row { gap: 6px 8px; flex-wrap: wrap; }
+  .name-row > .name { flex: 0 1 auto; min-width: 8em; }
+  .name-row > .pill, .name-row > button { flex: none; }
+  .warn-text { color: var(--warn); }
   .path { font-size: 12px; margin-top: 1px; }
   .detail { font-size: 12px; margin-top: 2px; }
   .meta { font-size: 12.5px; white-space: nowrap; }
@@ -1566,6 +1617,8 @@
   .pt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; color: var(--text); cursor: pointer; }
   .pt:hover { background: var(--hover); }
   .pt input { accent-color: var(--accent); }
+  .pt .origin { font-size: 12px; text-align: right; }
+  h3.sub { font-size: 13px; font-weight: 600; margin: 4px 0 0; }
   .linkish { border: 0; cursor: pointer; font: inherit; font-size: 12px; }
   .linkbtn { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
   .linkbtn.danger { color: var(--err); }

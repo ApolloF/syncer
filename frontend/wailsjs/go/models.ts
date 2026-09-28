@@ -97,6 +97,20 @@ export namespace backup {
 		    return a;
 		}
 	}
+	export class Origin {
+	    by?: string[];
+	    from?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Origin(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.by = source["by"];
+	        this.from = source["from"];
+	    }
+	}
 	export class Orphan {
 	    id: string;
 	    label: string;
@@ -164,6 +178,7 @@ export namespace conflict {
 	    copySize: number;
 	    // Go type: time
 	    copyModified: any;
+	    currentName: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Conflict(source);
@@ -180,6 +195,7 @@ export namespace conflict {
 	        this.missing = source["missing"];
 	        this.copySize = source["copySize"];
 	        this.copyModified = this.convertValues(source["copyModified"], null);
+	        this.currentName = source["currentName"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -493,6 +509,24 @@ export namespace main {
 	        this.other = source["other"];
 	    }
 	}
+	export class DecisionView {
+	    at: number;
+	    rel: string;
+	    kept: string;
+	    other: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DecisionView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at = source["at"];
+	        this.rel = source["rel"];
+	        this.kept = source["kept"];
+	        this.other = source["other"];
+	    }
+	}
 	export class DeviceView {
 	    id: string;
 	    name: string;
@@ -501,6 +535,8 @@ export namespace main {
 	    via: string;
 	    completion: number;
 	    needBytes: number;
+	    version: string;
+	    versionGap: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DeviceView(source);
@@ -515,6 +551,8 @@ export namespace main {
 	        this.via = source["via"];
 	        this.completion = source["completion"];
 	        this.needBytes = source["needBytes"];
+	        this.version = source["version"];
+	        this.versionGap = source["versionGap"];
 	    }
 	}
 	export class PendingView {
@@ -894,6 +932,24 @@ export namespace main {
 	        this.path = source["path"];
 	    }
 	}
+	export class VersionGap {
+	    device: string;
+	    name: string;
+	    version: string;
+	    gap: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new VersionGap(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.device = source["device"];
+	        this.name = source["name"];
+	        this.version = source["version"];
+	        this.gap = source["gap"];
+	    }
+	}
 	export class UpdateInfo {
 	    latest: string;
 	    url: string;
@@ -948,6 +1004,7 @@ export namespace main {
 	    settings: store.Settings;
 	    version: string;
 	    update?: UpdateInfo;
+	    versionGaps: VersionGap[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Overview(source);
@@ -974,6 +1031,7 @@ export namespace main {
 	        this.settings = this.convertValues(source["settings"], store.Settings);
 	        this.version = source["version"];
 	        this.update = this.convertValues(source["update"], UpdateInfo);
+	        this.versionGaps = this.convertValues(source["versionGaps"], VersionGap);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -996,6 +1054,54 @@ export namespace main {
 	}
 	
 	
+	export class RestorePoint {
+	    at: number;
+	    by?: string[];
+	    from?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RestorePoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at = source["at"];
+	        this.by = source["by"];
+	        this.from = source["from"];
+	    }
+	}
+	export class RestorePointsView {
+	    latest: backup.Origin;
+	    points: RestorePoint[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RestorePointsView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.latest = this.convertValues(source["latest"], backup.Origin);
+	        this.points = this.convertValues(source["points"], RestorePoint);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class SnapshotView {
 	    stamp: string;
@@ -1075,6 +1181,7 @@ export namespace main {
 	        this.notes = source["notes"];
 	    }
 	}
+	
 	
 	export class VortexShareView {
 	    game: string;

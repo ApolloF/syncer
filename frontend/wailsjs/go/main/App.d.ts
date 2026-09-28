@@ -39,6 +39,8 @@ export function CopyText(arg1:string):Promise<void>;
 
 export function CreateAccount(arg1:string,arg2:string):Promise<accounts.Account>;
 
+export function Decisions(arg1:string):Promise<Array<main.DecisionView>>;
+
 export function DeleteAccount(arg1:string):Promise<void>;
 
 export function DeleteOtherBackup(arg1:string,arg2:string):Promise<void>;
@@ -115,7 +117,7 @@ export function ResolveConflicts(arg1:string,arg2:string):Promise<number>;
 
 export function Restore(arg1:string,arg2:number):Promise<number>;
 
-export function RestorePoints(arg1:string):Promise<Array<number>>;
+export function RestorePoints(arg1:string):Promise<main.RestorePointsView>;
 
 export function Resume():Promise<void>;
 
@@ -152,6 +154,8 @@ export function StartSyncthing():Promise<void>;
 export function StopSyncingCopies():Promise<number>;
 
 export function SwitchAccount(arg1:string):Promise<void>;
+
+export function SwitchDecision(arg1:string,arg2:string):Promise<void>;
 
 export function SyncAvailable(arg1:string):Promise<void>;
 

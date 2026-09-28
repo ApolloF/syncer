@@ -67,7 +67,8 @@ func accountsEnv(c *syncthing.Client, me string, others []string) accounts.Env {
 		},
 		Keep: func(id, abs, rel string) error {
 			// Called while the operation holds the backup lock.
-			return backup.KeepLocked(historyTarget(), id, abs, rel, true)
+			_, err := backup.KeepLocked(historyTarget(), id, abs, rel, true)
+			return err
 		},
 		CopyHistory: func(ctx context.Context, from, to string) {
 			if t, ok := backupTarget(store.LoadSettings()); ok {

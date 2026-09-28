@@ -2,7 +2,7 @@
   import Icon from '../lib/Icon.svelte'
   import { ui, attempt, refresh } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
-  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate } from '../../wailsjs/go/main/App'
+  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
   const o = $derived(ui.overview)
@@ -20,8 +20,17 @@
     const s: { key: string; title: string; text: string; action?: string; icon: string }[] = []
     if (o.paused)
       s.push({ key: 'paused', icon: 'pause', title: `Paused until ${pausedUntil(o.settings.pausedUntil)}`, text: 'Syncing and automatic backups are paused on this PC. They pick up again on their own.', action: 'Resume now' })
+    const ahead = o.versionGaps?.find((g) => g.gap === 'newer')
+    const behind = o.versionGaps?.filter((g) => g.gap === 'older') ?? []
     if (o.update)
-      s.push({ key: 'update', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}. Syncer downloads the new version from GitHub and restarts.`, action: 'Update now' })
+      s.push({ key: 'update', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}.${ahead ? ` ${ahead.name} already runs ${ahead.version}; update so both PCs understand each other's changes.` : ''} Syncer downloads the new version from GitHub and restarts.`, action: 'Update now' })
+    else if (ahead)
+      s.push({ key: 'peerahead', icon: 'upload', title: 'Update Syncer on this PC', text: `${ahead.name} runs Syncer ${ahead.version}, this PC ${o.version}. PCs on different versions may not understand each other's changes.`, action: 'Check for updates' })
+    if (behind.length) {
+      const names = behind.map((g) => g.name).join(' and ')
+      const vers = behind.map((g) => g.version ? `${g.name} has ${g.version}` : `${g.name} has an older version`).join(', ')
+      s.push({ key: 'peerbehind', icon: 'alert', title: `Update Syncer on ${names}`, text: `This PC runs Syncer ${o.version}; ${vers}. PCs on different versions may not understand each other's changes. Open Syncer there and update it under Settings, or leave it in the tray and it updates by itself.`, action: 'View PCs' })
+    }
     if (!o.syncthing.installed)
       s.push({ key: 'install', icon: 'sync', title: 'Install the sync engine', text: 'Syncer uses Syncthing to move saves between your PCs directly. One click, no account.', action: 'Install' })
     else if (o.syncthing.error)
@@ -51,7 +60,8 @@
     else if (key === 'start') run(key, StartSyncthing, 'Sync started')
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
     else if (key === 'google') ui.view = 'backup'
-    else if (key === 'link' || key === 'pending') ui.view = 'devices'
+    else if (key === 'link' || key === 'pending' || key === 'peerbehind') ui.view = 'devices'
+    else if (key === 'peerahead') run(key, async () => { if (!(await CheckForUpdate())) throw new Error("GitHub doesn't offer a newer Syncer to this PC yet") })
     else if (key === 'conflicts' || key === 'overlaps') ui.view = 'games'
     else if (key === 'paused') run(key, Resume, 'Syncing and backups resumed')
     else if (key === 'update') run(key, InstallUpdate)

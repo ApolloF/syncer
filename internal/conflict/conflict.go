@@ -28,6 +28,9 @@ type Conflict struct {
 	Missing      bool      `json:"missing"`      // the real file no longer exists
 	CopySize     int64     `json:"copySize"`     // of the conflict copy
 	CopyModified time.Time `json:"copyModified"` // of the conflict copy
+	// CurrentName names the PC the real file was last changed on (filled
+	// in by the caller when known).
+	CurrentName string `json:"currentName"`
 }
 
 var re = regexp.MustCompile(`^(.*)\.sync-conflict-(\d{8}-\d{6})-([A-Z0-9]{7})(.*)$`)
@@ -91,24 +94,25 @@ func Count(dir string) int { return len(Find(dir)) }
 
 // Preserve puts a file into history; rel is the name it should be restorable
 // under. With move the file goes there, otherwise a copy does and the file
-// stays where it is.
-type Preserve func(abs, rel string, move bool) error
+// stays where it is. It returns where the file was put.
+type Preserve func(abs, rel string, move bool) (string, error)
 
 // Resolve settles one conflict copy (copyRel, relative to dir). With useCopy
 // the copy becomes the real file and the current real file goes to history;
-// otherwise the copy itself goes to history. Nothing is deleted.
-func Resolve(dir, copyRel string, useCopy bool, keep Preserve) error {
+// otherwise the copy itself goes to history. Nothing is deleted. It returns
+// where the version not chosen was put.
+func Resolve(dir, copyRel string, useCopy bool, keep Preserve) (string, error) {
 	copyRel = filepath.Clean(copyRel)
 	if filepath.IsAbs(copyRel) || copyRel == ".." || strings.HasPrefix(copyRel, ".."+string(filepath.Separator)) {
-		return errors.New("invalid file")
+		return "", errors.New("invalid file")
 	}
 	orig, _, ok := Parse(filepath.Base(copyRel))
 	if !ok {
-		return errors.New("not a conflict copy")
+		return "", errors.New("not a conflict copy")
 	}
 	copyAbs := filepath.Join(dir, copyRel)
 	if fi, err := os.Stat(copyAbs); err != nil || fi.IsDir() {
-		return errors.New("that copy is gone — it may already be resolved on another PC")
+		return "", errors.New("that copy is gone — it may already be resolved on another PC")
 	}
 	origRel := filepath.Join(filepath.Dir(copyRel), orig)
 	origAbs := filepath.Join(dir, origRel)
@@ -119,21 +123,22 @@ func Resolve(dir, copyRel string, useCopy bool, keep Preserve) error {
 	// one rename: if that fails (the game has the file open), the current
 	// file is still there. Moving it away first would leave the save missing
 	// here, and Syncthing would pass that on to the other PCs as a delete.
+	kept := ""
 	if _, err := os.Stat(origAbs); err == nil {
-		if err := keep(origAbs, origRel, false); err != nil {
-			return err
+		if kept, err = keep(origAbs, origRel, false); err != nil {
+			return "", err
 		}
 	}
 	if err := os.Rename(copyAbs, origAbs); err != nil {
-		return errors.New("could not swap the files (is the game running?): " + err.Error())
+		return "", errors.New("could not swap the files (is the game running?): " + err.Error())
 	}
-	return nil
+	return kept, nil
 }
 
 // StVersionsKeep is a Preserve that puts the file into the folder's own
 // .stversions, named the way Syncthing names its versions.
 func StVersionsKeep(dir string) Preserve {
-	return func(abs, rel string, move bool) error {
+	return func(abs, rel string, move bool) (string, error) {
 		ext := filepath.Ext(rel)
 		base := strings.TrimSuffix(rel, ext) + "~" + time.Now().Format("20060102-150405")
 		dst := filepath.Join(dir, ".stversions", base+ext)
@@ -146,12 +151,12 @@ func StVersionsKeep(dir string) Preserve {
 			dst = filepath.Join(dir, ".stversions", fmt.Sprintf("%s-%d%s", base, i, ext))
 		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if move {
-			return os.Rename(abs, dst)
+			return dst, os.Rename(abs, dst)
 		}
-		return CopyFile(abs, dst)
+		return dst, CopyFile(abs, dst)
 	}
 }
 
