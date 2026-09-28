@@ -25,9 +25,14 @@ import (
 // remaining point restores the same as before. Only points older than
 // KeepDays are deleted outright; the backup itself always keeps the latest.
 //
+// KeepDays is the longest setting of the PCs backing a folder up (keepFor),
+// and nothing is pruned while this PC's clock is off (clockErr).
+//
 // Points saved from outside the backup (the saves a PC had before it started
 // syncing, the files a restore replaced, the losing copy of a conflict) may
-// hold saves the backup never had, so they are pinned: never thinned, and
+// hold saves the backup never had, and a point that took most of a folder's
+// files at once (see mirror) may hold saves nobody meant to lose, so they are
+// pinned: never thinned, and
 // kept for a year (or KeepDays, if longer), since they may be the only copy
 // left of those saves. A pin is an empty file
 // <target>\.versions\<id>\.pinned\<stamp>.
@@ -45,9 +50,29 @@ func prune(target string, keepDays int, now time.Time) {
 	ids, _ := os.ReadDir(filepath.Join(target, VersionsDir))
 	for _, id := range ids {
 		if id.IsDir() && paths.ValidID(id.Name()) {
-			pruneFolder(target, id.Name(), keepDays, now, thinner(target, id.Name(), now))
+			pruneFolder(target, id.Name(), keepFor(target, id.Name(), keepDays, now), now, thinner(target, id.Name(), now))
 		}
 	}
+}
+
+// maxKeepDays caps how long another PC's info can ask history to be kept.
+// Info files aren't trusted, and a wish past this only costs space.
+const maxKeepDays = 10 * 365
+
+// keepFor is how many days id's history is kept: the longest of this PC's
+// setting and those of the other PCs backing the folder up here, each for as
+// long as that PC may still want it (it backed up within its own setting).
+// Any PC may expire points, so without this the PC with the shortest setting
+// would decide for all of them. Only PCs using the same backup see each
+// other's infos: PCs backing up to another Google account don't count.
+func keepFor(target, id string, keepDays int, now time.Time) int {
+	for _, in := range ReadInfos(target, id) {
+		d := min(in.KeepDays, maxKeepDays)
+		if !in.mine && d > keepDays && now.Sub(in.BackedUp) < time.Duration(d)*24*time.Hour {
+			keepDays = d
+		}
+	}
+	return keepDays
 }
 
 // pruneFolder expires id's points older than keepDays and, with thin, thins
@@ -150,8 +175,10 @@ func thinner(target, id string, now time.Time) bool {
 }
 
 // pin keeps the point at t from being thinned.
-func pin(target, id string, t time.Time) {
-	p := filepath.Join(target, VersionsDir, id, PinnedDir, t.Format(stampFmt))
+func pin(target, id string, t time.Time) { pinStamp(target, id, t.Format(stampFmt)) }
+
+func pinStamp(target, id, stamp string) {
+	p := filepath.Join(target, VersionsDir, id, PinnedDir, stamp)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
 		_ = os.WriteFile(p, nil, 0o644)
 	}

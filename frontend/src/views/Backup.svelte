@@ -165,6 +165,11 @@
         <span class="pill" title="Another PC backed up newer saves of {lb.held.join('; ')}. This PC doesn't have them yet, so its older files didn't replace them. They're backed up once they've synced here.">Newer from another PC</span>
       </div>
     {/if}
+    {#if lb?.notPruned}
+      <div class="line"><span class="muted">Old versions</span>
+        <span class="pill warn" title="Old versions are only deleted when this PC's clock is right, so a wrong clock can't delete them early: {lb.notPruned}. Until then they're all kept and the backup keeps growing. If this lasts, check the PC's date and time, or whether google.com is reachable from this PC.">Not cleaned up</span>
+      </div>
+    {/if}
   </div>
 </section>
 
@@ -187,7 +192,7 @@
     </select>
   </div>
   <div class="item">
-    <div class="grow"><div class="name">Keep old versions for</div><div class="faint small">Changed or deleted saves stay restorable this long.</div></div>
+    <div class="grow"><div class="name">Keep old versions for</div><div class="faint small">Changed or deleted saves stay restorable this long. PCs backing up to the same Google Drive keep them as long as the longest setting among them.</div></div>
     <select value={o?.settings.keepDays} onchange={(e) => save({ keepDays: +e.currentTarget.value })}>
       {#each [7, 14, 30, 90, 365] as d}<option value={d}>{d} days</option>{/each}
     </select>

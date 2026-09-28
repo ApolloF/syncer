@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 )
@@ -182,11 +183,18 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 					res.Errors = append(res.Errors, f.Label+": file list: "+err.Error())
 				}
 			}
-			writeInfo(opts.Target, f, newest, opts.Device, hash)
+			writeInfo(opts.Target, f, newest, opts.Device, hash, opts.KeepDays)
 		}
 	}
-	if opts.KeepDays > 0 {
-		prune(opts.Target, opts.KeepDays, time.Now())
+	// A stopped run leaves pruning to the next one.
+	if opts.KeepDays > 0 && ctx.Err() == nil {
+		now := time.Now()
+		if err := clockErr(ctx, now); err != nil {
+			res.NotPruned = err.Error()
+			logx.Printf("old versions not pruned: %v", err)
+		} else {
+			prune(opts.Target, opts.KeepDays, now)
+		}
 	}
 	res.Finished = time.Now()
 	res.OK = len(res.Errors) == 0
@@ -222,6 +230,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}
 	seen := map[string]bool{}
+	added := 0                      // files new to the backup
 	names := map[string]string{}    // key -> rel as named
 	org := newOrigins(f.ID, f.Solo) // where the files this run versions came from
 	// A version decided against (another PC's copy in the backup) isn't
@@ -305,6 +314,8 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		if v {
 			versioned++
 			org.add(prev)
+		} else {
+			added++
 		}
 		cur.O = org.lookup(rel)
 		newIdx[key] = cur
@@ -323,6 +334,9 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	// folder is suddenly empty, assume something is wrong and keep everything.
 	// A cancelled walk hasn't seen every file, so it must not retire anything.
 	if len(seen) > 0 && ctx.Err() == nil {
+		type goner struct{ path, rel, origin string }
+		var gone []goner
+		total := 0 // files in the backup
 		_ = filepath.WalkDir(dst, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
@@ -333,7 +347,11 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 				return nil
 			}
 			key := strings.ToLower(filepath.ToSlash(rel))
-			if seen[key] || m.Ignored(rel) {
+			if m.Ignored(rel) {
+				return nil
+			}
+			total++
+			if seen[key] {
 				return nil
 			}
 			old, known := idx[key]
@@ -341,14 +359,28 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 				held++ // another PC's file this PC hasn't had yet
 				return nil
 			}
-			if err := moveTo(path, filepath.Join(verRoot, rel)); err != nil {
-				errf("retire %s: %v", rel, err)
-			} else {
-				versioned++
-				org.add(old.O)
-			}
+			gone = append(gone, goner{path, rel, old.O})
 			return nil
 		})
+		retired := 0
+		for _, g := range gone {
+			if err := moveTo(g.path, filepath.Join(verRoot, g.rel)); err != nil {
+				errf("retire %s: %v", g.rel, err)
+			} else {
+				retired++
+				org.add(g.origin)
+			}
+		}
+		versioned += retired
+		// Half or more of the backup gone at once, with fewer files coming
+		// in, looks like an accident more than like play: an uninstaller
+		// took the save but left a settings file, say. So the point holding
+		// them is pinned: kept for a year, however short the history is kept
+		// otherwise. A game that saves under new names each time brings in
+		// as many files as went, so its churn isn't pinned.
+		if before := total - added; retired > 0 && len(gone) > added && 2*len(gone) >= before {
+			pinStamp(target, f.ID, stamp)
+		}
 		removeEmptyDirs(dst)
 	}
 	if versioned > 0 {

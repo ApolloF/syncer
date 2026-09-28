@@ -16,14 +16,14 @@ func TestInfoRoundTripAndForget(t *testing.T) {
 	docs := paths.Root(paths.Documents)
 	f := Folder{ID: "hollow-knight", Label: "Hollow Knight", Path: filepath.Join(docs, "Hollow Knight")}
 	newest := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	writeInfo(target, f, newest, "", "")
+	writeInfo(target, f, newest, "", "", 30)
 
 	ins := ReadInfos(target, f.ID)
 	if len(ins) != 1 {
 		t.Fatalf("infos: %+v", ins)
 	}
 	in := ins[0]
-	if !in.Mine() || in.Label != "Hollow Knight" || !in.Newest.Equal(newest) || in.Root != paths.Documents || in.Rel != "Hollow Knight" {
+	if !in.Mine() || in.Label != "Hollow Knight" || !in.Newest.Equal(newest) || in.Root != paths.Documents || in.Rel != "Hollow Knight" || in.KeepDays != 30 {
 		t.Fatalf("info: %+v", in)
 	}
 	if p, ok := in.Path(); !ok || !strings.EqualFold(p, f.Path) {

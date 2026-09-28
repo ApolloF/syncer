@@ -216,3 +216,58 @@ func TestRestoreSkipsUnchangedFiles(t *testing.T) {
 		t.Error("b not restored")
 	}
 }
+
+func writeOtherInfo(t *testing.T, target, id, key string, in Info) {
+	t.Helper()
+	p := infoPath(target, id, key)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteJSON(p, in); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every PC backing a folder up keeps its history as long as the one with the
+// longest setting, for as long as that PC still backs it up.
+func TestKeepForTakesLongestSetting(t *testing.T) {
+	target, id := t.TempDir(), "keep-for"
+	now := time.Now()
+	day := 24 * time.Hour
+	if d := keepFor(target, id, 30, now); d != 30 {
+		t.Fatalf("alone: %d", d)
+	}
+	writeOtherInfo(t, target, id, "zz-short", Info{ID: id, KeepDays: 7, BackedUp: now})
+	if d := keepFor(target, id, 30, now); d != 30 {
+		t.Errorf("a shorter setting elsewhere shortened this one: %d", d)
+	}
+	writeOtherInfo(t, target, id, "zz-long", Info{ID: id, KeepDays: 365, BackedUp: now.Add(-200 * day)})
+	if d := keepFor(target, id, 30, now); d != 365 {
+		t.Errorf("longer setting of a PC that backed up 200 days ago: %d", d)
+	}
+	writeOtherInfo(t, target, id, "zz-long", Info{ID: id, KeepDays: 365, BackedUp: now.Add(-400 * day)})
+	if d := keepFor(target, id, 30, now); d != 30 {
+		t.Errorf("a PC gone for longer than its own setting still counts: %d", d)
+	}
+	writeOtherInfo(t, target, id, "zz-huge", Info{ID: id, KeepDays: 1 << 40, BackedUp: now})
+	if d := keepFor(target, id, 30, now); d != maxKeepDays {
+		t.Errorf("another PC's setting isn't capped: %d", d)
+	}
+	// Our own info doesn't count: this PC's setting is what's passed in.
+	own := t.TempDir()
+	writeOtherInfo(t, own, id, hostKey, Info{ID: id, KeepDays: 365, BackedUp: now})
+	if d := keepFor(own, id, 30, now); d != 30 {
+		t.Errorf("this PC's own info counted: %d", d)
+	}
+}
+
+// With another PC keeping history for a year, a PC set to 30 days doesn't
+// expire the 40-day-old point.
+func TestPruneKeepsForOtherPCsSetting(t *testing.T) {
+	target, id, now, at := pruneFixture(t)
+	writeOtherInfo(t, target, id, "zz-other", Info{ID: id, KeepDays: 365, BackedUp: now})
+	prune(target, 30, now)
+	if !points(target, id)[at["A"]] {
+		t.Error("point expired by the shorter setting")
+	}
+}

@@ -43,6 +43,9 @@ type Info struct {
 	// Rejected are versions of the folder's files decided against on the
 	// PC: its Newest may be one of them.
 	Rejected []store.Rejected `json:"rejected,omitempty"`
+	// KeepDays is how long the PC keeps old versions: every PC backing up
+	// here keeps the folder's history as long as the longest (see keepFor).
+	KeepDays int `json:"keepDays,omitempty"`
 
 	mine bool
 	key  string // the PC's file name
@@ -89,17 +92,17 @@ func infoPath(target, id, key string) string {
 
 // writeInfo records this PC's view of f after a backup. It's rewritten only
 // when something changed or once a day, so Drive doesn't upload it every run.
-func writeInfo(target string, f Folder, newest time.Time, device, files string) {
+func writeInfo(target string, f Folder, newest time.Time, device, files string, keepDays int) {
 	if !paths.ValidID(f.ID) {
 		return
 	}
 	root, rel, _ := paths.Portable(f.Path)
 	in := Info{ID: f.ID, Label: f.Label, Root: root, Rel: rel, Host: hostName, Newest: newest.UTC().Round(time.Second), BackedUp: time.Now().UTC(),
-		Device: device, Files: files, Rejected: store.LoadState().RejectedIn(f.ID)}
+		Device: device, Files: files, Rejected: store.LoadState().RejectedIn(f.ID), KeepDays: keepDays}
 	p := infoPath(target, f.ID, hostKey)
 	if old, err := readInfo(p); err == nil && old.Label == in.Label && old.Root == in.Root && old.Rel == in.Rel &&
 		old.Host == in.Host && old.Newest.Equal(in.Newest) && old.Device == in.Device && old.Files == in.Files &&
-		slices.Equal(old.Rejected, in.Rejected) &&
+		slices.Equal(old.Rejected, in.Rejected) && old.KeepDays == in.KeepDays &&
 		time.Since(old.BackedUp) < 24*time.Hour {
 		return
 	}
