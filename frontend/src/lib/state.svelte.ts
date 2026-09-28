@@ -3,7 +3,7 @@ import { Overview, Accounts } from '../../wailsjs/go/main/App'
 import type { main } from '../../wailsjs/go/models'
 import { err } from './fmt'
 
-export type View = 'overview' | 'games' | 'accounts' | 'devices' | 'backup' | 'settings'
+export type View = 'overview' | 'games' | 'mods' | 'accounts' | 'devices' | 'backup' | 'settings'
 
 type Toast = { id: number; text: string; kind: 'info' | 'ok' | 'err' }
 

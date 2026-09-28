@@ -11,9 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +31,9 @@ import (
 )
 
 const FolderID = "syncer-meta"
+
+// AppVersion is this Syncer's version, published for the other PCs.
+var AppVersion string
 
 // SharedFolder is a folder described portably.
 type SharedFolder struct {
@@ -67,9 +72,16 @@ type DeviceFile struct {
 	Folders []SharedFolder `json:"folders"`
 	// Features this PC's Syncer understands (e.g. accounts.Feature).
 	Features []string `json:"features,omitempty"`
+	// Version of this PC's Syncer ("" from Syncers before it was published).
+	Version string `json:"version,omitempty"`
+	// Rejected: versions of each folder's (by id) files decided against
+	// on this PC.
+	Rejected map[string][]store.Rejected `json:"rejected,omitempty"`
 	// Accounts: this PC's copy of the accounts and split games, and who
 	// plays on it.
 	Accounts *accounts.Shared `json:"accounts,omitempty"`
+	// Mods: this PC's mod options (see ModSettings).
+	Mods *ModSettings `json:"mods,omitempty"`
 }
 
 // Dir is the local path of the meta folder.
@@ -115,6 +127,10 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 	ast := accounts.Load()
 	ast.Clean()
+	// Mod options changed on another PC apply here too, before deciding
+	// which mod folders to adopt.
+	adoptModSettings(ctx, c, me)
+	settings = store.LoadSettings()
 
 	folders, err := c.Folders(ctx)
 	if err != nil {
@@ -141,11 +157,14 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 
 	// Publish our own folder list.
 	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature},
+		Version: AppVersion, Rejected: rejectedHere(),
 		Folders: publishable(folders, settings, ast, me, func(id string) int64 {
 			st, _ := c.FolderStatus(ctx, id)
 			return st.GlobalBytes
 		})}
 	rememberModSizes(settings, mine.Folders)
+	ms := ModSettingsOf(settings)
+	mine.Mods = &ms
 	if len(ast.Accounts) > 0 || len(ast.Records) > 0 {
 		pub := ast.Shared
 		pub.Active = ""
@@ -918,12 +937,15 @@ func changed(me string, df DeviceFile) bool {
 		return true
 	}
 	var old DeviceFile
-	if json.Unmarshal(b, &old) != nil || old.Name != df.Name || len(old.Folders) != len(df.Folders) {
+	if json.Unmarshal(b, &old) != nil || old.Name != df.Name || old.Version != df.Version || len(old.Folders) != len(df.Folders) {
 		return true
 	}
 	oa, _ := json.Marshal(old.Accounts)
 	na, _ := json.Marshal(df.Accounts)
-	if string(oa) != string(na) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") {
+	om, _ := json.Marshal(old.Mods)
+	nm, _ := json.Marshal(df.Mods)
+	if string(oa) != string(na) || string(om) != string(nm) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") ||
+		!maps.EqualFunc(old.Rejected, df.Rejected, slices.Equal) {
 		return true
 	}
 	for i := range old.Folders {
@@ -994,6 +1016,42 @@ func Peers() map[string]string {
 		m[df.Device] = df.Name
 	}
 	return m
+}
+
+// PeerVersions returns the Syncer version each other PC published (device
+// id -> version, "" when its Syncer is too old to publish one).
+func PeerVersions(me string) map[string]string {
+	m := map[string]string{}
+	for _, df := range readOtherFiles(me) {
+		m[df.Device] = df.Version
+	}
+	return m
+}
+
+func rejectedHere() map[string][]store.Rejected {
+	st := store.LoadState()
+	var m map[string][]store.Rejected
+	for _, d := range st.Decisions {
+		if m == nil {
+			m = map[string][]store.Rejected{}
+		}
+		if _, ok := m[d.Folder]; !ok {
+			if r := st.RejectedIn(d.Folder); len(r) > 0 {
+				m[d.Folder] = r
+			}
+		}
+	}
+	return m
+}
+
+// PeerRejected lists the versions of a folder's files other PCs published
+// as decided against.
+func PeerRejected(me, id string) []store.Rejected {
+	var out []store.Rejected
+	for _, df := range readOtherFiles(me) {
+		out = append(out, df.Rejected[id]...)
+	}
+	return out
 }
 
 // ---- folder cache for offline backups ----------------------------------------
@@ -1150,4 +1208,72 @@ func ModSource(id string) (Source, bool) {
 		}
 	}
 	return best, found
+}
+
+// ---- Vortex mod lists (experimental) ----------------------------------------
+
+// A PC sharing its Vortex mod list (which mods are installed and enabled,
+// with their metadata) publishes it as <device>.vortexmods.
+
+const maxVortexListFile = 32 << 20
+
+func vortexListFile(device string) string { return filepath.Join(Dir(), device+".vortexmods") }
+
+// WriteVortexLists publishes this PC's Vortex mod lists; none removes them.
+func WriteVortexLists(me string, l mods.ShareList) error {
+	if !paths.ValidID(me) {
+		return errors.New("bad device id")
+	}
+	if len(l) == 0 {
+		if err := os.Remove(vortexListFile(me)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return store.WriteJSON(vortexListFile(me), l)
+}
+
+// VortexLists reads the Vortex mod lists a PC published. They come from
+// another PC and are checked before they are returned.
+func VortexLists(device string) mods.ShareList {
+	if !paths.ValidID(device) {
+		return nil
+	}
+	p := vortexListFile(device)
+	fi, err := os.Stat(p)
+	if err != nil || fi.Size() > maxVortexListFile {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var l mods.ShareList
+	if json.Unmarshal(b, &l) != nil {
+		return nil
+	}
+	return l.Valid()
+}
+
+// VortexListStamp changes whenever a PC's published Vortex mod list does.
+func VortexListStamp(device string) string {
+	fi, err := os.Stat(vortexListFile(device))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d|%d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// VortexListWrittenBy reports whether device itself last wrote its Vortex
+// mod list (any paired PC could write any file in the shared metadata).
+func VortexListWrittenBy(ctx context.Context, c *syncthing.Client, device string) error {
+	name := device + ".vortexmods"
+	by, err := c.ModifiedBy(ctx, FolderID, name)
+	if err != nil {
+		return err
+	}
+	if len(device) < 7 || !strings.EqualFold(by, device[:7]) {
+		return fmt.Errorf("%s was last written by another PC (%s)", name, by)
+	}
+	return nil
 }

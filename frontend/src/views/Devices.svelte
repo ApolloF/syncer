@@ -114,6 +114,8 @@
               {#if d.connected}Online · {viaText[d.via] ?? 'connected'}{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on; newer saves it backed up still come from Google Drive{/if}
             </div>
           </div>
+          {#if d.versionGap === 'older'}<span class="pill warn" title="This PC runs Syncer {ui.overview?.version}. Open Syncer on {d.name || 'that PC'} and update it under Settings, or leave it in the tray and it updates by itself.">Needs update{d.version ? ` · ${d.version}` : ''}</span>
+          {:else if d.versionGap === 'newer'}<span class="pill warn" title="That PC runs a newer Syncer than this one ({ui.overview?.version}). Update this PC under Settings.">Newer Syncer · {d.version}</span>{/if}
           {#if d.connected}
             {#if d.completion >= 100}<span class="pill ok">In sync</span>
             {:else}<span class="pill accent">{Math.floor(d.completion)}% · {bytes(d.needBytes)} left</span>{/if}

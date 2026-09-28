@@ -66,6 +66,10 @@ export function CreateAccount(arg1, arg2) {
   return window['go']['main']['App']['CreateAccount'](arg1, arg2);
 }
 
+export function Decisions(arg1) {
+  return window['go']['main']['App']['Decisions'](arg1);
+}
+
 export function DeleteAccount(arg1) {
   return window['go']['main']['App']['DeleteAccount'](arg1);
 }
@@ -134,6 +138,10 @@ export function ModAudit(arg1) {
   return window['go']['main']['App']['ModAudit'](arg1);
 }
 
+export function ModSettingsDiffer() {
+  return window['go']['main']['App']['ModSettingsDiffer']();
+}
+
 export function ModSnapshots(arg1) {
   return window['go']['main']['App']['ModSnapshots'](arg1);
 }
@@ -180,6 +188,10 @@ export function PickBackupFolder() {
 
 export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
+}
+
+export function PushVortexList(arg1) {
+  return window['go']['main']['App']['PushVortexList'](arg1);
 }
 
 export function ReleaseModHold(arg1) {
@@ -242,6 +254,10 @@ export function ScanGames(arg1) {
   return window['go']['main']['App']['ScanGames'](arg1);
 }
 
+export function ScanMods(arg1) {
+  return window['go']['main']['App']['ScanMods'](arg1);
+}
+
 export function SetAccountsEnabled(arg1) {
   return window['go']['main']['App']['SetAccountsEnabled'](arg1);
 }
@@ -282,10 +298,22 @@ export function SwitchAccount(arg1) {
   return window['go']['main']['App']['SwitchAccount'](arg1);
 }
 
+export function SwitchDecision(arg1, arg2) {
+  return window['go']['main']['App']['SwitchDecision'](arg1, arg2);
+}
+
 export function SyncAvailable(arg1) {
   return window['go']['main']['App']['SyncAvailable'](arg1);
 }
 
 export function UndoAll(arg1) {
   return window['go']['main']['App']['UndoAll'](arg1);
+}
+
+export function UseModSettingsEverywhere() {
+  return window['go']['main']['App']['UseModSettingsEverywhere']();
+}
+
+export function VortexShares() {
+  return window['go']['main']['App']['VortexShares']();
 }

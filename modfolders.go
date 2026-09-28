@@ -54,6 +54,15 @@ func modFounds(s store.Settings) []discover.Found {
 	return out
 }
 
+// ScanMods lists this PC's mod folders for the Mods page, without looking
+// for save folders.
+func (a *App) ScanMods(refresh bool) []GameView {
+	if refresh {
+		mods.Forget()
+	}
+	return a.annotate(modFounds(store.LoadSettings()))
+}
+
 // modSize measures a mod folder: a deployed folder counts only the files
 // its mod manager deployed.
 func modSize(f mods.Found) (int64, int, time.Time) {
@@ -369,6 +378,9 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 	procs := processPaths()
 	changed := deployedTick(ctx, c, s, fs, procs)
 	busy := mods.ManagerRunning(procs)
+	if !busy {
+		changed = vortexShareTick(ctx, c, s, fs) || changed
+	}
 	if busy {
 		var now []string
 		for _, f := range fs {
@@ -395,7 +407,7 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 		return changed
 	}
 	if s.Paused() || len(held) == 0 {
-		return false
+		return changed
 	}
 	exists := map[string]bool{}
 	for _, f := range fs {
@@ -455,6 +467,21 @@ func init() {
 			}
 		})
 		return true
+	}
+}
+
+func init() {
+	// Mod options another PC changed: do here what changing them here does.
+	meta.ModSettingsAdopted = func(ctx context.Context, c *syncthing.Client, old, s store.Settings) {
+		if old.SyncDeployedMods && !s.SyncDeployedMods {
+			for id, mf := range s.Mods {
+				if mf.Kind == mods.KindDeployed && !applying.has(id) {
+					holdMods(ctx, c, id, heldOff, "the experimental option to sync deployed mods was turned off on another PC")
+				}
+			}
+		}
+		// Sharing Vortex's mod list and adding mod folders automatically
+		// follow on their own next round (modsLoop, autoAddLoop).
 	}
 }
 

@@ -16,6 +16,7 @@
   const nav = $derived<{ id: View; label: string; icon: string }[]>([
     { id: 'overview', label: 'Overview', icon: 'home' },
     { id: 'games', label: 'Games', icon: 'games' },
+    ...(ui.overview?.settings.findMods ? [{ id: 'mods' as View, label: 'Mods', icon: 'mods' }] : []),
     ...(ui.overview?.settings.accounts ? [{ id: 'accounts' as View, label: 'Accounts', icon: 'users' }] : []),
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'backup', label: 'Backup', icon: 'cloud' },
@@ -38,6 +39,8 @@
   }
 
   $effect(() => applyTheme(ui.overview?.settings.theme ?? 'system'))
+  // The Mods page goes away with "Find installed mods".
+  $effect(() => { if (ui.view === 'mods' && ui.overview && !ui.overview.settings.findMods) ui.view = 'games' })
 
   const o = $derived(ui.overview)
   const badge = $derived<Partial<Record<View, number>>>({ devices: o?.pending ?? 0 })
@@ -101,6 +104,7 @@
       <div class="page" in:fly={{ y: 6, duration: 180 }}>
         {#if ui.view === 'overview'}<Overview />
         {:else if ui.view === 'games'}<Games />
+        {:else if ui.view === 'mods'}<Games mode="mods" />
         {:else if ui.view === 'devices'}<Devices />
         {:else if ui.view === 'backup'}<Backup />
         {:else if ui.view === 'accounts'}<Accounts />

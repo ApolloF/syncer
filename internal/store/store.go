@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,11 +61,18 @@ type Settings struct {
 	// found on this PC, to be synced by hand. AutoAddMods (experimental)
 	// syncs them without asking, up to ModsMaxGB (-1 = no limit).
 	// SyncDeployedMods (experimental) also offers the mods deployed in a
-	// game's own folder.
+	// game's own folder. ShareVortexMods (experimental) shares Vortex's
+	// mod list (which mods are installed and enabled, with their details)
+	// between PCs, so Vortex manages the same synced mods on each of them.
 	FindMods         bool `json:"findMods"`
 	AutoAddMods      bool `json:"autoAddMods"`
 	SyncDeployedMods bool `json:"syncDeployedMods"`
+	ShareVortexMods  bool `json:"shareVortexMods"`
 	ModsMaxGB        int  `json:"modsMaxGB"`
+	// ModsChanged is when the options above last changed, here or on
+	// another PC: they are the same on every PC, and the newest change wins
+	// (see meta.ModSettings).
+	ModsChanged time.Time `json:"modsChanged,omitzero"`
 	// Mods are the synced (or backup-only) folders that are mod folders, by
 	// folder id: how they are described to other PCs.
 	Mods map[string]ModFolder `json:"mods,omitempty"`
@@ -157,6 +165,59 @@ type State struct {
 	ModHeld []string `json:"modHeld,omitempty"`
 	// ModSync is the state of each deployed-mods folder (by id).
 	ModSync map[string]ModSyncState `json:"modSync,omitempty"`
+	// Decisions are the recent choices between two versions of a save,
+	// newest last, so each can be changed later.
+	Decisions []Decision `json:"decisions,omitempty"`
+}
+
+// Decision is a choice between two versions of a save file.
+type Decision struct {
+	Folder string    `json:"folder"`
+	Rel    string    `json:"rel"` // the save file, relative to the folder
+	At     time.Time `json:"at"`
+	Kept   string    `json:"kept,omitempty"`  // the PC the version kept was from, if known
+	Other  string    `json:"other,omitempty"` // … and the version put aside
+	Put    string    `json:"put"`             // where the version put aside is
+	// OtherMod is the modification time of the version put aside: that
+	// exact version is never taken back over the choice (from another PC's
+	// backup, or held in the backup over the version kept).
+	OtherMod time.Time `json:"otherMod,omitzero"`
+}
+
+// Rejected is a version of a save file that was decided against.
+type Rejected struct {
+	Rel string `json:"rel"` // forward slashes
+	Mod int64  `json:"mod"` // its modification time, unix seconds
+}
+
+// RejectedIn lists the versions of a folder's files decided against here.
+func (st State) RejectedIn(id string) []Rejected {
+	var out []Rejected
+	for _, d := range st.Decisions {
+		if d.Folder == id && !d.OtherMod.IsZero() {
+			out = append(out, Rejected{Rel: filepath.ToSlash(d.Rel), Mod: d.OtherMod.Unix()})
+		}
+	}
+	return out
+}
+
+// IsRejected reports whether the file rel, modified at mod, is one of
+// rejected (the same file, within two seconds: file systems differ).
+func IsRejected(rejected []Rejected, rel string, mod time.Time) bool {
+	rel = strings.ToLower(filepath.ToSlash(rel))
+	for _, r := range rejected {
+		if strings.ToLower(r.Rel) == rel && abs64(mod.Unix()-r.Mod) <= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func abs64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // ModSyncState tracks updates of a deployed-mods folder.
@@ -222,7 +283,7 @@ func LoadSettings() Settings {
 		s.ModsMaxGB = 20
 	}
 	if !s.FindMods {
-		s.AutoAddMods, s.SyncDeployedMods = false, false
+		s.AutoAddMods, s.SyncDeployedMods, s.ShareVortexMods = false, false, false
 	}
 	if s.IntervalHours <= 0 {
 		s.IntervalHours = 3

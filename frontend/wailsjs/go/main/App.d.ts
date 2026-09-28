@@ -39,6 +39,8 @@ export function CopyText(arg1:string):Promise<void>;
 
 export function CreateAccount(arg1:string,arg2:string):Promise<accounts.Account>;
 
+export function Decisions(arg1:string):Promise<Array<main.DecisionView>>;
+
 export function DeleteAccount(arg1:string):Promise<void>;
 
 export function DeleteOtherBackup(arg1:string,arg2:string):Promise<void>;
@@ -73,6 +75,8 @@ export function MergeGame(arg1:string,arg2:string):Promise<void>;
 
 export function ModAudit(arg1:string):Promise<Array<mods.AuditEntry>>;
 
+export function ModSettingsDiffer():Promise<Array<string>>;
+
 export function ModSnapshots(arg1:string):Promise<Array<main.SnapshotView>>;
 
 export function ModUpdatePreview(arg1:string):Promise<main.ModPreview>;
@@ -97,6 +101,8 @@ export function PickBackupFolder():Promise<string>;
 
 export function PickFolder():Promise<string>;
 
+export function PushVortexList(arg1:string):Promise<void>;
+
 export function ReleaseModHold(arg1:string):Promise<void>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
@@ -111,7 +117,7 @@ export function ResolveConflicts(arg1:string,arg2:string):Promise<number>;
 
 export function Restore(arg1:string,arg2:number):Promise<number>;
 
-export function RestorePoints(arg1:string):Promise<Array<number>>;
+export function RestorePoints(arg1:string):Promise<main.RestorePointsView>;
 
 export function Resume():Promise<void>;
 
@@ -126,6 +132,8 @@ export function SaveOwners(arg1:string):Promise<Array<main.SaveFile>>;
 export function SaveSettings(arg1:store.Settings):Promise<store.Settings>;
 
 export function ScanGames(arg1:boolean):Promise<Array<main.GameView>>;
+
+export function ScanMods(arg1:boolean):Promise<Array<main.GameView>>;
 
 export function SetAccountsEnabled(arg1:boolean):Promise<void>;
 
@@ -147,6 +155,12 @@ export function StopSyncingCopies():Promise<number>;
 
 export function SwitchAccount(arg1:string):Promise<void>;
 
+export function SwitchDecision(arg1:string,arg2:string):Promise<void>;
+
 export function SyncAvailable(arg1:string):Promise<void>;
 
 export function UndoAll(arg1:main.UndoOptions):Promise<main.UndoReport>;
+
+export function UseModSettingsEverywhere():Promise<void>;
+
+export function VortexShares():Promise<Array<main.VortexShareView>>;

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/ApolloF/syncer/internal/logx"
+	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/update"
 )
@@ -28,6 +30,8 @@ type UpdateInfo struct {
 
 const updateEvery = 24 * time.Hour
 
+func init() { meta.AppVersion = version }
+
 // updateLoop looks for a new release a minute after start, then daily, and
 // installs it by itself when nobody is looking (see autoUpdateNow).
 func (a *App) updateLoop(ctx context.Context) {
@@ -39,7 +43,9 @@ func (a *App) updateLoop(ctx context.Context) {
 	}
 	sleep(ctx, time.Minute)
 	for ctx.Err() == nil {
-		if u := store.LoadState().Update; u == nil || time.Since(u.Checked) > updateEvery {
+		// Another PC runs a newer Syncer: look again sooner than daily.
+		if u := store.LoadState().Update; u == nil || time.Since(u.Checked) > updateEvery ||
+			(peerAhead() && time.Since(u.Checked) > time.Hour) {
 			if _, err := a.checkUpdate(ctx); err != nil {
 				logx.Printf("update check: %v", err)
 			}
@@ -230,4 +236,56 @@ func setInstalledVersion(exe, tag string) {
 		v = v[:i]
 	}
 	_ = k.SetStringValue("DisplayVersion", v)
+}
+
+// VersionGap is another PC whose Syncer differs from this one's.
+type VersionGap struct {
+	Device  string `json:"device"`
+	Name    string `json:"name"`
+	Version string `json:"version"` // "" when its Syncer is too old to say
+	Gap     string `json:"gap"`     // "older" (that PC should update) or "newer" (this PC should)
+}
+
+// versionGap compares another PC's Syncer version with this one's: "older",
+// "newer" or "" (the same, or not comparable, e.g. a development build).
+func versionGap(peer string) string {
+	if !update.Valid(version) {
+		return ""
+	}
+	switch {
+	case peer == "": // published before Syncer said its version
+		return "older"
+	case update.Newer(peer, version):
+		return "newer"
+	case update.Newer(version, peer):
+		return "older"
+	}
+	return ""
+}
+
+// versionGaps lists the linked PCs whose Syncer differs from this one's.
+func versionGaps(me string, linked map[string]string) []VersionGap {
+	var out []VersionGap
+	vs := meta.PeerVersions(me)
+	for id, name := range linked {
+		v, ok := vs[id]
+		if !ok {
+			continue // hasn't published anything yet
+		}
+		if g := versionGap(v); g != "" {
+			out = append(out, VersionGap{Device: id, Name: name, Version: v, Gap: g})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// peerAhead reports whether another PC published a newer Syncer version.
+func peerAhead() bool {
+	for _, v := range meta.PeerVersions("") {
+		if versionGap(v) == "newer" {
+			return true
+		}
+	}
+	return false
 }

@@ -75,6 +75,8 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 		t = t.Add(time.Second)
 		dir = filepath.Join(target, VersionsDir, f.ID, t.Format(stampFmt))
 	}
+	org := newOrigins(f.ID, f.Solo)
+	defer org.save(target, t.Format(stampFmt))
 	for _, rel := range rels {
 		src := filepath.Join(f.Path, rel)
 		fi, err := os.Stat(src)
@@ -89,6 +91,7 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 			return 0, err
 		}
 		_ = os.Chtimes(dst, fi.ModTime(), fi.ModTime())
+		org.add(org.lookup(rel))
 	}
 	pin(target, f.ID, t)
 	return len(rels), nil
@@ -98,20 +101,20 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 // be brought back with "As it was before <now>"). With move the file goes
 // there, otherwise a copy does. It waits up to a minute for a running backup,
 // which would otherwise be thinning the same history, and returns ErrBusy
-// after that.
-func Keep(target, id, src, rel string, move bool) error {
+// after that. It returns where the file was put.
+func Keep(target, id, src, rel string, move bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), keepWait)
 	defer cancel()
 	unlock, err := waitLock(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer unlock()
 	return KeepLocked(target, id, src, rel, move)
 }
 
 // KeepLocked is Keep for a caller that already holds the backup lock.
-func KeepLocked(target, id, src, rel string, move bool) error {
+func KeepLocked(target, id, src, rel string, move bool) (string, error) {
 	// A restore point of its own: two files kept in the same second (or a
 	// snapshot taken just before) must never replace each other.
 	t := time.Now()
@@ -122,21 +125,22 @@ func KeepLocked(target, id, src, rel string, move bool) error {
 	}
 	// Pinned first: a restore point that's only half there is still kept.
 	pin(target, id, t)
+	defer writeOrigin(target, id, t.Format(stampFmt), Origin{By: []string{hostName}})
 	dst := filepath.Join(dir, rel)
 	if move {
-		return moveTo(src, dst)
+		return dst, moveTo(src, dst)
 	}
 	fi, err := os.Stat(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	if err := copyFile(src, dst); err != nil {
-		return err
+		return "", err
 	}
-	return os.Chtimes(dst, fi.ModTime(), fi.ModTime())
+	return dst, os.Chtimes(dst, fi.ModTime(), fi.ModTime())
 }
 
 // keepWait is how long Keep waits for a running backup.
