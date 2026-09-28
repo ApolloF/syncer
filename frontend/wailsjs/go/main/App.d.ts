@@ -73,6 +73,8 @@ export function MergeGame(arg1:string,arg2:string):Promise<void>;
 
 export function ModAudit(arg1:string):Promise<Array<mods.AuditEntry>>;
 
+export function ModSettingsDiffer():Promise<Array<string>>;
+
 export function ModSnapshots(arg1:string):Promise<Array<main.SnapshotView>>;
 
 export function ModUpdatePreview(arg1:string):Promise<main.ModPreview>;
@@ -154,5 +156,7 @@ export function SwitchAccount(arg1:string):Promise<void>;
 export function SyncAvailable(arg1:string):Promise<void>;
 
 export function UndoAll(arg1:main.UndoOptions):Promise<main.UndoReport>;
+
+export function UseModSettingsEverywhere():Promise<void>;
 
 export function VortexShares():Promise<Array<main.VortexShareView>>;

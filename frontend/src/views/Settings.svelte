@@ -3,7 +3,7 @@
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
-  import { SaveSettings, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, InstallUpdate } from '../../wailsjs/go/main/App'
+  import { SaveSettings, ModSettingsDiffer, UseModSettingsEverywhere, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, InstallUpdate } from '../../wailsjs/go/main/App'
   import type { store, main } from '../../wailsjs/go/models'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import { pausedUntil, tomorrowMorning } from '../lib/fmt'
@@ -61,6 +61,16 @@
   const sizes = [1, 5, 10, 25, 50, 100, -1]
   const modSizes = [5, 20, 50, 100, -1]
   let deployedOpen = $state(false)
+
+  // Mod options are the same on every PC; PCs set up before that may differ.
+  let modsDiffer = $state<string[]>([])
+  async function loadModsDiffer() {
+    try { modsDiffer = (await ModSettingsDiffer()) ?? [] } catch { modsDiffer = [] }
+  }
+  $effect(() => { o?.settings.modsChanged; loadModsDiffer() })
+  async function useModSettingsHere() {
+    if (await attempt(() => UseModSettingsEverywhere(), 'Your other PCs take these mod settings')) loadModsDiffer()
+  }
   let shareOpen = $state(false)
 
   const themes = [
@@ -209,6 +219,14 @@
 </div>
 
 <h2 class="section">Mods</h2>
+{#if modsDiffer.length}
+  <div class="card notice row">
+    <Icon name="alert" size={16} />
+    <span class="grow">{modsDiffer.join(', ')} {modsDiffer.length === 1 ? 'uses' : 'use'} different mod settings. Mods sync reliably only when every PC uses the same ones.</span>
+    <button class="btn sm" onclick={useModSettingsHere}>Use this PC's settings everywhere</button>
+  </div>
+{/if}
+<p class="faint small modsnote">These settings are the same on all your PCs: changing one here changes it on the others.</p>
 <div class="card flush list">
   <div class="item">
     <div class="grow">
@@ -256,7 +274,7 @@
   <Modal title="Manage mods with Vortex on every PC?" onclose={() => (shareOpen = false)}>
     <p>This is experimental. Syncer reads and changes Vortex's own database on this PC:</p>
     <ul class="notes">
-      <li>Turn it on on each PC that uses Vortex, and sync each game's Vortex mods (from the Mods page).</li>
+      <li>It turns on on your other PCs too. Sync each game's Vortex mods (from the Mods page) on every PC that uses Vortex.</li>
       <li>Syncer only looks while Vortex is closed. A mod from another PC is added once its files have fully arrived, enabled or disabled like there. Open Vortex and deploy afterwards.</li>
       <li>When the same mod changed on two PCs, the newer change wins. What each PC has when you turn this on stays; mods only one PC has are added to the others.</li>
       <li>Only the mod list is touched. Before each change, Syncer saves a copy of Vortex's database in <span class="mono">%LOCALAPPDATA%\Syncer\vortex-state</span>.</li>
@@ -372,4 +390,6 @@
   .section { font-size: 13px; font-weight: 600; color: var(--muted); margin: 22px 4px 8px; text-transform: uppercase; letter-spacing: .04em; }
   .off { opacity: .55; }
   .name .pill { margin-left: 6px; vertical-align: 1px; }
+  .notice { gap: 12px; padding: 12px 16px; margin-bottom: 12px; align-items: center; }
+  .modsnote { margin: -4px 0 10px; }
 </style>

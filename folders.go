@@ -117,7 +117,8 @@ func (a *App) Folders() ([]FolderView, error) {
 					if g, acc, ok := accounts.ParseFolderID(f.ID); ok {
 						v.Split, v.Account, v.Game = true, acc, g
 						if r, ok := ast.Split(g); ok {
-							v.Label = r.Label
+							// Look the game up by its own name, not "Game (Alice)".
+							v.Label, v.Installed = r.Label, installed(r.Label)
 						}
 					}
 					v.Conflicts = conflicts[f.ID]

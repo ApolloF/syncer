@@ -1331,6 +1331,8 @@ export namespace store {
 	    syncDeployedMods: boolean;
 	    shareVortexMods: boolean;
 	    modsMaxGB: number;
+	    // Go type: time
+	    modsChanged: any;
 	    mods?: Record<string, ModFolder>;
 	    accounts?: boolean;
 	
@@ -1372,6 +1374,7 @@ export namespace store {
 	        this.syncDeployedMods = source["syncDeployedMods"];
 	        this.shareVortexMods = source["shareVortexMods"];
 	        this.modsMaxGB = source["modsMaxGB"];
+	        this.modsChanged = this.convertValues(source["modsChanged"], null);
 	        this.mods = this.convertValues(source["mods"], ModFolder, true);
 	        this.accounts = source["accounts"];
 	    }

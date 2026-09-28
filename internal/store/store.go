@@ -68,6 +68,10 @@ type Settings struct {
 	SyncDeployedMods bool `json:"syncDeployedMods"`
 	ShareVortexMods  bool `json:"shareVortexMods"`
 	ModsMaxGB        int  `json:"modsMaxGB"`
+	// ModsChanged is when the options above last changed, here or on
+	// another PC: they are the same on every PC, and the newest change wins
+	// (see meta.ModSettings).
+	ModsChanged time.Time `json:"modsChanged,omitzero"`
 	// Mods are the synced (or backup-only) folders that are mod folders, by
 	// folder id: how they are described to other PCs.
 	Mods map[string]ModFolder `json:"mods,omitempty"`

@@ -134,6 +134,10 @@ export function ModAudit(arg1) {
   return window['go']['main']['App']['ModAudit'](arg1);
 }
 
+export function ModSettingsDiffer() {
+  return window['go']['main']['App']['ModSettingsDiffer']();
+}
+
 export function ModSnapshots(arg1) {
   return window['go']['main']['App']['ModSnapshots'](arg1);
 }
@@ -296,6 +300,10 @@ export function SyncAvailable(arg1) {
 
 export function UndoAll(arg1) {
   return window['go']['main']['App']['UndoAll'](arg1);
+}
+
+export function UseModSettingsEverywhere() {
+  return window['go']['main']['App']['UseModSettingsEverywhere']();
 }
 
 export function VortexShares() {
