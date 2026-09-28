@@ -111,10 +111,9 @@ type Options struct {
 
 var pauseEvery = 2 * time.Second // var so tests can pause on every file
 
-// SettledAt is when two versions of a folder's saves were last settled, on
-// this PC or another: the saves other PCs made before then were decided on.
-// The app sets it to take other PCs' word into account too.
-var SettledAt = func(id string) time.Time { return store.LoadState().Settled[id] }
+// RejectedFor lists the versions of a folder's files decided against, here
+// or on another PC. The app sets it to take other PCs' word into account too.
+var RejectedFor = func(id string) []store.Rejected { return store.LoadState().RejectedIn(id) }
 
 type indexEntry struct {
 	Size  int64 `json:"s"`
@@ -225,9 +224,9 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	seen := map[string]bool{}
 	names := map[string]string{}    // key -> rel as named
 	org := newOrigins(f.ID, f.Solo) // where the files this run versions came from
-	// Another PC's copy from before two versions were settled here was
-	// decided against: the version kept here is backed up over it.
-	settled := SettledAt(f.ID)
+	// A version decided against (another PC's copy in the backup) isn't
+	// held over the version kept here.
+	rejected := RejectedFor(f.ID)
 	errf := func(format string, a ...any) { errs = append(errs, f.Label+": "+fmt.Sprintf(format, a...)) }
 
 	_ = filepath.WalkDir(f.Path, func(path string, d fs.DirEntry, err error) error {
@@ -285,7 +284,8 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 			if ours && known {
 				prev = old.O
 			}
-			if !ours && ti.ModTime().After(info.ModTime().Add(2*time.Second)) && ti.ModTime().After(settled) {
+			if !ours && ti.ModTime().After(info.ModTime().Add(2*time.Second)) &&
+				!store.IsRejected(rejected, rel, ti.ModTime()) {
 				held++ // another PC's newer save
 				if known {
 					newIdx[key] = old

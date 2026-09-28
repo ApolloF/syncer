@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,10 +157,6 @@ type State struct {
 	ModHeld []string `json:"modHeld,omitempty"`
 	// ModSync is the state of each deployed-mods folder (by id).
 	ModSync map[string]ModSyncState `json:"modSync,omitempty"`
-	// Settled is when two versions of a folder's saves (by id) were last
-	// settled here: the saves other PCs made before then were decided on,
-	// so they're never taken from their backups over the choice.
-	Settled map[string]time.Time `json:"settled,omitempty"`
 	// Decisions are the recent choices between two versions of a save,
 	// newest last, so each can be changed later.
 	Decisions []Decision `json:"decisions,omitempty"`
@@ -173,6 +170,46 @@ type Decision struct {
 	Kept   string    `json:"kept,omitempty"`  // the PC the version kept was from, if known
 	Other  string    `json:"other,omitempty"` // … and the version put aside
 	Put    string    `json:"put"`             // where the version put aside is
+	// OtherMod is the modification time of the version put aside: that
+	// exact version is never taken back over the choice (from another PC's
+	// backup, or held in the backup over the version kept).
+	OtherMod time.Time `json:"otherMod,omitzero"`
+}
+
+// Rejected is a version of a save file that was decided against.
+type Rejected struct {
+	Rel string `json:"rel"` // forward slashes
+	Mod int64  `json:"mod"` // its modification time, unix seconds
+}
+
+// RejectedIn lists the versions of a folder's files decided against here.
+func (st State) RejectedIn(id string) []Rejected {
+	var out []Rejected
+	for _, d := range st.Decisions {
+		if d.Folder == id && !d.OtherMod.IsZero() {
+			out = append(out, Rejected{Rel: filepath.ToSlash(d.Rel), Mod: d.OtherMod.Unix()})
+		}
+	}
+	return out
+}
+
+// IsRejected reports whether the file rel, modified at mod, is one of
+// rejected (the same file, within two seconds: file systems differ).
+func IsRejected(rejected []Rejected, rel string, mod time.Time) bool {
+	rel = strings.ToLower(filepath.ToSlash(rel))
+	for _, r := range rejected {
+		if strings.ToLower(r.Rel) == rel && abs64(mod.Unix()-r.Mod) <= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func abs64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // ModSyncState tracks updates of a deployed-mods folder.

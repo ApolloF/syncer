@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -39,9 +40,9 @@ type Info struct {
 	// files its last backup left in the backup (see ReadFiles).
 	Device string `json:"device,omitempty"`
 	Files  string `json:"files,omitempty"`
-	// Settled is when two versions of the folder's saves were last settled
-	// on the PC: its Newest may be a save that was decided against since.
-	Settled time.Time `json:"settled,omitzero"`
+	// Rejected are versions of the folder's files decided against on the
+	// PC: its Newest may be one of them.
+	Rejected []store.Rejected `json:"rejected,omitempty"`
 
 	mine bool
 	key  string // the PC's file name
@@ -94,11 +95,11 @@ func writeInfo(target string, f Folder, newest time.Time, device, files string) 
 	}
 	root, rel, _ := paths.Portable(f.Path)
 	in := Info{ID: f.ID, Label: f.Label, Root: root, Rel: rel, Host: hostName, Newest: newest.UTC().Round(time.Second), BackedUp: time.Now().UTC(),
-		Device: device, Files: files, Settled: settledHere(f.ID)}
+		Device: device, Files: files, Rejected: store.LoadState().RejectedIn(f.ID)}
 	p := infoPath(target, f.ID, hostKey)
 	if old, err := readInfo(p); err == nil && old.Label == in.Label && old.Root == in.Root && old.Rel == in.Rel &&
 		old.Host == in.Host && old.Newest.Equal(in.Newest) && old.Device == in.Device && old.Files == in.Files &&
-		old.Settled.Equal(in.Settled) &&
+		slices.Equal(old.Rejected, in.Rejected) &&
 		time.Since(old.BackedUp) < 24*time.Hour {
 		return
 	}
@@ -107,19 +108,11 @@ func writeInfo(target string, f Folder, newest time.Time, device, files string) 
 	}
 }
 
-func settledHere(id string) time.Time {
-	t := store.LoadState().Settled[id]
-	if t.IsZero() {
-		return t
-	}
-	return t.UTC().Round(time.Second)
-}
-
-// NoteSettled writes, right away, into this PC's info about f that two
-// versions of its saves were just settled here. The info's Newest may be the
-// save that lost; without this, a PC that stays off until its next backup
-// would leave the others taking that save from its backup.
-func NoteSettled(target, id string) {
+// NoteRejected writes, right away, into this PC's info about a folder which
+// versions of its files were decided against here. The info's Newest may be
+// one of them; without this, a PC that stays off until its next backup would
+// leave the others taking that version from its backup.
+func NoteRejected(target, id string) {
 	if target == "" || !paths.ValidID(id) {
 		return
 	}
@@ -128,7 +121,7 @@ func NoteSettled(target, id string) {
 	if err != nil || in.ID != id {
 		return // never backed up here: no Newest to correct
 	}
-	in.Settled = settledHere(id)
+	in.Rejected = store.LoadState().RejectedIn(id)
 	_ = store.WriteJSON(p, in)
 }
 

@@ -31,8 +31,14 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 		return 0, fmt.Errorf("no backup found for %s", f.Label)
 	}
 
+	// A point of its own: never add to (or overwrite in) another one made
+	// in the same second.
 	now := time.Now()
 	safety := filepath.Join(target, VersionsDir, f.ID, now.Format(stampFmt))
+	for isDir(safety) {
+		now = now.Add(time.Second)
+		safety = filepath.Join(target, VersionsDir, f.ID, now.Format(stampFmt))
+	}
 	pinned := false
 	org := newOrigins(f.ID, f.Solo)
 	defer func() {

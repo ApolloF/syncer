@@ -41,8 +41,10 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 	}
 	key := id + "|" + strings.ToLower(filepath.Clean(path))
 	// Adding the folder can fail after the snapshot (e.g. a timeout); don't
-	// copy everything again on the retry.
-	if t, ok := store.LoadState().Protected[key]; ok && time.Since(t) < 24*time.Hour {
+	// copy everything again on the retry, unless saves changed since.
+	exclude := store.LoadSettings().Exclude[dismissKey(path)]
+	if t, ok := store.LoadState().Protected[key]; ok && time.Since(t) < 24*time.Hour &&
+		!backup.Newest(path, exclude).After(t) {
 		return nil
 	}
 	target, ok := backupTarget(store.LoadSettings())
@@ -52,7 +54,6 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 	// Big save folders take a while; don't let a short UI timeout cut it off.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 	defer cancel()
-	exclude := store.LoadSettings().Exclude[dismissKey(path)]
 	n, err := backup.Snapshot(ctx, target, backup.Folder{ID: id, Label: label, Path: path, Exclude: exclude})
 	if err != nil {
 		return fmt.Errorf("could not save the existing files of %s before syncing, will retry: %w", label, err)
@@ -231,13 +232,21 @@ func (a *App) resolveConflict(id, copyRel string, useCopy bool) error {
 	}
 	keep, where := keeper(f)
 	curName, copyName := a.versionNames(id, copyRel)
+	aside := filepath.Join(f.Path, filepath.Clean(copyRel)) // the version put aside
+	if useCopy {
+		aside = filepath.Join(f.Path, conflictRel(copyRel))
+	}
+	var asideMod time.Time
+	if fi, err := os.Stat(aside); err == nil {
+		asideMod = fi.ModTime()
+	}
 	put, err := conflict.Resolve(f.Path, copyRel, useCopy, keep)
 	if err != nil {
 		return err
 	}
 	logx.Printf("conflict in %s: kept the %s version of %s, other one moved to %s", f.Label,
 		map[bool]string{true: "other", false: "current"}[useCopy], copyRel, where)
-	d := store.Decision{Folder: id, Rel: conflictRel(copyRel), Kept: curName, Other: copyName, Put: put}
+	d := store.Decision{Folder: id, Rel: conflictRel(copyRel), Kept: curName, Other: copyName, Put: put, OtherMod: asideMod}
 	if useCopy {
 		d.Kept, d.Other = copyName, curName
 	}

@@ -127,8 +127,10 @@ func loadBaseline(id string) map[string]bool {
 // recordBaseline notes the files in target outside scope as the game's own.
 func recordBaseline(id, target string, scope map[string]bool) (map[string]bool, error) {
 	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-		m := map[string]bool{} // nothing there yet
-		return m, saveJSON(invPath(id, "baseline"), m)
+		// Nothing there yet: not recorded, so it's taken once the folder
+		// exists (an empty baseline would let later updates replace game
+		// files without keeping the originals).
+		return nil, nil
 	}
 	out, err := mods.Outside(target, scope)
 	if err != nil {
@@ -941,7 +943,7 @@ func planUpdate(ctx context.Context, c *syncthing.Client, id string, ok ApplyCon
 	// The game's own files: never deleted, replaced only with the user's OK
 	// (and kept), put back when the mod that replaced them goes.
 	baseline := loadBaseline(id)
-	if baseline == nil {
+	if len(baseline) == 0 { // not recorded, or recorded before the folder existed
 		if baseline, err = recordBaseline(id, f.Path, mods.Scope(p.prev)); err != nil {
 			return nil, fmt.Errorf("couldn't list the game's files: %w", err)
 		}

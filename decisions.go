@@ -18,26 +18,27 @@ import (
 	"github.com/ApolloF/syncer/internal/store"
 )
 
-// Settling two versions of a save is remembered: when (so the version put
-// aside is never taken back from another PC's backup by itself, see
-// newerElsewhere and the backup's mirror), and what went where (so the
-// choice can be changed later).
+// Settling two versions of a save is remembered: which version was put
+// aside (so that exact version is never taken back from another PC's backup
+// by itself, see newerElsewhere, nor held in the backup over the version
+// kept, see the backup's mirror), and where it went (so the choice can be
+// changed later).
 
-// maxDecisions caps the remembered choices.
-const maxDecisions = 100
+// maxDecisions caps the remembered choices; maxRejected what is taken from
+// other PCs per folder (their files aren't trusted).
+const (
+	maxDecisions = 100
+	maxRejected  = 200
+)
 
-func init() { backup.SettledAt = settledAt }
+func init() { backup.RejectedFor = rejectedVersions }
 
 // decided remembers a choice between two versions of a save, and tells the
 // other PCs: through this PC's backup info right away (Google Drive) and its
-// metadata (Syncthing).
+// metadata (Syncthing, at the next reconcile).
 func decided(d store.Decision) {
 	d.At = time.Now()
 	store.UpdateState(func(st *store.State) {
-		if st.Settled == nil {
-			st.Settled = map[string]time.Time{}
-		}
-		st.Settled[d.Folder] = d.At
 		st.Decisions = slices.DeleteFunc(st.Decisions, func(x store.Decision) bool {
 			return x.Folder == d.Folder && strings.EqualFold(x.Rel, d.Rel)
 		})
@@ -47,28 +48,28 @@ func decided(d store.Decision) {
 		}
 	})
 	if t, ok := backupTarget(store.LoadSettings()); ok {
-		backup.NoteSettled(t, d.Folder)
+		backup.NoteRejected(t, d.Folder)
 	}
 }
 
-// settledAt is when two versions of a folder's saves were last settled, on
-// any PC: here, as another PC published it, or as its backup info says.
-// Times in the future (a wrong clock, or a bad file) don't count.
-func settledAt(id string) time.Time {
-	best := store.LoadState().Settled[id]
-	limit := time.Now().Add(time.Hour)
-	consider := func(t time.Time) {
-		if t.After(best) && t.Before(limit) {
-			best = t
+// rejectedVersions lists the versions of a folder's files decided against,
+// on any PC: here, as other PCs published them, or as their backup info says.
+func rejectedVersions(id string) []store.Rejected {
+	out := store.LoadState().RejectedIn(id)
+	add := func(rs []store.Rejected) {
+		for _, r := range rs {
+			if len(out) < maxRejected && r.Rel != "" && len(r.Rel) < 400 {
+				out = append(out, r)
+			}
 		}
 	}
-	consider(meta.PeerSettled("", id))
+	add(meta.PeerRejected("", id))
 	if t, ok := backupTarget(store.LoadSettings()); ok {
 		for _, in := range backup.ReadInfos(t, id) {
-			consider(in.Settled)
+			add(in.Rejected)
 		}
 	}
-	return best
+	return out
 }
 
 // DecisionView is an earlier choice between two versions of a save.
@@ -131,7 +132,9 @@ func (a *App) SwitchDecision(id, rel string) error {
 	// The version used until now goes into history first (a copy: if the
 	// swap fails, it's still in place).
 	put := ""
+	var putMod time.Time
 	if cur, err := os.Stat(to); err == nil && cur.Mode().IsRegular() {
+		putMod = cur.ModTime()
 		keep, _ := keeper(f)
 		if put, err = keep(to, d.Rel, false); err != nil {
 			return fmt.Errorf("could not keep the current version first: %w", err)
@@ -150,7 +153,7 @@ func (a *App) SwitchDecision(id, rel string) error {
 		return fmt.Errorf("could not swap the files (is the game running?): %w", err)
 	}
 	logx.Printf("conflict in %s: switched %s to the version from %s", f.Label, d.Rel, cmpOr(d.Other, "the other PC"))
-	decided(store.Decision{Folder: id, Rel: d.Rel, Kept: d.Other, Other: d.Kept, Put: put})
+	decided(store.Decision{Folder: id, Rel: d.Rel, Kept: d.Other, Other: d.Kept, Put: put, OtherMod: putMod})
 	a.forgetConflicts()
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil

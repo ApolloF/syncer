@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -70,9 +71,9 @@ type DeviceFile struct {
 	Features []string `json:"features,omitempty"`
 	// Version of this PC's Syncer ("" from Syncers before it was published).
 	Version string `json:"version,omitempty"`
-	// Settled: when two versions of a folder's saves (by id) were last
-	// settled on this PC (unix seconds).
-	Settled map[string]int64 `json:"settled,omitempty"`
+	// Rejected: versions of each folder's (by id) files decided against
+	// on this PC.
+	Rejected map[string][]store.Rejected `json:"rejected,omitempty"`
 	// Accounts: this PC's copy of the accounts and split games, and who
 	// plays on it.
 	Accounts *accounts.Shared `json:"accounts,omitempty"`
@@ -147,7 +148,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 
 	// Publish our own folder list.
 	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature},
-		Version: AppVersion, Settled: settledHere(),
+		Version: AppVersion, Rejected: rejectedHere(),
 		Folders: publishable(folders, settings, ast, me, func(id string) int64 {
 			st, _ := c.FolderStatus(ctx, id)
 			return st.GlobalBytes
@@ -890,7 +891,7 @@ func changed(me string, df DeviceFile) bool {
 	oa, _ := json.Marshal(old.Accounts)
 	na, _ := json.Marshal(df.Accounts)
 	if string(oa) != string(na) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") ||
-		!maps.Equal(old.Settled, df.Settled) {
+		!maps.EqualFunc(old.Rejected, df.Rejected, slices.Equal) {
 		return true
 	}
 	for i := range old.Folders {
@@ -973,29 +974,30 @@ func PeerVersions(me string) map[string]string {
 	return m
 }
 
-func settledHere() map[string]int64 {
-	var m map[string]int64
-	for id, t := range store.LoadState().Settled {
+func rejectedHere() map[string][]store.Rejected {
+	st := store.LoadState()
+	var m map[string][]store.Rejected
+	for _, d := range st.Decisions {
 		if m == nil {
-			m = map[string]int64{}
+			m = map[string][]store.Rejected{}
 		}
-		m[id] = t.Unix()
+		if _, ok := m[d.Folder]; !ok {
+			if r := st.RejectedIn(d.Folder); len(r) > 0 {
+				m[d.Folder] = r
+			}
+		}
 	}
 	return m
 }
 
-// PeerSettled is the latest time another PC published for settling two
-// versions of a folder's saves.
-func PeerSettled(me, id string) time.Time {
-	var best time.Time
+// PeerRejected lists the versions of a folder's files other PCs published
+// as decided against.
+func PeerRejected(me, id string) []store.Rejected {
+	var out []store.Rejected
 	for _, df := range readOtherFiles(me) {
-		if s, ok := df.Settled[id]; ok {
-			if t := time.Unix(s, 0); t.After(best) {
-				best = t
-			}
-		}
+		out = append(out, df.Rejected[id]...)
 	}
-	return best
+	return out
 }
 
 // ---- folder cache for offline backups ----------------------------------------
