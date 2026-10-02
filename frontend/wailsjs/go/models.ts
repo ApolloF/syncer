@@ -362,6 +362,7 @@ export namespace main {
 	    label: string;
 	    kind: string;
 	    error: string;
+	    mine: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PendingChange(source);
@@ -373,6 +374,7 @@ export namespace main {
 	        this.label = source["label"];
 	        this.kind = source["kind"];
 	        this.error = source["error"];
+	        this.mine = source["mine"];
 	    }
 	}
 	export class SplitView {
@@ -634,6 +636,7 @@ export namespace main {
 	    id: string;
 	    label: string;
 	    problem: string;
+	    mod: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderIssue(source);
@@ -644,6 +647,7 @@ export namespace main {
 	        this.id = source["id"];
 	        this.label = source["label"];
 	        this.problem = source["problem"];
+	        this.mod = source["mod"];
 	    }
 	}
 	export class FolderView {
@@ -674,6 +678,7 @@ export namespace main {
 	    newerAt: any;
 	    newerCanGet: boolean;
 	    newerWhy: string;
+	    repairable: boolean;
 	    inside: string;
 	    oneDrive: boolean;
 	    steamCloud: boolean;
@@ -722,6 +727,7 @@ export namespace main {
 	        this.newerAt = this.convertValues(source["newerAt"], null);
 	        this.newerCanGet = source["newerCanGet"];
 	        this.newerWhy = source["newerWhy"];
+	        this.repairable = source["repairable"];
 	        this.inside = source["inside"];
 	        this.oneDrive = source["oneDrive"];
 	        this.steamCloud = source["steamCloud"];

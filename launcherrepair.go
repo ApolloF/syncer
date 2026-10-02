@@ -103,6 +103,54 @@ func repairLaunchers(ctx context.Context, c *syncthing.Client) bool {
 	return changed
 }
 
+// RepairFolder repairs launcher data folder id now (the Repair button),
+// rather than at the next background run or launcher call, and says what it
+// brought back.
+func (a *App) RepairFolder(id string) (string, error) {
+	c, err := a.client()
+	if err != nil {
+		return "", errors.New("Syncthing isn't running")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+	defer cancel()
+	r, err := repairNow(ctx, c, id)
+	if r.Done {
+		a.emitChanged()
+		a.refreshTray()
+	}
+	if err != nil {
+		return "", err
+	}
+	return r.describe(), nil
+}
+
+// repairNow repairs launcher data folder id when it needs it. Asked by the
+// user, it doesn't wait out repairAgain.
+func repairNow(ctx context.Context, c *syncthing.Client, id string) (repairResult, error) {
+	launcher, ok := store.LoadSettings().Launchers[id]
+	if !ok {
+		return repairResult{}, errors.New("only a launcher's data folder can be repaired")
+	}
+	// One at a time with launcherData, which repairs too.
+	launcherDataMu.Lock()
+	defer launcherDataMu.Unlock()
+	f, err := findFolder(ctx, c, id)
+	if err != nil {
+		return repairResult{}, err
+	}
+	if st, err := c.FolderStatus(ctx, id); err != nil {
+		return repairResult{}, err
+	} else if !needsRepair(f, st) {
+		return repairResult{}, errors.New("it doesn't need repairing")
+	}
+	store.UpdateState(func(st *store.State) { delete(st.Repaired, id) })
+	r, err := repairLauncherData(ctx, c, f, launcher)
+	if err == nil && !r.Done {
+		err = errors.New("it was repaired meanwhile")
+	}
+	return r, err
+}
+
 // repairLauncherData restores what the backup has of launcher's data folder
 // f and adds it back to Syncthing with a fresh index (see the top of this
 // file). The caller has checked that it needs it.

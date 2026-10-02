@@ -213,3 +213,29 @@ func TestRepairWithoutABackupStillRejoins(t *testing.T) {
 		t.Errorf("calls = %s", got)
 	}
 }
+
+func TestRepairNowDoesNotWaitOutAnEarlierRepair(t *testing.T) {
+	profile, _, f := repairSetup(t)
+	st, c := newFakeST(t, map[string]any{"id": f.ID, "label": f.Label, "path": f.Path})
+	if _, err := repairNow(context.Background(), c, "some-game"); err == nil {
+		t.Error("repaired a folder that isn't a launcher's data")
+	}
+	// Repaired an hour ago, and emptied again since.
+	store.UpdateState(func(s *store.State) { s.Repaired = map[string]time.Time{f.ID: time.Now().Add(-time.Hour)} })
+	if repairLaunchers(context.Background(), c) {
+		t.Fatal("the background run didn't wait")
+	}
+	r, err := repairNow(context.Background(), c, f.ID)
+	if err != nil || !r.Done {
+		t.Fatalf("repair now: %+v, %v", r, err)
+	}
+	if _, err := os.Stat(filepath.Join(profile, "snig77", "PC-Other.json")); err != nil {
+		t.Errorf("not restored: %v", err)
+	}
+	if got := strings.Join(st.calls, ", "); !strings.HasPrefix(got, "remove seaglass-profile, add seaglass-profile") {
+		t.Errorf("calls = %s", got)
+	}
+	if _, err := repairNow(context.Background(), c, f.ID); err == nil || !strings.Contains(err.Error(), "doesn't need") {
+		t.Errorf("repairing a folder that's fine: %v", err)
+	}
+}

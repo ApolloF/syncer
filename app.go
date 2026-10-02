@@ -187,6 +187,7 @@ type FolderIssue struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
 	Problem string `json:"problem"`
+	Mod     bool   `json:"mod"` // a mod folder: listed on the Mods page while finding mods is on
 }
 
 func (a *App) Overview() Overview {
@@ -261,7 +262,7 @@ func (a *App) Overview() Overview {
 				}
 				if p := folderIssue(ctx, c, f.ID, fst); p != "" {
 					o.Errors++
-					o.Issues = append(o.Issues, FolderIssue{ID: f.ID, Label: cmpOr(f.Label, f.ID), Problem: p})
+					o.Issues = append(o.Issues, FolderIssue{ID: f.ID, Label: cmpOr(f.Label, f.ID), Problem: p, Mod: isMod(s, f.ID)})
 				}
 			}
 		}

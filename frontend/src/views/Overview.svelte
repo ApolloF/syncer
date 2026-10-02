@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte'
-  import { ui, attempt, refresh } from '../lib/state.svelte'
+  import { ui, attempt, refresh, showIssue } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
   import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -106,7 +106,7 @@
 {/if}
 
 <section class="stats">
-  <button class="card stat" onclick={() => (ui.view = 'games')}>
+  <button class="card stat" onclick={() => (o?.errors && o.issues?.length ? showIssue(o.issues[0]) : (ui.view = 'games'))}>
     <div class="row"><Icon name="games" /><span class="muted">Games synced</span></div>
     <div class="big">{o?.folders ?? '–'}</div>
     <div class="row">

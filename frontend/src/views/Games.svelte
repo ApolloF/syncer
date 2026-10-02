@@ -29,7 +29,7 @@
     LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
     ReleaseModHold, MakeModSource, HandOverMods,
     StopSyncingCopies,
-    GetNewer, ScanMods, VortexShares, PushVortexList,
+    GetNewer, ScanMods, VortexShares, PushVortexList, RepairFolder,
   } from '../../wailsjs/go/main/App'
   import type { conflict, store, mods } from '../../wailsjs/go/models'
 
@@ -206,12 +206,29 @@
   $effect(() => { if (ui.gamesAdded !== seenAdded) { seenAdded = ui.gamesAdded; if (cache.found) scan() } })
   $effect(() => { if (cache.tab === 'other' && cache.available === null && !loadingAvailable) loadAvailable() })
 
+  // Scroll to a folder another page pointed at (a folder issue), and highlight it.
+  let flash = $state('')
+  $effect(() => {
+    const id = ui.focus
+    if (!id || !cache.folders.some(f => f.id === id)) return
+    untrack(() => {
+      ui.focus = ''
+      query = ''
+      if (!modsPage) cache.tab = 'games'
+      flash = id
+      requestAnimationFrame(() => document.getElementById(`folder-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+      setTimeout(() => { if (flash === id) flash = '' }, 2500)
+    })
+  })
+
   const matches = (...s: string[]) => { const q = query.trim().toLowerCase(); return !q || s.some(x => x.toLowerCase().includes(q)) }
-  const found = $derived((cache.found ?? []).filter(g => !g.syncedBy && !(hideMods && g.kind) && (showCloud || !g.steamCloud) && matches(g.name, g.path)))
+  // Mod folders (kind mods*) have their own page; a launcher's data stays with the games.
+  const isMod = (kind?: string) => !!kind?.startsWith('mods')
+  const found = $derived((cache.found ?? []).filter(g => !g.syncedBy && !(hideMods && isMod(g.kind)) && (showCloud || !g.steamCloud) && matches(g.name, g.path)))
   const hiddenCloud = $derived((cache.found ?? []).filter(g => !g.syncedBy && g.steamCloud).length)
-  const allGames = $derived(cache.folders.filter(f => !(hideMods && f.kind)))
+  const allGames = $derived(cache.folders.filter(f => !(hideMods && isMod(f.kind))))
   const games = $derived(allGames.filter(f => matches(f.label, f.path)))
-  const allAvailable = $derived((cache.available ?? []).filter(a => !(hideMods && a.kind)))
+  const allAvailable = $derived((cache.available ?? []).filter(a => !(hideMods && isMod(a.kind))))
   const available = $derived(allAvailable.filter(a => matches(a.label, a.path)))
   const others = $derived((cache.others ?? []).filter(b => matches(b.label, b.path)))
   const elsewhereCount = $derived(cache.available && cache.others ? allAvailable.length + cache.others.length : null)
@@ -231,9 +248,9 @@
       if (!g) { g = { game, name: modGameName(label), synced: [], found: [], avail: [] }; m.set(game, g) }
       return g
     }
-    for (const f of cache.folders) if (f.kind && matches(f.label, f.path)) get(f.modGame || f.label, f.label).synced.push(f)
-    for (const g of cache.modsFound ?? []) if (g.kind && !g.syncedBy && matches(g.name, g.path)) get(g.modGame || g.name, g.name).found.push(g)
-    for (const a of cache.available ?? []) if (a.kind && matches(a.label, a.path)) get(a.modGame || a.label, a.label).avail.push(a)
+    for (const f of cache.folders) if (isMod(f.kind) && matches(f.label, f.path)) get(f.modGame || f.label, f.label).synced.push(f)
+    for (const g of cache.modsFound ?? []) if (isMod(g.kind) && !g.syncedBy && matches(g.name, g.path)) get(g.modGame || g.name, g.name).found.push(g)
+    for (const a of cache.available ?? []) if (isMod(a.kind) && matches(a.label, a.path)) get(a.modGame || a.label, a.label).avail.push(a)
     for (const sh of cache.shares) { const g = m.get(sh.game); if (g) { g.share = sh; g.name = sh.name || g.name } }
     for (const g of m.values()) {
       g.synced.sort((a, b) => (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9))
@@ -644,6 +661,17 @@
     gettingId = ''
   }
 
+  let repairingId = $state('')
+  async function repair(f: main.FolderView) {
+    repairingId = f.id
+    try {
+      const what = await RepairFolder(f.id)
+      toast(`Repaired ${f.label}: ${what}`, 'ok')
+      load(); refresh()
+    } catch (e) { fail(e) }
+    repairingId = ''
+  }
+
   async function stopCopies() {
     stoppingCopies = true
     try {
@@ -780,7 +808,7 @@
 
 {#snippet folderRow(f: main.FolderView)}
   {@const s = stateOf(f)}
-  <div class="item" transition:slide={{ duration: 150 }}>
+  <div class="item" class:flash={flash === f.id} id="folder-{f.id}" transition:slide={{ duration: 150 }}>
     <div class="grow">
       <div class="name ellipsis">{f.label}</div>
       <div class="path faint ellipsis" title={f.path}>{f.path}</div>
@@ -833,6 +861,12 @@
     {:else if !f.exists}<span class="pill" title="The save folder isn't on this PC. Restore it from the backup to bring it back.">Not on this PC</span>
     {:else if f.backup}<span class="pill">Backup only</span>
     {:else}<span class="pill" title="Neither synced nor backed up. Turn either toggle back on to include it again.">Off</span>{/if}
+    {#if f.repairable}
+      <button class="btn sm primary" disabled={repairingId === f.id} onclick={() => repair(f)}
+        title="Brings back from the backup what's missing here (next to any file the launcher already started again, never over it), then syncs the folder again like a new PC: nothing is deleted on your other PCs. Syncer also does this by itself at its next background run.">
+        {#if repairingId === f.id}<Icon name="refresh" size={14} class="spin" />{/if} Repair now
+      </button>
+    {/if}
     {#if f.sync && f.kind === 'mods-deployed' && f.modRole !== 'source' && (f.modPhase === 'pending' || f.modPhase === 'held')}
       <button class="btn sm primary" onclick={() => openApply(f)}>Apply…</button>
     {/if}
@@ -1609,7 +1643,8 @@
   .detail { font-size: 12px; margin-top: 2px; }
   .meta { font-size: 12.5px; white-space: nowrap; }
   .acts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
-  .item:hover .acts, .acts:focus-within { opacity: 1; }
+  .item:hover .acts, .acts:focus-within, .item.flash .acts { opacity: 1; }
+  .item.flash { background: var(--hover); box-shadow: inset 3px 0 0 var(--accent); }
   .acts .set { color: var(--accent); }
   .empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px; color: var(--muted); text-align: center; }
   .empty.inner { padding: 28px; }
