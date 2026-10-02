@@ -630,6 +630,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class FolderIssue {
+	    id: string;
+	    label: string;
+	    problem: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FolderIssue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.problem = source["problem"];
+	    }
+	}
 	export class FolderView {
 	    id: string;
 	    label: string;
@@ -639,6 +655,7 @@ export namespace main {
 	    files: number;
 	    needBytes: number;
 	    errors: number;
+	    problem: string;
 	    backup: boolean;
 	    sync: boolean;
 	    installed: boolean;
@@ -689,6 +706,7 @@ export namespace main {
 	        this.files = source["files"];
 	        this.needBytes = source["needBytes"];
 	        this.errors = source["errors"];
+	        this.problem = source["problem"];
 	        this.backup = source["backup"];
 	        this.sync = source["sync"];
 	        this.installed = source["installed"];
@@ -992,6 +1010,7 @@ export namespace main {
 	    folders: number;
 	    syncing: number;
 	    errors: number;
+	    issues: FolderIssue[];
 	    conflicts: number;
 	    overlaps: number;
 	    drive: backup.DriveInfo;
@@ -1019,6 +1038,7 @@ export namespace main {
 	        this.folders = source["folders"];
 	        this.syncing = source["syncing"];
 	        this.errors = source["errors"];
+	        this.issues = this.convertValues(source["issues"], FolderIssue);
 	        this.conflicts = source["conflicts"];
 	        this.overlaps = source["overlaps"];
 	        this.drive = this.convertValues(source["drive"], backup.DriveInfo);
@@ -1442,6 +1462,7 @@ export namespace store {
 	    modsChanged: any;
 	    mods?: Record<string, ModFolder>;
 	    accounts?: boolean;
+	    launchers?: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -1484,6 +1505,7 @@ export namespace store {
 	        this.modsChanged = this.convertValues(source["modsChanged"], null);
 	        this.mods = this.convertValues(source["mods"], ModFolder, true);
 	        this.accounts = source["accounts"];
+	        this.launchers = source["launchers"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

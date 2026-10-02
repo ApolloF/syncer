@@ -56,6 +56,9 @@ func runBackground() {
 			}
 			releaseStaleHold(ctx, c)
 			if !s.Paused() {
+				// A launcher's data folder emptied outside Syncer gets its
+				// files back before anything else looks at it.
+				repairLaunchers(ctx, c)
 				if rep, err := meta.Reconcile(ctx, c); err != nil {
 					logx.Printf("reconcile: %v", err)
 				} else if len(rep.Added) > 0 {

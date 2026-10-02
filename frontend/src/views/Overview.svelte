@@ -112,7 +112,7 @@
     <div class="row">
       {#if !o?.syncthing.running}<span class="pill err">Sync off</span>
       {:else if o.paused}<span class="pill">Paused</span>
-      {:else if o.errors}<span class="pill warn">{o.errors} need attention</span>
+      {:else if o.errors}<span class="pill warn" title={(o.issues ?? []).map(i => `${i.label}: ${i.problem}`).join('\n')}>{o.errors} need attention</span>
       {:else if o.syncing}<span class="pill accent">{o.syncing} syncing</span>
       {:else}<span class="pill ok">Up to date</span>{/if}
     </div>

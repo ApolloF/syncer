@@ -19,17 +19,31 @@ import (
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
+	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
 // apiLauncherData answers launcherData.
+//
+// The launcher data contract: the launcher keeps one file per PC and
+// account in the folder, so no two PCs ever write the same file, and it adds
+// up every file it finds there (playtime summed, achievements joined, the
+// newest settings win), skipping Syncthing's conflict copies
+// (".sync-conflict-"). Syncer relies on it to bring back old data next to
+// new without anything counting twice (see launcherrepair.go).
 type apiLauncherData struct {
 	ID     string `json:"id,omitempty"`
 	Label  string `json:"label,omitempty"`
-	Sync   bool   `json:"sync"`
+	Sync   bool   `json:"sync"` // synced with the other PCs (false while Error says why not)
 	Backup bool   `json:"backup"`
 	Added  bool   `json:"added"` // added by this call
 	// Dismissed: the user stopped syncing it; Syncer leaves it that way.
 	Dismissed bool `json:"dismissed"`
+	// Error says what keeps Syncthing from syncing the folder, in plain
+	// words.
+	Error string `json:"error,omitempty"`
+	// Repaired: this call found the folder emptied or replaced outside
+	// Syncer, brought back what the backup had and started syncing it again.
+	Repaired bool `json:"repaired,omitempty"`
 }
 
 // checkLauncherData says why path can't be a launcher's data folder: it must
@@ -102,6 +116,11 @@ func (a *App) launcherData(ctx context.Context, launcher, path string) (apiLaunc
 	if err != nil {
 		return apiLauncherData{}, errors.New("Syncthing isn't running")
 	}
+	// A repair that took the folder out of Syncthing adds it back first, so
+	// it isn't added again as a new folder below.
+	if finishRejoins(ctx, c) {
+		a.emitChanged()
+	}
 	fs, err := c.Folders(ctx)
 	if err != nil {
 		return apiLauncherData{}, errors.New("Syncthing isn't running")
@@ -109,7 +128,14 @@ func (a *App) launcherData(ctx context.Context, launcher, path string) (apiLaunc
 	for _, f := range fs {
 		if f.ID != meta.FolderID && strings.EqualFold(filepath.Clean(f.Path), path) {
 			mark(f.ID)
-			return apiLauncherData{ID: f.ID, Label: cmpOr(f.Label, f.ID), Sync: true, Backup: !s.NoBackup[f.ID]}, nil
+			return a.launcherDataState(ctx, c, f, launcher, !s.NoBackup[f.ID]), nil
+		}
+	}
+	for id, lf := range store.LoadState().Rejoin {
+		if strings.EqualFold(filepath.Clean(lf.Path), path) {
+			// Adding it back failed just now; it keeps its id for the next try.
+			return apiLauncherData{ID: id, Label: lf.Label, Backup: !s.NoBackup[id],
+				Error: "Syncer couldn't start syncing it again yet. It tries again later."}, nil
 		}
 	}
 	if s.Dismissed[dismissKey(path)] {
@@ -134,4 +160,32 @@ func (a *App) launcherData(ctx context.Context, launcher, path string) (apiLaunc
 	a.emitChanged()
 	a.refreshTray()
 	return apiLauncherData{ID: id, Label: label, Sync: true, Backup: true, Added: true}, nil
+}
+
+// launcherDataState reports how a synced launcher data folder is doing,
+// repairing it first when it was emptied or replaced outside Syncer (see
+// launcherrepair.go).
+func (a *App) launcherDataState(ctx context.Context, c *syncthing.Client, f syncthing.Folder, launcher string, backupOn bool) apiLauncherData {
+	d := apiLauncherData{ID: f.ID, Label: cmpOr(f.Label, f.ID), Sync: true, Backup: backupOn}
+	st, err := c.FolderStatus(ctx, f.ID)
+	if err != nil {
+		return d
+	}
+	if needsRepair(f, st) {
+		r, err := repairLauncherData(ctx, c, f, launcher)
+		if err != nil {
+			logx.Printf("couldn't repair %s's data folder: %v", launcher, err)
+		}
+		if r.Done {
+			d.Repaired = true
+			a.emitChanged()
+		}
+		if st, err = c.FolderStatus(ctx, f.ID); err != nil {
+			st = syncthing.FolderStatus{} // just added back: nothing known yet
+		}
+	}
+	if p := folderIssue(ctx, c, f.ID, st); p != "" {
+		d.Sync, d.Error = false, p
+	}
+	return d
 }

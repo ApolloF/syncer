@@ -44,11 +44,16 @@
 
   const o = $derived(ui.overview)
   const badge = $derived<Partial<Record<View, number>>>({ devices: o?.pending ?? 0 })
-  const health = $derived.by(() => {
+  const health = $derived.by((): { kind: string; text: string; tip?: string } => {
     if (!o) return { kind: '', text: 'Loading…' }
     if (o.paused) return { kind: 'warn', text: `Paused until ${pausedUntil(o.settings.pausedUntil)}` }
     if (!o.syncthing.running) return { kind: 'err', text: 'Sync is off' }
-    if (o.errors) return { kind: 'warn', text: `${o.errors} folder issue${o.errors > 1 ? 's' : ''}` }
+    if (o.errors) {
+      // Name the folder and say what's wrong; with several, the tooltip lists them.
+      const issues = (o.issues ?? []).map(i => `${i.label}: ${i.problem}`)
+      if (issues.length === 1) return { kind: 'warn', text: issues[0], tip: issues[0] }
+      return { kind: 'warn', text: `${o.errors} folder issues`, tip: issues.join('\n') }
+    }
     if (o.syncing) return { kind: 'warn', text: 'Syncing…' }
     return { kind: 'ok', text: 'All synced' }
   })
@@ -93,9 +98,9 @@
         {/if}
       </div>
     {/if}
-    <div class="status">
+    <div class="status" title={health.tip}>
       <span class="dot {health.kind}"></span>
-      <span class="muted">{health.text}</span>
+      <span class="muted clamp">{health.text}</span>
     </div>
   </aside>
 
@@ -157,6 +162,8 @@
   .menu { position: absolute; bottom: 40px; left: 0; right: 0; padding: 4px; display: flex; flex-direction: column; gap: 2px; z-index: 40; }
   .who + .status { margin-top: 0; }
   .status { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; }
+  /* A folder issue names the folder and the problem: up to four lines, the rest in the tooltip. */
+  .clamp { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; min-width: 0; }
 
   main {
     flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden;

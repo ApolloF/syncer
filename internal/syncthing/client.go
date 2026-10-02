@@ -402,7 +402,10 @@ type FolderStatus struct {
 	NeedBytes   int64  `json:"needBytes"`
 	NeedFiles   int    `json:"needFiles"`
 	Errors      int    `json:"errors"`
-	PullErrors  int    `json:"pullErrors"`
+	PullErrors  int    `json:"pullErrors"` // the same count, from older Syncthings
+	// Error is why Syncthing stopped the folder ("folder marker missing",
+	// "folder path missing", …); empty while it works.
+	Error string `json:"error"`
 	// ReceiveOnlyTotalItems are files changed locally in a receive-only
 	// folder (they'd be put back by Revert).
 	ReceiveOnlyTotalItems int `json:"receiveOnlyTotalItems"`
@@ -459,6 +462,20 @@ func (c *Client) Connections(ctx context.Context) (Connections, error) {
 func (c *Client) FolderStatus(ctx context.Context, id string) (FolderStatus, error) {
 	var s FolderStatus
 	return s, c.get(ctx, "/rest/db/status?folder="+url.QueryEscape(id), &s)
+}
+
+// FileError is a file Syncthing couldn't sync, and why.
+type FileError struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
+// FolderErrors lists up to n files of a folder that couldn't be synced.
+func (c *Client) FolderErrors(ctx context.Context, id string, n int) ([]FileError, error) {
+	var r struct {
+		Errors []FileError `json:"errors"`
+	}
+	return r.Errors, c.get(ctx, fmt.Sprintf("/rest/folder/errors?folder=%s&perpage=%d", url.QueryEscape(id), n), &r)
 }
 
 // Completion of all folders shared with device.

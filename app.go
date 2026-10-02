@@ -164,7 +164,8 @@ type Overview struct {
 	Pending    int              `json:"pending"`
 	Folders    int              `json:"folders"`
 	Syncing    int              `json:"syncing"`
-	Errors     int              `json:"errors"`
+	Errors     int              `json:"errors"` // folders with an issue (see Issues)
+	Issues     []FolderIssue    `json:"issues"`
 	Conflicts  int              `json:"conflicts"` // conflict copies across all folders
 	Overlaps   int              `json:"overlaps"`  // synced folders inside another synced folder
 	Drive      backup.DriveInfo `json:"drive"`
@@ -179,6 +180,13 @@ type Overview struct {
 	Update     *UpdateInfo      `json:"update"` // a newer release, if one is out
 	// VersionGaps: linked PCs running an older or newer Syncer than this one.
 	VersionGaps []VersionGap `json:"versionGaps"`
+}
+
+// FolderIssue is a synced folder Syncthing has a problem with, and what it is.
+type FolderIssue struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Problem string `json:"problem"`
 }
 
 func (a *App) Overview() Overview {
@@ -251,8 +259,9 @@ func (a *App) Overview() Overview {
 				if fst.State == "syncing" || fst.State == "sync-preparing" || fst.NeedFiles > 0 {
 					o.Syncing++
 				}
-				if fst.Errors+fst.PullErrors > 0 || fst.State == "error" {
+				if p := folderIssue(ctx, c, f.ID, fst); p != "" {
 					o.Errors++
+					o.Issues = append(o.Issues, FolderIssue{ID: f.ID, Label: cmpOr(f.Label, f.ID), Problem: p})
 				}
 			}
 		}
