@@ -50,7 +50,7 @@ export async function refreshAccounts() {
 
 /** Opens the page that lists a folder with an issue, scrolled to it. */
 export function showIssue(i: main.FolderIssue) {
-  ui.view = i.mod && ui.overview?.settings.findMods ? 'mods' : 'games'
+  ui.view = i.launcher ? 'settings' : i.mod && ui.overview?.settings.findMods ? 'mods' : 'games'
   ui.focus = i.id
 }
 

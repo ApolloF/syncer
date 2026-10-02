@@ -60,7 +60,8 @@
   })
 
   async function loadShared() {
-    try { shared = ((await Folders()) ?? []).filter(f => f.sync && !f.split) } catch { /* shown elsewhere */ }
+    // A launcher's own data is per account already (each card lists its part).
+    try { shared = ((await Folders()) ?? []).filter(f => f.sync && !f.split && f.kind !== 'launcher') } catch { /* shown elsewhere */ }
   }
 
   async function run(key: string, fn: () => Promise<unknown>, ok?: string) {
@@ -116,6 +117,8 @@
   }
 
   function plural(n: number, word: string) { return `${n} ${word}${n === 1 ? '' : 's'}` }
+  // Games with separate saves, without the launcher data listed with them.
+  const splitGames = (games: main.SplitSave[]) => games.filter(g => !g.launcher)
 </script>
 
 <header>
@@ -187,7 +190,8 @@
                 {#if !g.synced}<span class="pill warn" title="These saves haven't reached this PC yet">Not here yet</span>
                 {:else}
                   <span class="faint small">{plural(g.files.length + g.more, 'file')} · {bytes(g.bytes)} · {ago(g.modified)}</span>
-                  {#if g.here}<span class="pill" title="In the game's save folder on this PC">In use here</span>{/if}
+                  {#if g.launcher}<span class="pill" title="{g.launcher} keeps each account's playtime, achievements and settings in a file of its own, so there's nothing to separate. Sync and backup: Settings → Launchers.">Kept apart by {g.launcher}</span>
+                  {:else if g.here}<span class="pill" title="In the game's save folder on this PC">In use here</span>{/if}
                 {/if}
               </button>
               {#if g.conflicts}
@@ -209,7 +213,8 @@
             </div>
           {/each}
         </div>
-      {:else}
+      {/if}
+      {#if !splitGames(a.games).length}
         <p class="faint small">No separate saves yet: {a.name} uses the shared saves of every game.</p>
       {/if}
     </div>
@@ -294,15 +299,16 @@
 
 {#if deleteFor}
   {@const d = deleteFor}
+  {@const games = splitGames(d.games)}
   <Modal title="Remove {d.name}?" onclose={() => (deleteFor = null)}>
-    {#if d.games.length}
-      <p>{d.name} has separate saves of {d.games.map(g => g.label).join(', ')}. Share those games again first (below), choosing whose saves to keep.</p>
+    {#if games.length}
+      <p>{d.name} has separate saves of {games.map(g => g.label).join(', ')}. Share those games again first (below), choosing whose saves to keep.</p>
     {:else}
       <p>{d.name} is removed on all your PCs. No saves are touched.</p>
     {/if}
     {#snippet actions()}
       <button class="btn" onclick={() => (deleteFor = null)}>Cancel</button>
-      <button class="btn danger" disabled={!!d.games.length || busy === 'delete'}
+      <button class="btn danger" disabled={!!games.length || busy === 'delete'}
         onclick={async () => { await run('delete', () => DeleteAccount(d.id), `Removed ${d.name}`); deleteFor = null }}>Remove</button>
     {/snippet}
   </Modal>
