@@ -292,6 +292,93 @@ func TestCopyHistory(t *testing.T) {
 	}
 }
 
+func TestCopyVersionsLeavesTheBackupCopy(t *testing.T) {
+	target := t.TempDir()
+	write(t, filepath.Join(target, "old", "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, "old", "2026-01-02_030405", "a.sav"), "v0")
+	if err := CopyVersions(context.Background(), target, "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(target, VersionsDir, "new", "2026-01-02_030405", "a.sav")) != "v0" {
+		t.Error("restore point not copied")
+	}
+	if _, err := os.Stat(filepath.Join(target, "new")); err == nil {
+		t.Error("backup copy copied too")
+	}
+}
+
+// An account folder split off a game takes the game's backed up files over
+// instead of uploading them again; a changed one is backed up as usual.
+func TestRunAdoptsFromPreviousBackup(t *testing.T) {
+	p := newTwoPCs(t)
+	p.f.From = "game"
+	at := time.Now().Add(-time.Hour)
+	for rel, s := range map[string]string{"same.sav": "same", filepath.Join("sub", "same2.sav"): "same2", "changed.sav": "new"} {
+		write(t, p.local(rel), s)
+		setTime(t, p.local(rel), at)
+	}
+	prev := func(rel string) string { return filepath.Join(p.target, "game", rel) }
+	write(t, prev("same.sav"), "same")
+	setTime(t, prev("same.sav"), at)
+	write(t, prev(filepath.Join("sub", "same2.sav")), "same2")
+	setTime(t, prev(filepath.Join("sub", "same2.sav")), at)
+	write(t, prev("changed.sav"), "old")
+	setTime(t, prev("changed.sav"), at.Add(-time.Hour))
+
+	res, err := Run(context.Background(), []Folder{p.f}, Options{Target: p.target})
+	if err != nil || !res.OK {
+		t.Fatalf("run: %v %v", err, res.Errors)
+	}
+	if res.Copied != 1 || res.Versions != 0 {
+		t.Errorf("copied %d, versioned %d; want 1 copied (the changed save), 0 versioned", res.Copied, res.Versions)
+	}
+	for rel, s := range map[string]string{"same.sav": "same", filepath.Join("sub", "same2.sav"): "same2", "changed.sav": "new"} {
+		if got := read(t, p.backup(rel)); got != s {
+			t.Errorf("backup %s = %q, want %q", rel, got, s)
+		}
+	}
+	if _, err := os.Stat(prev("same.sav")); err == nil {
+		t.Error("adopted file still in the previous backup")
+	}
+	if read(t, prev("changed.sav")) != "old" {
+		t.Error("previous backup's different file was touched")
+	}
+	if _, n := IndexSize(p.f.ID); n != 3 {
+		t.Errorf("index has %d files, want 3", n)
+	}
+	// Nothing left to do next time.
+	if res, _ := Run(context.Background(), []Folder{p.f}, Options{Target: p.target}); res.Copied != 0 {
+		t.Errorf("second run copied %d", res.Copied)
+	}
+}
+
+// A previous backup that is itself still backed up in the same run keeps its
+// files.
+func TestRunDoesNotAdoptFromALiveBackup(t *testing.T) {
+	p := newTwoPCs(t)
+	other := newTwoPCs(t)
+	other.f.ID = p.f.ID + "-other"
+	t.Cleanup(func() { os.Remove(indexPath(other.f.ID)) })
+	p.f.From = other.f.ID
+	at := time.Now().Add(-time.Hour)
+	write(t, p.local("same.sav"), "same")
+	setTime(t, p.local("same.sav"), at)
+	prev := filepath.Join(p.target, other.f.ID, "same.sav")
+	write(t, prev, "same")
+	setTime(t, prev, at)
+
+	res, err := Run(context.Background(), []Folder{p.f, other.f}, Options{Target: p.target})
+	if err != nil || !res.OK {
+		t.Fatalf("run: %v %v", err, res.Errors)
+	}
+	if res.Copied != 1 {
+		t.Errorf("copied %d, want 1", res.Copied)
+	}
+	if _, err := os.Stat(prev); err != nil {
+		t.Error("file moved out of a backup still in use")
+	}
+}
+
 func TestLockBlocksBackup(t *testing.T) {
 	u, err := Lock()
 	if err != nil {

@@ -75,13 +75,18 @@ func accountsEnv(c *syncthing.Client, me string, others []string) accounts.Env {
 		// the game's folder.
 		Protected: markProtected,
 		CopyHistory: func(_ context.Context, from, to string) {
-			// The game's whole backup and history: for a big game that takes
-			// long, so it happens after the split (see copyHistories).
+			// The game's restore points: for a big game that takes long, so
+			// it happens after the split (see copyHistories). The backup
+			// itself is taken over file by file by to's backups (BackupFrom).
 			store.UpdateState(func(st *store.State) {
 				if st.HistoryCopies == nil {
 					st.HistoryCopies = map[string]string{}
 				}
 				st.HistoryCopies[to] = from
+				if st.BackupFrom == nil {
+					st.BackupFrom = map[string]string{}
+				}
+				st.BackupFrom[to] = from
 			})
 			go copyHistories(context.Background())
 		},
@@ -111,10 +116,12 @@ func accountsEnv(c *syncthing.Client, me string, others []string) accounts.Env {
 
 var historyMu sync.Mutex
 
-// copyHistories gives the account folders of a split the backup history of
+// copyHistories gives the account folders of a split the restore points of
 // the game they were split from (store.State.HistoryCopies). One that
 // doesn't finish (a backup is running, Syncer exits) is finished by a later
-// call: files already copied are skipped.
+// call: files already copied are skipped. The backup copy itself isn't
+// copied: for a big game that's gigabytes through Google Drive, and the
+// account folder's own backup moves those files over (backup.Folder.From).
 func copyHistories(ctx context.Context) {
 	if !historyMu.TryLock() {
 		return // already at it; it picks up what was just added
@@ -131,7 +138,7 @@ func copyHistories(ctx context.Context) {
 		}
 		progress := false
 		for to, from := range pending {
-			if err := backup.CopyHistory(ctx, t, from, to); err != nil {
+			if err := backup.CopyVersions(ctx, t, from, to); err != nil {
 				logx.Printf("accounts: copy history %s → %s: %v", from, to, err)
 				continue
 			}
