@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -118,4 +120,50 @@ func sources(target, id string, point time.Time) (src, rels map[string]string) {
 		}
 	}
 	return src, rels
+}
+
+// Copy is one copy of a file in a folder's backup: the latest backup's, or
+// one kept in a restore point.
+type Copy struct {
+	Rel      string    // as named, relative to the folder
+	Path     string    // where the copy is
+	Modified time.Time // the file's modification time when it was copied
+	Point    time.Time // the restore point that keeps it; zero for the latest backup
+}
+
+// keptSuffix ends the name of a second copy of a file in one restore point
+// (see moveTo).
+var keptSuffix = regexp.MustCompile(`\.syncer-kept-\d+$`)
+
+// Copies lists every copy of each file in id's backup, by rel (lowercased),
+// newest modification time first.
+func Copies(target, id string) map[string][]Copy {
+	out := map[string][]Copy{}
+	if !paths.ValidID(id) {
+		return out
+	}
+	add := func(root string, point time.Time) {
+		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) || strings.EqualFold(d.Name(), SteamMarker) {
+				return nil
+			}
+			fi, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, p)
+			rel = keptSuffix.ReplaceAllString(rel, "")
+			k := strings.ToLower(rel)
+			out[k] = append(out[k], Copy{Rel: rel, Path: p, Modified: fi.ModTime(), Point: point})
+			return nil
+		})
+	}
+	add(filepath.Join(target, id), time.Time{})
+	for _, t := range Points(target, id) {
+		add(filepath.Join(target, VersionsDir, id, t.Format(stampFmt)), t)
+	}
+	for _, cs := range out {
+		sort.SliceStable(cs, func(i, j int) bool { return cs[i].Modified.After(cs[j].Modified) })
+	}
+	return out
 }

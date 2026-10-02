@@ -168,6 +168,12 @@ type State struct {
 	// Decisions are the recent choices between two versions of a save,
 	// newest last, so each can be changed later.
 	Decisions []Decision `json:"decisions,omitempty"`
+	// Rejoin are launcher data folders (by id) taken out of Syncthing to be
+	// added back with a fresh index, until that has worked.
+	Rejoin map[string]LocalFolder `json:"rejoin,omitempty"`
+	// Repaired is when each launcher data folder (by id) was last repaired,
+	// so a repair that didn't take isn't repeated over and over.
+	Repaired map[string]time.Time `json:"repaired,omitempty"`
 }
 
 // Decision is a choice between two versions of a save file.
