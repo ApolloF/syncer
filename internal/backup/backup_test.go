@@ -284,6 +284,9 @@ func TestCopyHistory(t *testing.T) {
 	if read(t, filepath.Join(target, "old", "a.sav")) != "a" {
 		t.Fatal("source changed")
 	}
+	if _, err := os.Stat(filepath.Join(target, "new--pc", "a.sav"+tmpSuffix)); err == nil {
+		t.Fatal("temporary file left behind")
+	}
 	if err := CopyHistory(context.Background(), target, "missing", "x"); err != nil {
 		t.Fatalf("missing source: %v", err)
 	}

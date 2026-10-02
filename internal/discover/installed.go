@@ -134,8 +134,15 @@ func (i *Installed) GameDirs() []string {
 
 // Running reports whether a process executable lies in a store install folder.
 func (i *Installed) Running(procPaths []string) bool {
+	exe, _ := i.RunningGame(procPaths)
+	return exe != ""
+}
+
+// RunningGame returns the first process running from a game's install
+// folder, and that folder ("" when none).
+func (i *Installed) RunningGame(procPaths []string) (exe, dir string) {
 	if i == nil {
-		return false
+		return "", ""
 	}
 	for _, exe := range procPaths {
 		if !filepath.IsAbs(exe) {
@@ -143,11 +150,11 @@ func (i *Installed) Running(procPaths []string) bool {
 		}
 		for _, dir := range i.roots {
 			if paths.Within(dir, exe) {
-				return true
+				return exe, dir
 			}
 		}
 	}
-	return false
+	return "", ""
 }
 
 // normalize keeps only letters and digits (any script), lowercased, so
@@ -183,6 +190,9 @@ func (i *Installed) add(name, dir string) {
 // addRoot records a game's install folder (see Running).
 func (i *Installed) addRoot(dir string) {
 	dir = filepath.Clean(dir)
+	if filepath.Dir(dir) == dir {
+		return // a drive's root is never one game's folder
+	}
 	for _, root := range i.roots {
 		if strings.EqualFold(root, dir) {
 			return
@@ -203,10 +213,18 @@ func (i *Installed) loadSteam() {
 
 func (i *Installed) loadSteamLibrary(lib string) {
 	for _, app := range steam.LibraryApps(lib) {
+		if alwaysOn[app.ID] {
+			continue // a tool that runs all the time, not a game being played
+		}
 		i.steamIDs[app.ID] = true
 		i.add(app.Name, app.Dir)
 	}
 }
+
+// alwaysOn are Steam apps that stay running in the background: Wallpaper
+// Engine, Lossless Scaling, SteamVR, Soundpad, Bongo Cat, Banana, Desktop
+// Mate.
+var alwaysOn = map[int]bool{431960: true, 993090: true, 250820: true, 629520: true, 3419430: true, 2923300: true, 3301060: true}
 
 func (i *Installed) loadEpic() {
 	root := os.Getenv("ProgramData")

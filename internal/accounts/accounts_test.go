@@ -936,3 +936,25 @@ func TestLateSplitNewAccountKeepsOwnSaves(t *testing.T) {
 		t.Error("carol's saves changed")
 	}
 }
+
+func TestSplitCoversAccountFoldersWithItsRestorePoint(t *testing.T) {
+	w := newWorld(t)
+	alice, bob := w.setup()
+	start := time.Now()
+	covered := map[string]time.Time{}
+	w.env.Protected = func(id, path string, at time.Time) {
+		if _, ok := w.st.folders[id]; ok {
+			t.Errorf("%s noted after it was added", id)
+		}
+		covered[id] = at
+	}
+	if err := Start(context.Background(), w.env, w.splitRecord(alice, bob)); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []string{alice, bob} {
+		at, ok := covered[FolderID(game, a)]
+		if !ok || at.Before(start) || at.After(time.Now()) {
+			t.Errorf("%s's folder covered at %v (%v)", a, at, ok)
+		}
+	}
+}

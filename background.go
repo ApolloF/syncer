@@ -99,6 +99,8 @@ func runBackground() {
 	if _, err := runBackup(ctx, nil, pause); err != nil {
 		logx.Printf("backup: %v", err)
 	}
+	// After the backup, so a big copy doesn't hold it up.
+	copyHistories(ctx)
 }
 
 var errGaming = errors.New("stopped while a game was running; it continues next run")

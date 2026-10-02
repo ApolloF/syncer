@@ -138,7 +138,7 @@
   <div class="card notice row">
     <Icon name={p.error ? 'alert' : 'refresh'} size={16} />
     <span class="grow">
-      {p.kind === 'merge' ? `Sharing ${p.label} again` : `Separating the saves of ${p.label}`} (decided on another PC)
+      {p.kind === 'merge' ? `Sharing ${p.label} again` : `Separating the saves of ${p.label}`}{p.mine ? '' : ' (decided on another PC)'}
       {p.error ? `is waiting: ${p.error}` : 'happens on this PC shortly.'}
     </span>
     <button class="btn sm" disabled={busy === 'retry'} onclick={() => run('retry', () => RetryAccountChange())}>Try now</button>
