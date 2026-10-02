@@ -130,7 +130,10 @@ type BackupRun struct {
 	// up newer saves there (see backup.mirror), per game.
 	Held   []string `json:"held,omitempty"`
 	Target string   `json:"target"`
-	Backed []string `json:"-"` // ids of the folders backed up without errors
+	// NotPruned says why old versions weren't thinned or expired (the
+	// PC's clock couldn't be checked, or is off); empty when they were.
+	NotPruned string   `json:"notPruned,omitempty"`
+	Backed    []string `json:"-"` // ids of the folders backed up without errors
 }
 
 // State is machine-written status.

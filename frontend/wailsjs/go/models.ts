@@ -1341,6 +1341,7 @@ export namespace store {
 	    errors: string[];
 	    held?: string[];
 	    target: string;
+	    notPruned?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new BackupRun(source);
@@ -1358,6 +1359,7 @@ export namespace store {
 	        this.errors = source["errors"];
 	        this.held = source["held"];
 	        this.target = source["target"];
+	        this.notPruned = source["notPruned"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

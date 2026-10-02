@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,5 +228,100 @@ func TestMirrorBacksUpSettledOlderSave(t *testing.T) {
 	}
 	if pts := Points(p.target, p.f.ID); len(pts) != 1 {
 		t.Errorf("the other PC's copy wasn't kept in the history: %v", pts)
+	}
+}
+
+// pinnedPoints lists the folder's pinned restore points.
+func (p *twoPCs) pinnedPoints() map[string]bool {
+	return pins(filepath.Join(p.target, VersionsDir, p.f.ID))
+}
+
+// An uninstaller took the saves but left the settings file: the saves go into
+// the history as always, in a pinned point, so they outlast a short history.
+func TestMirrorPinsMostOfTheBackupGone(t *testing.T) {
+	p := newTwoPCs(t)
+	write(t, p.local("slot1.sav"), "1")
+	write(t, p.local("slot2.sav"), "2")
+	write(t, p.local("settings.ini"), "s")
+	p.run()
+	for _, s := range []string{"slot1.sav", "slot2.sav"} {
+		if err := os.Remove(p.local(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.run()
+	pts := Points(p.target, p.f.ID)
+	if len(pts) != 1 {
+		t.Fatalf("want 1 point, got %d", len(pts))
+	}
+	if read(t, filepath.Join(p.target, VersionsDir, p.f.ID, pts[0].Format(stampFmt), "slot1.sav")) != "1" {
+		t.Error("gone save not in the history")
+	}
+	if _, err := os.Stat(p.backup("slot1.sav")); err == nil {
+		t.Error("gone save still in the backup")
+	}
+	if !p.pinnedPoints()[pts[0].Format(stampFmt)] {
+		t.Error("point holding most of the backup not pinned")
+	}
+}
+
+// Everyday changes don't pin: a deleted slot among several, and a game that
+// saves under new names each time (all of its files go, as many come).
+func TestMirrorDoesNotPinEverydayChanges(t *testing.T) {
+	p := newTwoPCs(t)
+	for _, s := range []string{"slot1.sav", "slot2.sav", "slot3.sav"} {
+		write(t, p.local(s), s)
+	}
+	p.run()
+	if err := os.Remove(p.local("slot3.sav")); err != nil {
+		t.Fatal(err)
+	}
+	p.run()
+
+	q := newTwoPCs(t)
+	for _, s := range []string{"save-001.sav", "save-001.dat", "save-001.png"} {
+		write(t, q.local(s), s)
+	}
+	q.run()
+	for _, s := range []string{"save-001.sav", "save-001.dat", "save-001.png"} {
+		if err := os.Rename(q.local(s), q.local(strings.Replace(s, "001", "002", 1))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.run()
+
+	// Half gone, but as many files came in.
+	r := newTwoPCs(t)
+	write(t, r.local("a.sav"), "a")
+	write(t, r.local("b.sav"), "b")
+	r.run()
+	if err := os.Rename(r.local("b.sav"), r.local("c.sav")); err != nil {
+		t.Fatal(err)
+	}
+	r.run()
+
+	for _, x := range []*twoPCs{p, q, r} {
+		if len(Points(x.target, x.f.ID)) != 1 {
+			t.Fatalf("want 1 point, got %d", len(Points(x.target, x.f.ID)))
+		}
+		if len(x.pinnedPoints()) != 0 {
+			t.Error("everyday change pinned")
+		}
+	}
+}
+
+// The most common layout: one save and a settings file, and the save goes.
+func TestMirrorPinsTheOnlySaveGone(t *testing.T) {
+	p := newTwoPCs(t)
+	write(t, p.local("save.sav"), "s")
+	write(t, p.local("settings.ini"), "i")
+	p.run()
+	if err := os.Remove(p.local("save.sav")); err != nil {
+		t.Fatal(err)
+	}
+	p.run()
+	pts := Points(p.target, p.f.ID)
+	if len(pts) != 1 || !p.pinnedPoints()[pts[0].Format(stampFmt)] {
+		t.Fatalf("the only save's point isn't pinned (%d points)", len(pts))
 	}
 }
