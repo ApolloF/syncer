@@ -181,6 +181,11 @@ type State struct {
 	// history of the game they were split from (its id), until that has
 	// worked.
 	HistoryCopies map[string]string `json:"historyCopies,omitempty"`
+	// BackupFrom maps an account folder (by id) to the backup of the game it
+	// was split from (or merged back out of), whose unchanged files its own
+	// backup takes over instead of uploading them again. Dropped once that
+	// backup is gone.
+	BackupFrom map[string]string `json:"backupFrom,omitempty"`
 }
 
 // Decision is a choice between two versions of a save file.

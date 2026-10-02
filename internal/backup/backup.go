@@ -52,6 +52,10 @@ type Folder struct {
 	// Scoped with no files backs up nothing.
 	Scoped bool     `json:"scoped,omitempty"`
 	Only   []string `json:"only,omitempty"`
+	// From is the backup this folder's saves came from (the game an account
+	// folder was split from, or merged back out of). A file that backup holds
+	// unchanged is moved over instead of uploaded again.
+	From string `json:"-"`
 }
 
 // scope is a Scoped folder's files and the folders they are in (lower-cased).
@@ -143,7 +147,15 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 	}
 	stamp := time.Now().Format(stampFmt)
 	p := Progress{Folders: len(folders)}
+	ids := map[string]bool{}
+	for _, f := range folders {
+		ids[f.ID] = true
+	}
 	for i, f := range folders {
+		// A backup still in use here keeps its files.
+		if f.From == f.ID || ids[f.From] || !paths.ValidID(f.From) {
+			f.From = ""
+		}
 		if opts.Pause != nil {
 			opts.Pause(ctx)
 		}
@@ -302,6 +314,12 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 				p.FilesDone++
 				return nil
 			}
+		} else if f.From != "" && adopt(filepath.Join(target, f.From, rel), out, info) {
+			added++
+			cur.O = org.lookup(rel)
+			newIdx[key] = cur
+			p.FilesDone++
+			return nil
 		}
 		v, err := copyVersioned(path, out, filepath.Join(verRoot, rel), info.ModTime())
 		if err != nil {
@@ -394,6 +412,20 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		onProg(*p)
 	}
 	return
+}
+
+// adopt moves src, a file in the backup a folder's saves came from, to dst
+// when it is the local file unchanged (same size and time). Within the backup
+// folder that's a rename, which Google Drive does without uploading anything.
+func adopt(src, dst string, local fs.FileInfo) bool {
+	si, err := os.Stat(src)
+	if err != nil || !si.Mode().IsRegular() || si.Size() != local.Size() || !sameTime(si.ModTime(), local.ModTime()) {
+		return false
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return false
+	}
+	return os.Rename(src, dst) == nil
 }
 
 // copyVersioned copies src to dst atomically; an existing dst is first moved to ver.
@@ -583,6 +615,17 @@ func Forget(target, id string, deleteBackup bool) error {
 // restore points. The source is left alone (other PCs may still back it up)
 // and files already under to are never overwritten.
 func CopyHistory(ctx context.Context, target, from, to string) error {
+	return copyHistory(ctx, target, from, to, true)
+}
+
+// CopyVersions is CopyHistory without the backup copy itself: only the
+// restore points. For a folder whose own backup brings its files over from
+// from's (Folder.From) rather than through a slow copy within the backup.
+func CopyVersions(ctx context.Context, target, from, to string) error {
+	return copyHistory(ctx, target, from, to, false)
+}
+
+func copyHistory(ctx context.Context, target, from, to string, mirror bool) error {
 	if !paths.ValidID(from) || !paths.ValidID(to) {
 		return errors.New("unsupported folder id")
 	}
@@ -591,7 +634,11 @@ func CopyHistory(ctx context.Context, target, from, to string) error {
 		return err
 	}
 	defer unlock()
-	for _, d := range [][2]string{{from, to}, {filepath.Join(VersionsDir, from), filepath.Join(VersionsDir, to)}} {
+	trees := [][2]string{{filepath.Join(VersionsDir, from), filepath.Join(VersionsDir, to)}}
+	if mirror {
+		trees = append([][2]string{{from, to}}, trees...)
+	}
+	for _, d := range trees {
 		src, dst := filepath.Join(target, d[0]), filepath.Join(target, d[1])
 		err := filepath.WalkDir(src, func(p string, e fs.DirEntry, err error) error {
 			if ctx.Err() != nil {

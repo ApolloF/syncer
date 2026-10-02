@@ -192,6 +192,7 @@ func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(con
 		}
 		return nil, err
 	}
+	forgetGoneBackupFrom(target)
 	if listErr != nil {
 		res.Errors = append(res.Errors, "synced games were skipped: "+listErr.Error())
 		res.OK = false
@@ -228,6 +229,27 @@ func seedHistory(ctx context.Context, s store.Settings, target string) {
 			logx.Printf("copy backup history of %s: %v", lf.Label, err)
 		}
 	}
+}
+
+// forgetGoneBackupFrom drops the backups to take files over from
+// (store.State.BackupFrom) that no longer exist.
+func forgetGoneBackupFrom(target string) {
+	var gone []string
+	for to, from := range store.LoadState().BackupFrom {
+		if !paths.ValidID(from) {
+			gone = append(gone, to)
+		} else if _, err := os.Stat(filepath.Join(target, from)); errors.Is(err, os.ErrNotExist) {
+			gone = append(gone, to)
+		}
+	}
+	if len(gone) == 0 {
+		return
+	}
+	store.UpdateState(func(st *store.State) {
+		for _, to := range gone {
+			delete(st.BackupFrom, to)
+		}
+	})
 }
 
 // backupTarget is where backups go: a custom folder, or the chosen Google
@@ -276,8 +298,10 @@ func backupFolders() ([]backup.Folder, error) {
 		synced, err = syncedFolders()
 	}
 	fs := mergeFolders(synced, s.BackupOnly)
+	st := store.LoadState()
 	for i := range fs {
 		fs[i].Exclude = s.Exclude[dismissKey(fs[i].Path)]
+		fs[i].From = cmpOr(st.BackupFrom[fs[i].ID], st.HistoryCopies[fs[i].ID])
 		if modKind(s, fs[i].ID) == mods.KindDeployed {
 			// Only the mod files: the folder is the game's own.
 			fs[i].Scoped, fs[i].Only = true, deployedFiles(s, fs[i].ID)

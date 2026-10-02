@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -19,17 +20,56 @@ func TestCopyHistoriesFinishesWhatASplitLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeAt(t, filepath.Join(target, "bg3", "Story", "save.lsv"), "save", time.Now().Add(-time.Hour))
+	point := filepath.Join(backup.VersionsDir, "bg3", "2026-01-02_030405", "Story", "old.lsv")
+	writeAt(t, filepath.Join(target, point), "old", time.Now().Add(-2*time.Hour))
 	store.UpdateState(func(st *store.State) {
 		st.HistoryCopies = map[string]string{"bg3--alice": "bg3", "bg3--bob": "bg3"}
 	})
 	copyHistories(context.Background())
 	for _, id := range []string{"bg3--alice", "bg3--bob"} {
-		if b, err := os.ReadFile(filepath.Join(target, id, "Story", "save.lsv")); err != nil || string(b) != "save" {
-			t.Errorf("%s: %q, %v", id, b, err)
+		p := filepath.Join(target, backup.VersionsDir, id, "2026-01-02_030405", "Story", "old.lsv")
+		if b, err := os.ReadFile(p); err != nil || string(b) != "old" {
+			t.Errorf("%s restore point: %q, %v", id, b, err)
+		}
+		// The backup copy is taken over by the account's own backup.
+		if _, err := os.Stat(filepath.Join(target, id)); err == nil {
+			t.Errorf("%s: game's backup copied", id)
 		}
 	}
 	if left := store.LoadState().HistoryCopies; len(left) != 0 {
 		t.Errorf("still to copy: %v", left)
+	}
+}
+
+// An account folder's backup knows which backup to take files over from,
+// until that backup is gone.
+func TestBackupFoldersKnowWhereTheyCameFrom(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	target := t.TempDir()
+	if _, err := store.UpdateSettings(func(s *store.Settings) {
+		s.SyncDisabled = true
+		s.BackupOnly = map[string]store.LocalFolder{"bg3--alice": {ID: "bg3--alice", Label: "BG3 (Alice)", Path: t.TempDir()}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.UpdateState(func(st *store.State) { st.BackupFrom = map[string]string{"bg3--alice": "bg3"} })
+	if err := os.MkdirAll(filepath.Join(target, "bg3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := backupFolders()
+	if err != nil || len(fs) != 1 || fs[0].From != "bg3" {
+		t.Fatalf("folders = %+v, %v", fs, err)
+	}
+	forgetGoneBackupFrom(target)
+	if store.LoadState().BackupFrom["bg3--alice"] != "bg3" {
+		t.Fatal("forgot a backup that is still there")
+	}
+	if err := os.Remove(filepath.Join(target, "bg3")); err != nil {
+		t.Fatal(err)
+	}
+	forgetGoneBackupFrom(target)
+	if len(store.LoadState().BackupFrom) != 0 {
+		t.Error("still taking files over from a backup that is gone")
 	}
 }
 
