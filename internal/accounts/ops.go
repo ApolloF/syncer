@@ -44,7 +44,12 @@ type Env struct {
 	Snapshot func(ctx context.Context, id, label, path string) error
 	// Keep moves one file into id's history (restorable as rel).
 	Keep func(id, abs, rel string) error
-	// CopyHistory seeds to's backup history from from's (best effort).
+	// Protected notes that the files at path, unless changed since, were
+	// saved as a restore point at the given time, so AddFolder doesn't save
+	// them all again (nil: it does).
+	Protected func(id, path string, at time.Time)
+	// CopyHistory seeds to's backup history from from's (best effort). It
+	// may finish after the operation returns.
 	CopyHistory func(ctx context.Context, from, to string)
 	// Busy refuses while a game is running (nil: no check).
 	Busy func() error
@@ -638,6 +643,13 @@ func splitFolderConfig(ctx context.Context, env Env, j *Journal) error {
 			if err := os.MkdirAll(path, 0o755); err != nil {
 				return err
 			}
+		}
+		if env.Protected != nil && len(j.Built) > 0 {
+			// Copies of Live, which this split saved as a restore point
+			// after it started (it built the vaults after that): saving them
+			// all again takes long for a big game, longer than a try may
+			// take, so it never finished.
+			env.Protected(id, path, j.Started)
 		}
 		if err := env.AddFolder(ctx, id, FolderLabel(r.Label, Load().Name(a)), path); err != nil {
 			return err

@@ -210,6 +210,10 @@ export function RemoveUninstalled() {
   return window['go']['main']['App']['RemoveUninstalled']();
 }
 
+export function RepairFolder(arg1) {
+  return window['go']['main']['App']['RepairFolder'](arg1);
+}
+
 export function ResolveConflict(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveConflict'](arg1, arg2, arg3);
 }

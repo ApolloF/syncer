@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -70,12 +71,19 @@ func accountsEnv(c *syncthing.Client, me string, others []string) accounts.Env {
 			_, err := backup.KeepLocked(historyTarget(), id, abs, rel, true)
 			return err
 		},
-		CopyHistory: func(ctx context.Context, from, to string) {
-			if t, ok := backupTarget(store.LoadSettings()); ok {
-				if err := backup.CopyHistory(ctx, t, from, to); err != nil {
-					logx.Printf("accounts: copy history %s → %s: %v", from, to, err)
+		// A split's own restore point covers the account folders made from
+		// the game's folder.
+		Protected: markProtected,
+		CopyHistory: func(_ context.Context, from, to string) {
+			// The game's whole backup and history: for a big game that takes
+			// long, so it happens after the split (see copyHistories).
+			store.UpdateState(func(st *store.State) {
+				if st.HistoryCopies == nil {
+					st.HistoryCopies = map[string]string{}
 				}
-			}
+				st.HistoryCopies[to] = from
+			})
+			go copyHistories(context.Background())
 		},
 		Busy: noGameRunning,
 		NoSplit: func(game string) error {
@@ -101,11 +109,46 @@ func accountsEnv(c *syncthing.Client, me string, others []string) accounts.Env {
 	}
 }
 
+var historyMu sync.Mutex
+
+// copyHistories gives the account folders of a split the backup history of
+// the game they were split from (store.State.HistoryCopies). One that
+// doesn't finish (a backup is running, Syncer exits) is finished by a later
+// call: files already copied are skipped.
+func copyHistories(ctx context.Context) {
+	if !historyMu.TryLock() {
+		return // already at it; it picks up what was just added
+	}
+	defer historyMu.Unlock()
+	for {
+		pending := store.LoadState().HistoryCopies
+		if len(pending) == 0 || ctx.Err() != nil {
+			return
+		}
+		t, ok := backupTarget(store.LoadSettings())
+		if !ok {
+			return // no backup to copy from: tried again once there is
+		}
+		progress := false
+		for to, from := range pending {
+			if err := backup.CopyHistory(ctx, t, from, to); err != nil {
+				logx.Printf("accounts: copy history %s → %s: %v", from, to, err)
+				continue
+			}
+			store.UpdateState(func(st *store.State) { delete(st.HistoryCopies, to) })
+			progress = true
+		}
+		if !progress {
+			return
+		}
+	}
+}
+
 // noGameRunning refuses while any installed game runs: its saves are about to
 // move, and a game writing into a folder that moved away loses that save.
 func noGameRunning() error {
-	if cachedInstalled().Running(winx.ProcessPaths()) {
-		return errors.New("a game is running; close it first (its saves are about to move)")
+	if exe, dir := cachedInstalled().RunningGame(winx.ProcessPaths()); exe != "" {
+		return fmt.Errorf("%s is running (%s); close it first (its saves are about to move)", filepath.Base(dir), filepath.Base(exe))
 	}
 	return nil
 }
@@ -202,6 +245,7 @@ type PendingChange struct {
 	Label string `json:"label"`
 	Kind  string `json:"kind"`
 	Error string `json:"error"`
+	Mine  bool   `json:"mine"` // decided on this PC
 }
 
 type SplitView struct {
@@ -217,14 +261,14 @@ func (a *App) Accounts() (AccountsView, error) {
 	st.Clean()
 	v := AccountsView{Enabled: store.LoadSettings().Accounts || len(st.Splits()) > 0, Active: st.ActiveID(),
 		Pending: []PendingChange{}}
+	opGame := ""
 	if j, ok := accounts.PendingOp(); ok {
 		v.Op, v.OpLabel, v.OpError = j.Kind, j.Record.Label, j.Error
 		if j.Kind == "switch" {
 			v.OpLabel = st.Name(j.To)
+		} else {
+			opGame = j.Record.Game
 		}
-	}
-	for _, r := range st.Pending() {
-		v.Pending = append(v.Pending, PendingChange{Game: r.Game, Label: r.Label, Kind: r.Kind, Error: st.Errors[r.Game]})
 	}
 	folders := map[string]syncthing.Folder{}
 	me := ""
@@ -252,6 +296,12 @@ func (a *App) Accounts() (AccountsView, error) {
 			}
 		}
 		cancel()
+	}
+	for _, r := range st.Pending() {
+		if r.Game == opGame {
+			continue // the unfinished change above is this one
+		}
+		v.Pending = append(v.Pending, PendingChange{Game: r.Game, Label: r.Label, Kind: r.Kind, Error: st.Errors[r.Game], Mine: me != "" && r.By == me})
 	}
 	playing := map[string][]string{} // account -> PCs
 	if a := st.ActiveID(); a != "" {

@@ -93,6 +93,7 @@
     <p class="err small">Update Syncer on {ui.accounts.waiting.join(', ')} first; until then this can't be done.</p>
   {/if}
   <p class="faint small">Close the game on every PC first. You can make it shared again later from Accounts, picking whose saves to keep.</p>
+  {#if busy}<p class="faint small"><Icon name="refresh" size={13} class="spin" /> Copying the saves for each account… a big game takes a few minutes.</p>{/if}
   {#snippet actions()}
     <button class="btn" disabled={busy} onclick={onclose}>Cancel</button>
     <button class="btn primary" disabled={busy || !loaded || accs.length < 2 || !!ui.accounts?.waiting?.length} onclick={split}>

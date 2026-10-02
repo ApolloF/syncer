@@ -39,7 +39,7 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 	if isMod(store.LoadSettings(), id) {
 		return nil
 	}
-	key := id + "|" + strings.ToLower(filepath.Clean(path))
+	key := protectKey(id, path)
 	// Adding the folder can fail after the snapshot (e.g. a timeout); don't
 	// copy everything again on the retry, unless saves changed since.
 	exclude := store.LoadSettings().Exclude[dismissKey(path)]
@@ -61,6 +61,15 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 	if n > 0 {
 		logx.Printf("saved %d existing file(s) of %s as a restore point before syncing → %s", n, label, target)
 	}
+	markProtected(id, path, time.Now())
+	return nil
+}
+
+func protectKey(id, path string) string { return id + "|" + strings.ToLower(filepath.Clean(path)) }
+
+// markProtected notes that the files at path were saved as a restore point
+// of id at t, so protectExisting leaves them alone unless they change.
+func markProtected(id, path string, t time.Time) {
 	store.UpdateState(func(st *store.State) {
 		if st.Protected == nil {
 			st.Protected = map[string]time.Time{}
@@ -70,9 +79,8 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 				delete(st.Protected, k)
 			}
 		}
-		st.Protected[key] = time.Now()
+		st.Protected[protectKey(id, path)] = t
 	})
-	return nil
 }
 
 // ---- conflicts ---------------------------------------------------------------

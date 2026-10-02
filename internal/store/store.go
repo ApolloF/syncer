@@ -177,6 +177,10 @@ type State struct {
 	// Repaired is when each launcher data folder (by id) was last repaired,
 	// so a repair that didn't take isn't repeated over and over.
 	Repaired map[string]time.Time `json:"repaired,omitempty"`
+	// HistoryCopies are account folders (by id) still to get the backup
+	// history of the game they were split from (its id), until that has
+	// worked.
+	HistoryCopies map[string]string `json:"historyCopies,omitempty"`
 }
 
 // Decision is a choice between two versions of a save file.

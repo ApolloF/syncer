@@ -111,6 +111,8 @@ export function RemoveFolder(arg1:string,arg2:boolean):Promise<void>;
 
 export function RemoveUninstalled():Promise<number>;
 
+export function RepairFolder(arg1:string):Promise<string>;
+
 export function ResolveConflict(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function ResolveConflicts(arg1:string,arg2:string):Promise<number>;

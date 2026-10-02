@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
   import Icon from './lib/Icon.svelte'
-  import { ui, init, applyTheme, attempt, refresh, type View } from './lib/state.svelte'
+  import { ui, init, applyTheme, attempt, refresh, showIssue, type View } from './lib/state.svelte'
   import { SwitchAccount } from '../wailsjs/go/main/App'
   import { pausedUntil } from './lib/fmt'
   import Overview from './views/Overview.svelte'
@@ -98,10 +98,18 @@
         {/if}
       </div>
     {/if}
-    <div class="status" title={health.tip}>
-      <span class="dot {health.kind}"></span>
-      <span class="muted clamp">{health.text}</span>
-    </div>
+    {#if o?.errors && o.issues?.length && !o.paused && o.syncthing.running}
+      <!-- A folder issue leads to the folder, where it can be dealt with. -->
+      <button class="status" title={`${health.tip}\n\nClick to show ${o.issues.length === 1 ? 'the folder' : 'the first one'}.`} onclick={() => showIssue(o.issues[0])}>
+        <span class="dot {health.kind}"></span>
+        <span class="muted clamp">{health.text}</span>
+      </button>
+    {:else}
+      <div class="status" title={health.tip}>
+        <span class="dot {health.kind}"></span>
+        <span class="muted clamp">{health.text}</span>
+      </div>
+    {/if}
   </aside>
 
   <main>
@@ -162,6 +170,8 @@
   .menu { position: absolute; bottom: 40px; left: 0; right: 0; padding: 4px; display: flex; flex-direction: column; gap: 2px; z-index: 40; }
   .who + .status { margin-top: 0; }
   .status { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; }
+  button.status { background: none; border: 0; border-radius: 8px; text-align: left; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+  button.status:hover { background: var(--hover); }
   /* A folder issue names the folder and the problem: up to four lines, the rest in the tooltip. */
   .clamp { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; min-width: 0; }
 

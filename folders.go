@@ -55,6 +55,10 @@ type FolderView struct {
 	NewerCanGet bool      `json:"newerCanGet"` // … and it can be taken from that PC's backup ("Get it")
 	NewerWhy    string    `json:"newerWhy"`    // why it wasn't taken by itself
 
+	// Repairable: a launcher's data folder emptied or replaced outside
+	// Syncer, which RepairFolder can fix now (see launcherrepair.go).
+	Repairable bool `json:"repairable"`
+
 	Inside   string `json:"inside"`   // id of another synced folder that holds this one (synced twice)
 	OneDrive bool   `json:"oneDrive"` // OneDrive syncs this folder too
 
@@ -176,6 +180,7 @@ func (a *App) syncedView(ctx context.Context, c *syncthing.Client, f syncthing.F
 		v.State, v.Bytes, v.Files, v.NeedBytes = st.State, st.LocalBytes, st.GlobalFiles, st.NeedBytes
 		v.Errors = max(st.Errors, st.PullErrors)
 		v.Problem = folderIssue(ctx, c, f.ID, st)
+		v.Repairable = isLauncherData(s, f.ID) && needsRepair(f, st)
 	}
 	if f.Paused {
 		v.State = "paused"

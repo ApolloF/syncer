@@ -14,6 +14,7 @@ export const ui = $state({
   toasts: [] as Toast[],
   tick: 0, // bumps on every backend "changed" event so views can refetch
   gamesAdded: 0, // bumps when games were added automatically
+  focus: '', // id of a folder to scroll to and highlight on its page
 })
 
 let seq = 0
@@ -45,6 +46,12 @@ export async function refresh() {
 export async function refreshAccounts() {
   if (!ui.overview?.settings.accounts && !ui.accounts?.splits?.length) { ui.accounts = null; return }
   try { ui.accounts = await Accounts() } catch { /* backend not ready yet */ }
+}
+
+/** Opens the page that lists a folder with an issue, scrolled to it. */
+export function showIssue(i: main.FolderIssue) {
+  ui.view = i.mod && ui.overview?.settings.findMods ? 'mods' : 'games'
+  ui.focus = i.id
 }
 
 /** An account's display name ("" when unknown). */

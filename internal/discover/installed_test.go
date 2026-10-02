@@ -120,6 +120,32 @@ func TestInstalledRunning(t *testing.T) {
 	}
 }
 
+func TestRunningGameNamesIt(t *testing.T) {
+	i := testInstalled()
+	i.add("Game", `D:\Games\Game`)
+	i.addRoot(`E:\`)
+	if exe, dir := i.RunningGame([]string{`E:\Tools\tray.exe`, `D:\Games\Game\bin\game.exe`}); exe != `D:\Games\Game\bin\game.exe` || dir != `D:\Games\Game` {
+		t.Errorf("RunningGame = %q, %q", exe, dir)
+	}
+}
+
+func TestLauncherFolderIsNotAGame(t *testing.T) {
+	d := t.TempDir()
+	galaxy := filepath.Join(d, "GOG Galaxy")
+	game := filepath.Join(galaxy, "Games", "Some Game")
+	writeStoreFile(t, filepath.Join(galaxy, "GalaxyClient.exe"), "x")
+	writeStoreFile(t, filepath.Join(game, "steam_appid.txt"), "12345")
+	i := testInstalled()
+	i.add("Some Game", game) // known from GOG's registry
+	i.loadCracked(nil, []string{galaxy})
+	if exe, _ := i.RunningGame([]string{filepath.Join(galaxy, "GalaxyClient.exe")}); exe != "" {
+		t.Errorf("the launcher counts as a game: %v", i.GameDirs())
+	}
+	if exe, dir := i.RunningGame([]string{filepath.Join(game, "game.exe")}); exe == "" || !strings.EqualFold(dir, game) {
+		t.Errorf("the game itself: %q in %q", exe, dir)
+	}
+}
+
 func writeStoreFile(t *testing.T, name, data string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {

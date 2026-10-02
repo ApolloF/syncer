@@ -618,10 +618,18 @@ func CopyHistory(ctx context.Context, target, from, to string) error {
 			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 				return err
 			}
-			if err := copyFile(p, out); err != nil {
+			// Through a temporary file: one cut off halfway would be
+			// skipped as already copied next time.
+			tmp := out + tmpSuffix
+			if err := copyFile(p, tmp); err != nil {
+				_ = os.Remove(tmp)
 				return err
 			}
-			return os.Chtimes(out, info.ModTime(), info.ModTime())
+			if err := os.Chtimes(tmp, info.ModTime(), info.ModTime()); err != nil {
+				_ = os.Remove(tmp)
+				return err
+			}
+			return os.Rename(tmp, out)
 		})
 		if err != nil {
 			return err

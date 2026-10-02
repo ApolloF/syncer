@@ -182,10 +182,27 @@ func (i *Installed) loadCracked(exes, dirs []string) {
 		}
 	}
 	for _, d := range dirs {
+		// A folder that holds another game's install folder is a launcher's
+		// or a library (GOG Galaxy, Ubisoft Connect, D:\Games), not a game:
+		// its launcher running isn't a game being played.
+		if i.holdsRoot(d) {
+			continue
+		}
 		if g, ok := findCracked(d, false); ok {
 			add(g)
 		}
 	}
+}
+
+// holdsRoot reports whether dir holds a game's install folder found already.
+func (i *Installed) holdsRoot(dir string) bool {
+	dir = filepath.Clean(dir)
+	for _, r := range i.roots {
+		if !strings.EqualFold(r, dir) && paths.Within(dir, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // exeTraces lists exes Windows remembers running for this user.
