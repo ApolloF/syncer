@@ -93,6 +93,7 @@ type apiFolder struct {
 	State     string    `json:"state"`  // Syncthing's state: idle, scanning, syncing, …; backup-only, off, paused
 	NeedBytes int64     `json:"needBytes"`
 	Errors    int       `json:"errors"`
+	Problem   string    `json:"problem,omitempty"` // what's wrong, in plain words
 	Conflicts int       `json:"conflicts"`
 	Exists    bool      `json:"exists"`
 	Modified  time.Time `json:"modified,omitzero"`
@@ -131,7 +132,7 @@ type apiSplit struct {
 
 func folderFromView(v FolderView) apiFolder {
 	return apiFolder{ID: v.ID, Label: v.Label, Path: v.Path, Sync: v.Sync, Backup: v.Backup, State: v.State,
-		NeedBytes: v.NeedBytes, Errors: v.Errors, Conflicts: v.Conflicts, Exists: v.Exists, Modified: v.Modified,
+		NeedBytes: v.NeedBytes, Errors: v.Errors, Problem: v.Problem, Conflicts: v.Conflicts, Exists: v.Exists, Modified: v.Modified,
 		BackedUp: v.BackedUp, NewerOn: v.NewerOn, NewerAt: v.NewerAt, NewerCanGet: v.NewerCanGet,
 		Kind: v.Kind, Account: v.Account}
 }
@@ -626,7 +627,7 @@ func (s *apiServer) poll(ctx context.Context) {
 func signature(fs []apiFolder) string {
 	var sb strings.Builder
 	for _, f := range fs {
-		fmt.Fprintf(&sb, "%s|%s|%d|%d|%d|%d|%s;", f.ID, f.State, f.NeedBytes, f.Conflicts, f.Errors, f.BackedUp.Unix(), f.NewerOn)
+		fmt.Fprintf(&sb, "%s|%s|%d|%d|%d|%d|%s|%s;", f.ID, f.State, f.NeedBytes, f.Conflicts, f.Errors, f.BackedUp.Unix(), f.NewerOn, f.Problem)
 	}
 	return sb.String()
 }

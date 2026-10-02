@@ -749,8 +749,9 @@
   }
 
   function stateOf(f: main.FolderView): { kind: string; text: string } {
+    // Syncthing stopped the folder, or some files can't be synced: the row says why.
+    if (f.problem) return { kind: 'err', text: f.errors ? `${f.errors} error${f.errors > 1 ? 's' : ''}` : 'Stopped' }
     if (!f.exists) return { kind: 'warn', text: 'Waiting' }
-    if (f.errors) return { kind: 'err', text: `${f.errors} error${f.errors > 1 ? 's' : ''}` }
     switch (f.state) {
       case 'idle': return f.needBytes ? { kind: 'accent', text: `${bytes(f.needBytes)} to go` } : { kind: 'ok', text: 'Synced' }
       case 'scanning': case 'scan-waiting': return { kind: '', text: 'Scanning' }
@@ -785,6 +786,7 @@
       <div class="path faint ellipsis" title={f.path}>{f.path}</div>
       {#if f.kind === 'mods-deployed'}{@render deployedLine(f)}{/if}
       {#if !f.sync && f.backup}<div class="detail faint ellipsis">{backupLine(f)}</div>{/if}
+      {#if f.sync && f.problem}<div class="detail err" title={f.problem}>{f.problem}</div>{/if}
     </div>
     {#if f.sync}<span class="meta faint">{bytes(f.bytes)}</span>{/if}
     {#if f.kind}<span class="pill accent" title={modKinds[f.kind]?.tip}>{modKinds[f.kind]?.text ?? 'Mods'}</span>{/if}
@@ -827,7 +829,7 @@
     {@render driveCopy(f.oneDriveCopy, f.oneDriveCopyNewer)}
     {#if !f.installed}<span class="pill warn">Not installed</span>{/if}
     {#if f.sync && f.kind === 'mods-deployed'}{@const m = modPhase(f)}<span class="pill {m.kind}">{m.text}</span>
-    {:else if f.sync}<span class="pill {s.kind}">{s.text}</span>
+    {:else if f.sync}<span class="pill {s.kind}" title={f.problem || undefined}>{s.text}</span>
     {:else if !f.exists}<span class="pill" title="The save folder isn't on this PC. Restore it from the backup to bring it back.">Not on this PC</span>
     {:else if f.backup}<span class="pill">Backup only</span>
     {:else}<span class="pill" title="Neither synced nor backed up. Turn either toggle back on to include it again.">Off</span>{/if}

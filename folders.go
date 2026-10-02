@@ -37,6 +37,7 @@ type FolderView struct {
 	Files     int       `json:"files"`
 	NeedBytes int64     `json:"needBytes"`
 	Errors    int       `json:"errors"`
+	Problem   string    `json:"problem"` // what's wrong, in plain words ("" when nothing is)
 	Backup    bool      `json:"backup"`
 	Sync      bool      `json:"sync"`      // false = backed up here but not synced
 	Installed bool      `json:"installed"` // only meaningful with "only installed games" on
@@ -172,7 +173,9 @@ func (a *App) syncedView(ctx context.Context, c *syncthing.Client, f syncthing.F
 		v.Exists, v.Modified = true, fi.ModTime()
 	}
 	if st, err := c.FolderStatus(ctx, f.ID); err == nil {
-		v.State, v.Bytes, v.Files, v.NeedBytes, v.Errors = st.State, st.LocalBytes, st.GlobalFiles, st.NeedBytes, st.Errors+st.PullErrors
+		v.State, v.Bytes, v.Files, v.NeedBytes = st.State, st.LocalBytes, st.GlobalFiles, st.NeedBytes
+		v.Errors = max(st.Errors, st.PullErrors)
+		v.Problem = folderIssue(ctx, c, f.ID, st)
 	}
 	if f.Paused {
 		v.State = "paused"
