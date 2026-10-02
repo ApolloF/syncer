@@ -872,7 +872,7 @@ type AvailableView struct {
 	Path   string `json:"path"`
 	From   string `json:"from"`
 	Reason string `json:"reason"` // a meta.Skip* reason, or meta.Pending
-	Kind    string `json:"kind"`    // mod folders: mods.Kind*
+	Kind    string `json:"kind"`    // mod folders: mods.Kind*; "launcher" for a launcher's own data
 	ModGame string `json:"modGame"` // … and the mod manager's game id
 }
 
@@ -890,7 +890,11 @@ func (a *App) Available() ([]AvailableView, error) {
 	}
 	out := make([]AvailableView, 0, len(av))
 	for _, v := range av {
-		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: v.Kind, ModGame: v.ModGame})
+		kind := v.Kind
+		if v.Launcher != "" {
+			kind = "launcher" // the launcher adds it itself
+		}
+		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: kind, ModGame: v.ModGame})
 	}
 	return out, nil
 }

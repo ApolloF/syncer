@@ -4,7 +4,8 @@ package main
 // achievements and settings in a folder of its own and asks Syncer (through
 // the launcher API) to sync it between PCs and back it up like a game's
 // saves. The launcher keeps each account's data apart inside the folder
-// (one file per PC and account), so the folder is never split per account.
+// (<account id>\<pc>.json, "shared" when no account plays), so the folder is
+// never split per account; Accounts lists each account's part.
 
 import (
 	"context"

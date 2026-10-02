@@ -2,6 +2,7 @@
   import Icon from '../lib/Icon.svelte'
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
+  import LauncherData from '../lib/LauncherData.svelte'
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
   import { SaveSettings, ModSettingsDiffer, UseModSettingsEverywhere, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, InstallUpdate } from '../../wailsjs/go/main/App'
   import type { store, main } from '../../wailsjs/go/models'
@@ -217,6 +218,8 @@
     <button class="btn sm" onclick={async () => (log = log ? null : ((await Log()) ?? []))}>{log ? 'Hide' : 'Show'}</button>
   </div>
 </div>
+
+<LauncherData />
 
 <h2 class="section">Mods</h2>
 {#if modsDiffer.length}

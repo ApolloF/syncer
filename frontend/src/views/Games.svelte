@@ -20,11 +20,13 @@
   import Toggle from '../lib/Toggle.svelte'
   import Modal from '../lib/Modal.svelte'
   import SplitDialog from '../lib/SplitDialog.svelte'
+  import RestoreDialog from '../lib/RestoreDialog.svelte'
   import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
+  import { isTime, plural, backupLine, stateOf } from '../lib/folders'
   import {
     Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
-    PickFolder, RestorePoints, Restore, Decisions, SwitchDecision, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
+    PickFolder, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
     Conflicts, ResolveConflict, ResolveConflicts, DeleteSaves, SetExclusions, OtherBackups, AdoptBackup, DeleteOtherBackup,
     LeaveToSteamCloud, ModUpdatePreview, ApplyModUpdate, ModAudit, RunModAudit, ModSnapshots, RollbackMods,
     ReleaseModHold, MakeModSource, HandOverMods,
@@ -46,12 +48,6 @@
   let query = $state('')
   let adding = $state('')
   let restoreFor = $state<main.FolderView | null>(null)
-  let points = $state<main.RestorePoint[]>([])
-  let latestOrigin = $state<backup.Origin | null>(null)
-  let decisions = $state<main.DecisionView[]>([])
-  let switching = $state('')
-  let point = $state(0)
-  let restoring = $state(false)
   let removeFor = $state<main.FolderView | null>(null)
   let deleteBackupToo = $state(false)
   let custom = $state<{ path: string; name: string } | null>(null)
@@ -222,13 +218,14 @@
   })
 
   const matches = (...s: string[]) => { const q = query.trim().toLowerCase(); return !q || s.some(x => x.toLowerCase().includes(q)) }
-  // Mod folders (kind mods*) have their own page; a launcher's data stays with the games.
+  // Mod folders (kind mods*) have their own page; a launcher's own data is under Settings → Launchers.
   const isMod = (kind?: string) => !!kind?.startsWith('mods')
+  const isLauncher = (kind?: string) => kind === 'launcher'
   const found = $derived((cache.found ?? []).filter(g => !g.syncedBy && !(hideMods && isMod(g.kind)) && (showCloud || !g.steamCloud) && matches(g.name, g.path)))
   const hiddenCloud = $derived((cache.found ?? []).filter(g => !g.syncedBy && g.steamCloud).length)
-  const allGames = $derived(cache.folders.filter(f => !(hideMods && isMod(f.kind))))
+  const allGames = $derived(cache.folders.filter(f => !isLauncher(f.kind) && !(hideMods && isMod(f.kind))))
   const games = $derived(allGames.filter(f => matches(f.label, f.path)))
-  const allAvailable = $derived((cache.available ?? []).filter(a => !(hideMods && isMod(a.kind))))
+  const allAvailable = $derived((cache.available ?? []).filter(a => !isLauncher(a.kind) && !(hideMods && isMod(a.kind))))
   const available = $derived(allAvailable.filter(a => matches(a.label, a.path)))
   const others = $derived((cache.others ?? []).filter(b => matches(b.label, b.path)))
   const elsewhereCount = $derived(cache.available && cache.others ? allAvailable.length + cache.others.length : null)
@@ -310,17 +307,6 @@
   const notInstalled = $derived((cache.found ?? []).filter(g => !g.kind && !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
   const bulkCount = $derived(notInstalled.filter(g => bulkPick[g.path]).length)
 
-  /** A time from Go; the zero time means "never". */
-  const isTime = (t: any) => !!t && new Date(t).getFullYear() > 2000
-  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
-
-  function backupLine(f: main.FolderView): string {
-    const parts = [isTime(f.backedUp) ? `Backed up ${ago(f.backedUp)}` : 'Not backed up yet']
-    if (f.backupBytes) parts.push(bytes(f.backupBytes))
-    if (f.points) parts.push(plural(f.points, 'restore point'))
-    return parts.join(' · ')
-  }
-
   function otherLine(b: backup.Orphan): string {
     const parts: string[] = []
     if (b.host) parts.push(b.mine ? 'Backed up from this PC' : `Backed up from ${b.host}`)
@@ -364,7 +350,6 @@
   const modKinds: Record<string, { text: string; tip: string }> = {
     'mods': { text: 'Vortex mods', tip: "The mods Vortex installed for this game (its staging folder). On your other PCs they appear in Vortex, to be enabled and deployed there. Synced while Vortex is closed." },
     'mods-profiles': { text: 'Vortex load order', tip: "Vortex's profiles for this game: plugin lists and load orders. Each PC keeps its own game settings (.ini files)." },
-    'launcher': { text: 'Launcher data', tip: "A game launcher's own playtime, achievements and settings (Seaglass). The launcher keeps each account's apart, so it isn't split per account." },
     'mods-deployed': { text: 'Deployed mods', tip: "The mod files Vortex deployed into the game's folder, for other PCs to play with right away. Experimental: one PC sends, the others apply checked updates." },
   }
 
@@ -506,49 +491,6 @@
     f.sync = on
     if (await attempt(() => SetFolderSync(f.id, on))) { load(); refresh() }
     else f.sync = !on
-  }
-
-  async function openRestore(f: main.FolderView) {
-    restoreFor = f
-    point = 0
-    points = []
-    latestOrigin = null
-    decisions = []
-    Decisions(f.id).then((d) => (decisions = d ?? [])).catch(() => {})
-    const v = await RestorePoints(f.id)
-    points = v?.points ?? []
-    latestOrigin = v?.latest ?? null
-  }
-
-  // Which PCs a restore point's saves came from, and which PC made it.
-  function originText(o?: backup.Origin | null): string {
-    const from = o?.from ?? [], by = o?.by ?? []
-    if (!from.length) return by.length ? `backed up by ${by.join(', ')}` : ''
-    const same = by.length === 0 || (by.length === from.length && by.every((b) => from.includes(b)))
-    return `from ${from.join(', ')}${same ? '' : ` · backed up by ${by.join(', ')}`}`
-  }
-
-  async function switchDecision(d: main.DecisionView) {
-    if (!restoreFor) return
-    const f = restoreFor
-    switching = d.rel
-    if (await attempt(() => SwitchDecision(f.id, d.rel), `Now using ${d.other ? `${d.other}'s` : 'the other'} version of ${d.rel}`)) {
-      decisions = (await Decisions(f.id).catch(() => [])) ?? []
-      load(); refresh()
-    }
-    switching = ''
-  }
-
-  async function doRestore() {
-    if (!restoreFor) return
-    restoring = true
-    try {
-      const n = await Restore(restoreFor.id, point)
-      toast(`Restored ${plural(n, 'file')} into ${restoreFor.label}`, 'ok')
-      restoreFor = null
-      load()
-    } catch (e) { fail(e) }
-    restoring = false
   }
 
   function openRemove(f: main.FolderView) {
@@ -776,19 +718,6 @@
       : "your other PCs don't add this copy on their own. Turn off Sync to stop syncing it here; Syncer keeps backing it up.")
   }
 
-  function stateOf(f: main.FolderView): { kind: string; text: string } {
-    // Syncthing stopped the folder, or some files can't be synced: the row says why.
-    if (f.problem) return { kind: 'err', text: f.errors ? `${f.errors} error${f.errors > 1 ? 's' : ''}` : 'Stopped' }
-    if (!f.exists) return { kind: 'warn', text: 'Waiting' }
-    switch (f.state) {
-      case 'idle': return f.needBytes ? { kind: 'accent', text: `${bytes(f.needBytes)} to go` } : { kind: 'ok', text: 'Synced' }
-      case 'scanning': case 'scan-waiting': return { kind: '', text: 'Scanning' }
-      case 'syncing': case 'sync-preparing': case 'sync-waiting': return { kind: 'accent', text: 'Syncing' }
-      case 'paused': return { kind: '', text: 'Paused' }
-      case 'error': return { kind: 'err', text: 'Error' }
-      default: return { kind: '', text: f.state || '…' }
-    }
-  }
 </script>
 
 {#snippet driveCopy(path: string, newer: boolean)}
@@ -879,8 +808,8 @@
       <button class="btn ghost icon sm" class:set={f.exclude?.length}
         title={f.exclude?.length ? `Skipped files: ${f.exclude.join(', ')}` : 'Skip files (logs, screenshots, …)'}
         onclick={() => openExclude(f)}><Icon name="filter" size={16} /></button>
-      <button class="btn ghost icon sm" title="Restore from backup" onclick={() => openRestore(f)}><Icon name="history" size={16} /></button>
-      {#if canSplit && f.sync && !f.split && f.kind !== 'launcher'}
+      <button class="btn ghost icon sm" title="Restore from backup" onclick={() => (restoreFor = f)}><Icon name="history" size={16} /></button>
+      {#if canSplit && f.sync && !f.split}
         <button class="btn ghost icon sm" title="Separate saves per account" onclick={() => (splitFor = f)}><Icon name="split" size={16} /></button>
       {/if}
       {#if !f.split}
@@ -1213,49 +1142,13 @@
 {/if}
 
 {#if restoreFor}
-  <Modal title="Restore {restoreFor.label}" onclose={() => (restoreFor = null)}>
-    {#if restoreFor.backup || restoreFor.points}<p class="faint small">{backupLine(restoreFor)}</p>{/if}
-    <p>Close the game first. Your current files are kept as a restore point, so this can be undone.</p>
-    {#if restoreFor.steamCloud}<p class="small">Steam Cloud keeps these saves too: the next time the game starts through Steam, Steam uploads the restored files over its cloud copy (or asks which to keep).</p>{/if}
-    {#if decisions.length}
-      <h3 class="sub">Two versions you chose between</h3>
-      <div class="points">
-        {#each decisions as d (d.rel)}
-          <div class="pt">
-            <div class="grow">
-              <div class="mono ellipsis" title={d.rel}>{d.rel}</div>
-              <div class="faint small">{when(d.at)} · using {d.kept ? `${d.kept}'s` : 'one'} version, {d.other ? `${d.other}'s` : 'the other'} is in the history</div>
-            </div>
-            <button class="btn sm" disabled={!!switching} onclick={() => switchDecision(d)}
-              title="Bring the other version back. The one used now goes into the history, so you can switch again.">
-              {#if switching === d.rel}<Icon name="refresh" size={14} class="spin" />{/if} Use {d.other ? `${d.other}'s` : 'the other'} instead
-            </button>
-          </div>
-        {/each}
-      </div>
-      <h3 class="sub">Restore the whole game</h3>
-    {/if}
-    <div class="points">
-      <label class="pt"><input type="radio" bind:group={point} value={0} /> <span class="grow">Latest backup</span>
-        {#if originText(latestOrigin)}<span class="origin faint" title="The PCs these saves were last changed on">{originText(latestOrigin)}</span>{/if}</label>
-      {#each points as p (p.at)}
-        <label class="pt"><input type="radio" bind:group={point} value={p.at} /> <span class="grow">As it was before {when(p.at)}</span>
-          {#if originText(p)}<span class="origin faint" title="The PCs these saves were last changed on, and the PC that made this restore point">{originText(p)}</span>{/if}</label>
-      {/each}
-    </div>
-    {#snippet actions()}
-      <button class="btn" onclick={() => (restoreFor = null)}>Cancel</button>
-      <button class="btn primary" disabled={restoring} onclick={doRestore}>
-        {#if restoring}<Icon name="refresh" size={15} class="spin" />{/if} Restore
-      </button>
-    {/snippet}
-  </Modal>
+  <RestoreDialog folder={restoreFor} onclose={() => (restoreFor = null)} ondone={() => load()} />
 {/if}
 
 {#if conflictsFor}
   <Modal title="Two versions of {conflictsFor.label}" onclose={() => (conflictsFor = null)}>
     <p>Two PCs changed the same save. The game loads the current one; the other was kept aside. Close the game, then pick which to keep. The version you don't pick goes into the backup history, so you can still restore it.</p>
-    {#if canSplit && !conflictsFor.split && conflictsFor.kind !== 'launcher'}
+    {#if canSplit && !conflictsFor.split}
       {@const f = conflictsFor}
       <div class="notice row splitask">
         <Icon name="users" size={16} />
@@ -1651,12 +1544,6 @@
   .hint { font-size: 12.5px; gap: 10px; padding: 0 4px; }
   .section { padding: 0 4px; }
   .section ~ .section { margin-top: 10px; }
-  .points { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
-  .pt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; color: var(--text); cursor: pointer; }
-  .pt:hover { background: var(--hover); }
-  .pt input { accent-color: var(--accent); }
-  .pt .origin { font-size: 12px; text-align: right; }
-  h3.sub { font-size: 13px; font-weight: 600; margin: 4px 0 0; }
   .linkish { border: 0; cursor: pointer; font: inherit; font-size: 12px; }
   .linkbtn { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
   .linkbtn.danger { color: var(--err); }

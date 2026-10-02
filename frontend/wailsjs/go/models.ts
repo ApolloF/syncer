@@ -271,6 +271,7 @@ export namespace main {
 	    conflicts: number;
 	    // Go type: time
 	    modified: any;
+	    launcher?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SplitSave(source);
@@ -289,6 +290,7 @@ export namespace main {
 	        this.bytes = source["bytes"];
 	        this.conflicts = source["conflicts"];
 	        this.modified = this.convertValues(source["modified"], null);
+	        this.launcher = source["launcher"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -637,6 +639,7 @@ export namespace main {
 	    label: string;
 	    problem: string;
 	    mod: boolean;
+	    launcher: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderIssue(source);
@@ -648,6 +651,7 @@ export namespace main {
 	        this.label = source["label"];
 	        this.problem = source["problem"];
 	        this.mod = source["mod"];
+	        this.launcher = source["launcher"];
 	    }
 	}
 	export class FolderView {

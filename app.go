@@ -188,6 +188,8 @@ type FolderIssue struct {
 	Label   string `json:"label"`
 	Problem string `json:"problem"`
 	Mod     bool   `json:"mod"` // a mod folder: listed on the Mods page while finding mods is on
+	// Launcher: a launcher's own data, listed under Settings → Launchers.
+	Launcher bool `json:"launcher"`
 }
 
 func (a *App) Overview() Overview {
@@ -255,14 +257,16 @@ func (a *App) Overview() Overview {
 			if f.ID == meta.FolderID || accounts.InVault(f.Path) {
 				continue
 			}
-			o.Folders++
+			if !isLauncherData(s, f.ID) {
+				o.Folders++ // a launcher's own data isn't a game
+			}
 			if fst, err := c.FolderStatus(ctx, f.ID); err == nil {
 				if fst.State == "syncing" || fst.State == "sync-preparing" || fst.NeedFiles > 0 {
 					o.Syncing++
 				}
 				if p := folderIssue(ctx, c, f.ID, fst); p != "" {
 					o.Errors++
-					o.Issues = append(o.Issues, FolderIssue{ID: f.ID, Label: cmpOr(f.Label, f.ID), Problem: p, Mod: isMod(s, f.ID)})
+					o.Issues = append(o.Issues, FolderIssue{ID: f.ID, Label: cmpOr(f.Label, f.ID), Problem: p, Mod: isMod(s, f.ID), Launcher: isLauncherData(s, f.ID)})
 				}
 			}
 		}

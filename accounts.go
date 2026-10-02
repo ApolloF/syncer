@@ -215,6 +215,9 @@ type SplitSave struct {
 	Bytes     int64      `json:"bytes"`
 	Conflicts int        `json:"conflicts"`
 	Modified  time.Time  `json:"modified"`
+	// Launcher: a launcher's own data (its name), which the launcher keeps
+	// per account by itself; not a split game.
+	Launcher string `json:"launcher,omitempty"`
 }
 
 type SaveFile struct {
@@ -315,6 +318,12 @@ func (a *App) Accounts() (AccountsView, error) {
 			}
 		}
 	}
+	launchers := store.LoadSettings().Launchers
+	launcherIDs := make([]string, 0, len(launchers))
+	for id := range launchers {
+		launcherIDs = append(launcherIDs, id)
+	}
+	sort.Strings(launcherIDs)
 	for _, acc := range st.Live() {
 		av := AccountView{Account: acc, Active: acc.ID == v.Active, PCs: playing[acc.ID], Games: []SplitSave{}}
 		for _, r := range st.Splits() {
@@ -322,6 +331,13 @@ func (a *App) Accounts() (AccountsView, error) {
 				continue
 			}
 			av.Games = append(av.Games, splitSave(r, acc.ID, folders))
+		}
+		for _, id := range launcherIDs {
+			if f, ok := folders[id]; ok {
+				if s, ok := launcherSave(f, launchers[id], acc.ID, av.Active); ok {
+					av.Games = append(av.Games, s)
+				}
+			}
 		}
 		v.Accounts = append(v.Accounts, av)
 	}
@@ -363,6 +379,20 @@ func splitSave(r accounts.Record, acc string, folders map[string]syncthing.Folde
 	s.Files, s.More, s.Bytes, s.Modified = listSaves(f.Path)
 	s.Conflicts = conflict.Count(f.Path)
 	return s
+}
+
+// launcherSave lists an account's part of a launcher's own data on this
+// PC: the launcher keeps it in a subfolder named after the account (see
+// launcherdata.go). False when the account has none here.
+func launcherSave(f syncthing.Folder, launcher, acc string, active bool) (SplitSave, bool) {
+	dir := filepath.Join(f.Path, acc)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return SplitSave{}, false
+	}
+	s := SplitSave{Game: f.ID, FolderID: f.ID, Label: cmpOr(f.Label, f.ID), Path: dir, Here: active, Synced: true, Launcher: launcher}
+	s.Files, s.More, s.Bytes, s.Modified = listSaves(dir)
+	s.Conflicts = conflict.Count(dir)
+	return s, true
 }
 
 // listSaves lists the save files in dir (Syncthing's own files left out),
