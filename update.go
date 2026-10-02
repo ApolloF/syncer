@@ -98,7 +98,7 @@ func (a *App) checkUpdate(ctx context.Context) (*UpdateInfo, error) {
 
 // CheckForUpdate checks now (Settings); nil means this is the newest version.
 func (a *App) CheckForUpdate() (*UpdateInfo, error) {
-	ctx, cancel := a.callCtx()
+	ctx, cancel := context.WithTimeout(a.ctx, 45*time.Second) // room for update.Latest's retries
 	defer cancel()
 	return a.checkUpdate(ctx)
 }
