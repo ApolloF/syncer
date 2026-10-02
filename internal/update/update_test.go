@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNewer(t *testing.T) {
@@ -85,6 +87,52 @@ func TestLatestAndDownload(t *testing.T) {
 	bad.URL = "https://example.com/Syncer.exe"
 	if _, err := Download(context.Background(), &bad, dir); err == nil {
 		t.Fatal("a download from outside the releases was accepted")
+	}
+}
+
+func TestLatestRetries(t *testing.T) {
+	defer func(l string, a, p time.Duration) { latestURL, attemptTimeout, retryPause = l, a, p }(latestURL, attemptTimeout, retryPause)
+	attemptTimeout, retryPause = 200*time.Millisecond, time.Millisecond
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch calls.Add(1) {
+		case 1: // stalls past the attempt's timeout
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		case 2:
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			fmt.Fprintf(w, `{"tag_name":"v1.2.0","html_url":%q,"assets":[]}`, ReleasesURL+"tag/v1.2.0")
+		}
+	}))
+	defer srv.Close()
+	latestURL = srv.URL
+
+	r, err := Latest(context.Background())
+	if err != nil || r.Tag != "v1.2.0" || calls.Load() != 3 {
+		t.Fatalf("Latest = %+v, %v after %d calls", r, err, calls.Load())
+	}
+
+	calls.Store(0)
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer notFound.Close()
+	latestURL = notFound.URL
+	if _, err := Latest(context.Background()); err == nil || calls.Load() != 1 {
+		t.Fatalf("a 404 gave %v after %d calls, want an error after 1", err, calls.Load())
+	}
+
+	stall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer stall.Close()
+	latestURL = stall.URL
+	_, err = Latest(context.Background())
+	if err == nil || strings.Contains(err.Error(), "deadline") || !strings.Contains(err.Error(), "GitHub didn't answer") {
+		t.Fatalf("a stalled GitHub gave %v", err)
 	}
 }
 

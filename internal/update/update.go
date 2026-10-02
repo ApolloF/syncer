@@ -8,8 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,24 +48,71 @@ type Asset struct {
 	SHA256 string // hex, from GitHub's digest of the upload
 }
 
-// Latest asks GitHub for the newest release.
+// Variables for tests.
+var (
+	attemptTimeout = 10 * time.Second
+	retryPause     = 2 * time.Second
+)
+
+const attempts = 3
+
+// Latest asks GitHub for the newest release. A connection that stalls or
+// drops, or a GitHub hiccup (5xx), is tried again a couple of times.
 func Latest(ctx context.Context) (Release, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	var err error
+	for i := range attempts {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return Release{}, unreachable(err)
+			case <-time.After(retryPause):
+			}
+		}
+		var rel Release
+		var retry bool
+		if rel, retry, err = latestOnce(ctx); err == nil || !retry {
+			return rel, err
+		}
+	}
+	return Release{}, unreachable(err)
+}
+
+// unreachable turns a failed request into a message for people, not the
+// raw "Get <url>: context deadline exceeded".
+func unreachable(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	if ue.Timeout() {
+		return errors.New("GitHub didn't answer in time; check the internet connection and try again")
+	}
+	return fmt.Errorf("couldn't reach GitHub (%v); check the internet connection and try again", ue.Err)
+}
+
+// latestOnce makes one request; retry tells whether another might succeed.
+func latestOnce(ctx context.Context) (rel Release, retry bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, attemptTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestURL, nil)
 	if err != nil {
-		return Release{}, err
+		return Release{}, false, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "Syncer")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return Release{}, err
+		return Release{}, true, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return Release{}, errors.New("GitHub answered " + resp.Status)
+		return Release{}, resp.StatusCode >= 500, errors.New("GitHub answered " + resp.Status)
 	}
+	rel, err = decodeRelease(resp.Body)
+	return rel, false, err
+}
+
+func decodeRelease(body io.Reader) (Release, error) {
 	var r struct {
 		Tag     string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
@@ -74,17 +123,17 @@ func Latest(ctx context.Context) (Release, error) {
 			Digest string `json:"digest"` // "sha256:<hex>"
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&r); err != nil {
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&r); err != nil {
 		return Release{}, err
 	}
 	if _, ok := parse(r.Tag); !ok {
 		return Release{}, errors.New("unexpected release tag " + strconv.Quote(r.Tag))
 	}
-	url := r.HTMLURL
-	if !strings.HasPrefix(url, ReleasesURL) {
-		url = ReleasesURL + "latest"
+	page := r.HTMLURL
+	if !strings.HasPrefix(page, ReleasesURL) {
+		page = ReleasesURL + "latest"
 	}
-	rel := Release{Tag: r.Tag, URL: url}
+	rel := Release{Tag: r.Tag, URL: page}
 	for _, a := range r.Assets {
 		sum, ok := strings.CutPrefix(a.Digest, "sha256:")
 		if a.Name != assetName || !strings.HasPrefix(a.URL, downloadURL) || a.Size <= 0 || a.Size > maxSize || !ok {
