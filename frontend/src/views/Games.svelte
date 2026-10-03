@@ -24,6 +24,8 @@
   import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
   import { isTime, plural, backupLine, stateOf } from '../lib/folders'
+  import { conflictBadge, conflictPCs as pcsOf } from '../lib/conflicts'
+  import { byModKind, modGameName, modPhase } from '../lib/mods'
   import {
     Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
@@ -114,11 +116,7 @@
     }
   }
   // Other PCs that made conflict copies, for "use all of that PC's versions".
-  const conflictPCs = $derived.by(() => {
-    const m = new Map<string, string>()
-    for (const c of conflicts) if (!m.has(c.device)) m.set(c.device, c.deviceName || c.device)
-    return [...m.entries()].map(([device, name]) => ({ device, name }))
-  })
+  const conflictPCs = $derived(pcsOf(conflicts))
 
   async function resolveAll(device: string, name = '') {
     if (!conflictsFor) return
@@ -231,8 +229,6 @@
   const elsewhereCount = $derived(cache.available && cache.others ? allAvailable.length + cache.others.length : null)
 
   // ---- the Mods page: one card per game with all its mod folders ----
-  const kindOrder: Record<string, number> = { 'mods': 0, 'mods-profiles': 1, 'mods-deployed': 2 }
-  const modGameName = (label: string) => label.replace(/ \((Vortex mods|Vortex load order|deployed mods)\)$/, '')
   type ModGroup = {
     game: string; name: string
     synced: main.FolderView[]; found: main.GameView[]; avail: main.AvailableView[]
@@ -250,8 +246,8 @@
     for (const a of cache.available ?? []) if (isMod(a.kind) && matches(a.label, a.path)) get(a.modGame || a.label, a.label).avail.push(a)
     for (const sh of cache.shares) { const g = m.get(sh.game); if (g) { g.share = sh; g.name = sh.name || g.name } }
     for (const g of m.values()) {
-      g.synced.sort((a, b) => (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9))
-      g.found.sort((a, b) => (kindOrder[a.kind ?? ''] ?? 9) - (kindOrder[b.kind ?? ''] ?? 9))
+      g.synced.sort(byModKind)
+      g.found.sort(byModKind)
     }
     return [...m.values()].sort((a, b) => a.name.localeCompare(b.name))
   })
@@ -421,20 +417,6 @@
     const ok = await attempt(() => RollbackMods(rollbackFor!.id, stamp), 'Rolled back')
     rollbackBusy = ''
     if (ok) { rollbackFor = null; load() }
-  }
-
-  function modPhase(f: main.FolderView): { kind: string; text: string } {
-    if (f.modRole === 'source') {
-      if (f.modPhase === 'held') return { kind: 'err', text: 'On hold' }
-      if (f.modPhase === 'busy') return { kind: 'accent', text: 'Vortex or game open' }
-      return { kind: 'ok', text: 'Sending' }
-    }
-    switch (f.modPhase) {
-      case 'pending': return { kind: 'accent', text: 'Update waiting' }
-      case 'applying': return { kind: 'accent', text: 'Applying…' }
-      case 'held': return { kind: 'err', text: 'On hold' }
-      default: return { kind: 'ok', text: 'Up to date' }
-    }
   }
 
   async function addBackupOnly(name: string, path: string) {
@@ -754,7 +736,7 @@
     {/if}
     {#if f.conflicts}
       <button class="pill warn linkish" title="Two PCs changed the same save — choose which to keep" onclick={() => openConflicts(f)}>
-        {f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}
+        {conflictBadge(f.conflicts)}
       </button>
     {/if}
     {#if f.sync && f.newerOn && !f.needBytes}
