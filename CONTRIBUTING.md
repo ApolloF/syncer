@@ -17,10 +17,11 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
    ```bash
    go vet ./...
    go test ./...
-   cd frontend && npm ci && npm run check
+   cd frontend && npm ci && npm run check && npx vitest run
+   cd .. && wails build
    ```
 
-4. Add or update tests for behaviour you change (`*_test.go` next to the code).
+4. Add or update tests for behaviour you change (`*_test.go` next to the Go code, `*.test.ts` next to frontend helpers in `frontend/src/lib`).
 5. Try the change in the real app with `wails dev`. Anything that touches syncing, backups or restores must never delete or overwrite a save without a restore point.
 
 Requirements and the project layout are in the [README](README.md#develop).
