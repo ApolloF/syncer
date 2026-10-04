@@ -544,8 +544,6 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 	return p, ""
 }
 
-// adoptableMod is Adoptable for a mod folder. Its root is resolved by this
-// PC's own mod manager: nothing the peer sent is used as a path.
 // recheck checks an adoptable folder's path once more right before it's
 // added: Adoptable's checks ran a while earlier (reading the disk to classify
 // the folder), and a folder may have been swapped for a link meanwhile.
@@ -560,6 +558,8 @@ func recheck(sf SharedFolder, p string) error {
 	return err
 }
 
+// adoptableMod is Adoptable for a mod folder. Its root is resolved by this
+// PC's own mod manager: nothing the peer sent is used as a path.
 func adoptableMod(sf SharedFolder, s store.Settings, synced []string) (string, string) {
 	kind, ok := mods.KindOf(sf.Root, sf.Rel)
 	if !ok || kind != sf.Kind || sf.ModGame != mods.GameOf(sf.Root) {
