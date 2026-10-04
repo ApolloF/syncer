@@ -688,10 +688,10 @@
     const detail = i < 0 ? '' : reason.slice(i + 1)
     const covers = 'Syncer covers these saves.'
     switch (code) {
-      case 'not-installed': return { text: 'Not installed through Steam', tip: `Steam didn't install this copy (for example a repack or cracked copy), so Steam Cloud doesn't keep its saves. ${covers}` }
-      case 'modified': return { text: 'Modified Steam files', tip: `The game folder has ${detail}, a sign of a crack or Steam emulator, so Steam Cloud doesn't keep its saves. ${covers}` }
-      case 'emulator': return { text: `Cracked copy (${detail})`, tip: `A Steam emulator (${detail}) runs this game instead of Steam, so Steam Cloud doesn't keep its saves. ${covers}` }
-      case 'outside-steam': return { text: 'Played outside Steam', tip: `These saves changed after Steam last synced them: the game was played without Steam (a crack or mod launcher). ${covers}` }
+      case 'not-installed': return { text: 'Not installed through Steam', tip: `Steam didn't install this copy (for example a repack, or an external copy that runs from a Steam emulator), so Steam Cloud doesn't keep its saves. ${covers}` }
+      case 'modified': return { text: 'Modified Steam files', tip: `The game folder has ${detail}, a sign of an external copy that runs from a Steam emulator, so Steam Cloud doesn't keep its saves. ${covers}` }
+      case 'emulator': return { text: `External copy (${detail})`, tip: `A Steam emulator (${detail}) runs this game instead of Steam, so Steam Cloud doesn't keep its saves. ${covers}` }
+      case 'outside-steam': return { text: 'Played outside Steam', tip: `These saves changed after Steam last synced them: the game was played without Steam (from a Steam emulator or a mod launcher). ${covers}` }
       case 'mod-saves': return { text: 'Mod saves', tip: `Mod files (${detail}) here aren't kept by Steam Cloud. ${covers}` }
       case 'untracked': return { text: 'Folder not in Steam Cloud', tip: `Steam Cloud keeps other files of this game, not this folder. ${covers}` }
       case 'no-cloud-data': return { text: 'Not in your Steam Cloud', tip: `Your Steam account on this PC has no cloud saves for this game (another account owns it, or it never synced). ${covers}` }
@@ -708,8 +708,8 @@
   // A Steam emulator folder holding a copy of the game's own saves.
   function emulatorTip(emulator: string): string {
     return emulator === 'UplayEmu'
-      ? 'Saves a Ubisoft Connect emulator keeps for a cracked copy, where Ubisoft Connect would keep them in its cloud'
-      : `Saves a Steam emulator (${emulator}) keeps for a cracked copy, where Steam would keep them in Steam Cloud`
+      ? 'Saves a Ubisoft Connect emulator keeps for an external copy, where Ubisoft Connect would keep them in its cloud'
+      : `Saves a Steam emulator (${emulator}) keeps for an external copy, where Steam would keep them in Steam Cloud`
   }
 
   function copyTip(game: string, found: boolean): string {
