@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,4 +148,35 @@ func devIDs(v any) string {
 		ids = append(ids, d["deviceID"])
 	}
 	return strings.Join(ids, " ")
+}
+
+// A paired PC publishes a folder whose path spells something harmless but
+// leads, through a junction Windows keeps in every profile, a short name or a
+// stream, to Startup, ~/.ssh or Syncthing's keys: it's never adopted.
+func TestAdoptableRefusesAliasedPaths(t *testing.T) {
+	cases := []SharedFolder{
+		{Root: paths.Home, Rel: "Start Menu/Programs/Startup"},
+		{Root: paths.Home, Rel: "Application Data/Microsoft/Windows/Start Menu/Programs/Startup"},
+		{Root: paths.Home, Rel: "Local Settings/Syncthing"},
+		{Root: paths.Home, Rel: "SSH~1"},
+		{Root: paths.Local, Rel: "SYNCTH~1"},
+		{Root: paths.Roaming, Rel: "MICROS~1/Windows/Start Menu/Programs/Startup"},
+		{Root: paths.Roaming, Rel: "Microsoft::$INDEX_ALLOCATION/Windows/Start Menu/Programs/Startup"},
+	}
+	for i, sf := range cases {
+		sf.ID, sf.Label = "alias-"+string(rune('a'+i)), "Game"
+		if !strings.ContainsAny(sf.Rel, "~:") {
+			if p, _ := paths.Resolve(sf.Root, sf.Rel); !exists(p) {
+				continue // not in this profile
+			}
+		}
+		if p, reason := Adoptable(sf, store.Settings{}, func(string) bool { return true }, nil); reason != SkipUnsafe {
+			t.Errorf("%s/%s: adopted as %q (reason %q), want %q", sf.Root, sf.Rel, p, reason, SkipUnsafe)
+		}
+	}
+}
+
+func exists(p string) bool {
+	_, err := os.Lstat(p)
+	return p != "" && err == nil
 }

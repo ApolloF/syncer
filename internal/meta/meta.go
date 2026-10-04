@@ -211,6 +211,10 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			}
 			spec = ModSpec(sf.ID, sf.Label, p, sf.Kind, false)
 		}
+		if err := recheck(sf, p); err != nil {
+			warnOnce(sf.ID, "meta: not adopting %q (%s): changed on disk: %v", sf.ID, p, err)
+			continue
+		}
 		if err := AddFolderSpec(ctx, c, spec, me, others); err != nil {
 			logx.Printf("meta: add %s: %v", sf.ID, err)
 			continue
@@ -533,6 +537,20 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 
 // adoptableMod is Adoptable for a mod folder. Its root is resolved by this
 // PC's own mod manager: nothing the peer sent is used as a path.
+// recheck checks an adoptable folder's path once more right before it's
+// added: Adoptable's checks ran a while earlier (reading the disk to classify
+// the folder), and a folder may have been swapped for a link meanwhile.
+func recheck(sf SharedFolder, p string) error {
+	if sf.Kind == "" && !mods.IsModRoot(sf.Root) {
+		return paths.CheckSyncable(p)
+	}
+	err := checkMod(sf.Kind, p)
+	if sf.Kind == mods.KindDeployed && errors.Is(err, fs.ErrNotExist) {
+		err = checkMod(sf.Kind, filepath.Dir(p)) // not deployed here yet (see adoptableMod)
+	}
+	return err
+}
+
 func adoptableMod(sf SharedFolder, s store.Settings, synced []string) (string, string) {
 	kind, ok := mods.KindOf(sf.Root, sf.Rel)
 	if !ok || kind != sf.Kind || sf.ModGame != mods.GameOf(sf.Root) {

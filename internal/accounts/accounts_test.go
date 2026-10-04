@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
@@ -955,6 +956,19 @@ func TestSplitCoversAccountFoldersWithItsRestorePoint(t *testing.T) {
 		at, ok := covered[FolderID(game, a)]
 		if !ok || at.Before(start) || at.After(time.Now()) {
 			t.Errorf("%s's folder covered at %v (%v)", a, at, ok)
+		}
+	}
+}
+
+// Records come from other PCs: a save folder path that leads somewhere else
+// than it spells is refused.
+func TestLivePathRefusesAliases(t *testing.T) {
+	for _, rel := range []string{"SSH~1", "Microsoft::$INDEX_ALLOCATION/Windows", "Start Menu/Programs/Startup", "Local Settings/Syncthing"} {
+		r := Record{Game: "g", Root: paths.Home, Rel: rel}
+		if p, ok := r.LivePath(); ok {
+			if _, err := os.Lstat(p); err == nil || strings.ContainsAny(rel, "~:") {
+				t.Errorf("LivePath() for %q = %q, want refused", rel, p)
+			}
 		}
 	}
 }
