@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: 4 October 2026
+Last updated: 11 October 2026
 
 Syncer is a free Windows app that keeps your PC game saves in sync between your own PCs and backs them up to your own Google Drive. It runs on your PCs and has no server of its own. ApolloF, who publishes Syncer, receives no data from the app: no account, no telemetry, no crash reports.
 
