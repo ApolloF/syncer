@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/paths"
@@ -85,13 +86,19 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 	if cut.Before(pinCut) {
 		pinCut = cut
 	}
-	keep := plan(pts, pins(root), cut, pinCut, now, thin)
-	last := "" // nearest older point that stays
+	keep := plan(pts, aged(root, pts, cut), marks(root, PinnedDir), cut, pinCut, now, thin)
+	aside := marks(root, AsideDir)
+	last := "" // nearest older point that stays, made by a backup run
 	for i := len(pts) - 1; i >= 0; i-- {
-		dir := filepath.Join(root, pts[i].Format(stampFmt))
+		stamp := pts[i].Format(stampFmt)
+		dir := filepath.Join(root, stamp)
 		switch {
 		case keep[i]:
-			last = dir
+			// An aside point only counts as the point restored to, so a
+			// thinned point's files must not go into it.
+			if !aside[stamp] {
+				last = dir
+			}
 		case pts[i].Before(cut):
 			_ = os.RemoveAll(dir)
 		case last != "":
@@ -100,20 +107,51 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 			}
 		}
 	}
-	unpinStale(root)
+	unmarkStale(root, PinnedDir)
+	unmarkStale(root, AsideDir)
 	forgetStaleOrigins(root)
 }
 
-// plan says which of pts (newest first) stay: everything from cut on (thinned
-// with thin), and pinned points from pinCut on.
-func plan(pts []time.Time, pinned map[string]bool, cut, pinCut, now time.Time, thin bool) []bool {
+// aged gives each of pts the time it ages from. A point is named by the
+// clock of the PC that made it, which may have been far behind (a flat CMOS
+// battery): a point that arrived here after cut isn't expired by its name
+// alone, it ages from when it arrived (its folder was made on this disk).
+func aged(root string, pts []time.Time, cut time.Time) []time.Time {
+	out := make([]time.Time, len(pts))
+	for i, t := range pts {
+		out[i] = t
+		if t.Before(cut) {
+			if at, ok := arrived(filepath.Join(root, t.Format(stampFmt))); ok && at.After(t) {
+				out[i] = at
+			}
+		}
+	}
+	return out
+}
+
+// arrived is when the folder at p was made on this disk.
+func arrived(p string) (time.Time, bool) {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return time.Time{}, false
+	}
+	d, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(0, d.CreationTime.Nanoseconds()), true
+}
+
+// plan says which of pts (newest first, aging from at) stay: everything
+// from cut on (thinned with thin), and pinned points from pinCut on.
+func plan(pts, at []time.Time, pinned map[string]bool, cut, pinCut, now time.Time, thin bool) []bool {
 	keep := make([]bool, len(pts))
 	taken := map[string]bool{} // buckets that already have their point
 	// Oldest first: a bucket's first point stays.
 	for i := len(pts) - 1; i >= 0; i-- {
 		t := pts[i]
-		if t.Before(cut) {
-			keep[i] = pinned[t.Format(stampFmt)] && !t.Before(pinCut)
+		if at[i].Before(cut) {
+			keep[i] = pinned[t.Format(stampFmt)] && !at[i].Before(pinCut)
 			continue
 		}
 		b := bucket(t, now.Sub(t))
@@ -177,26 +215,32 @@ func thinner(target, id string, now time.Time) bool {
 // pin keeps the point at t from being thinned.
 func pin(target, id string, t time.Time) { pinStamp(target, id, t.Format(stampFmt)) }
 
-func pinStamp(target, id, stamp string) {
-	p := filepath.Join(target, VersionsDir, id, PinnedDir, stamp)
+func pinStamp(target, id, stamp string) { markStamp(target, id, PinnedDir, stamp) }
+
+// markStamp marks id's point stamp in the folder sub (PinnedDir, AsideDir).
+func markStamp(target, id, sub, stamp string) {
+	p := filepath.Join(target, VersionsDir, id, sub, stamp)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
 		_ = os.WriteFile(p, nil, 0o644)
 	}
 }
 
-func pins(root string) map[string]bool {
+func pins(root string) map[string]bool { return marks(root, PinnedDir) }
+
+// marks lists the stamps marked in root's folder sub.
+func marks(root, sub string) map[string]bool {
 	m := map[string]bool{}
-	es, _ := os.ReadDir(filepath.Join(root, PinnedDir))
+	es, _ := os.ReadDir(filepath.Join(root, sub))
 	for _, e := range es {
 		m[e.Name()] = true
 	}
 	return m
 }
 
-// unpinStale drops pins whose point is gone.
-func unpinStale(root string) {
-	dir := filepath.Join(root, PinnedDir)
-	for name := range pins(root) {
+// unmarkStale drops the marks in sub whose point is gone.
+func unmarkStale(root, sub string) {
+	dir := filepath.Join(root, sub)
+	for name := range marks(root, sub) {
 		if !isDir(filepath.Join(root, name)) {
 			_ = os.Remove(filepath.Join(dir, name))
 		}
