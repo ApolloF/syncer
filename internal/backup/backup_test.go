@@ -252,8 +252,15 @@ func TestForget(t *testing.T) {
 	write(t, filepath.Join(target, id, "a.sav"), "a")
 	write(t, filepath.Join(target, VersionsDir, id, "x", "a.sav"), "a")
 	write(t, filepath.Join(target, "other", "b.sav"), "b")
+	var told []string
+	old := Forgotten
+	Forgotten = func(tg, id string) { told = append(told, tg+"|"+id) }
+	defer func() { Forgotten = old }()
 	if err := Forget(target, id, true); err != nil {
 		t.Fatal(err)
+	}
+	if len(told) != 1 || told[0] != target+"|"+id {
+		t.Errorf("Forgotten told %v", told)
 	}
 	if _, err := os.Stat(filepath.Join(target, id)); err == nil {
 		t.Error("backup not deleted")

@@ -610,8 +610,15 @@ func Forget(target, id string, deleteBackup bool) error {
 			return err
 		}
 	}
+	if Forgotten != nil {
+		Forgotten(target, id)
+	}
 	return nil
 }
+
+// Forgotten, when set, is told that the backup of folder id in target was
+// deleted on purpose (see Forget).
+var Forgotten func(target, id string)
 
 // CopyHistory seeds folder to's backup and version history from folder
 // from's, so a game that stops syncing (and gets its own backup id) keeps its

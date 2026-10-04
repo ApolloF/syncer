@@ -402,11 +402,11 @@ func (c *Client) Move(ctx context.Context, id, from, to, name string) (File, err
 	return f, err
 }
 
-// Delete removes a file for good (Syncer only deletes what it made).
+// Delete moves a file to the Drive trash (Syncer only deletes what it
+// made), where it can be brought back for 30 days, rather than deleting it
+// for good.
 func (c *Client) Delete(ctx context.Context, id string) error {
-	_, err := c.do(ctx, func() (*http.Request, error) {
-		return http.NewRequest(http.MethodDelete, apiBase+"/files/"+url.PathEscape(id), nil)
-	}, nil, nil)
+	_, err := c.do(ctx, jsonReq(http.MethodPatch, apiBase+"/files/"+url.PathEscape(id)+"?fields=id", map[string]any{"trashed": true}), nil, nil)
 	if IsNotFound(err) {
 		return nil
 	}

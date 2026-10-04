@@ -32,6 +32,7 @@ type fakeGoogle struct {
 	codes     map[string]string // code -> PKCE challenge
 	uploads   map[string][]byte // name -> content
 	meta      map[string]map[string]any
+	calls     []string // "METHOD path body" of requests on single files
 }
 
 func newGoogle(t *testing.T) *fakeGoogle {
@@ -107,6 +108,10 @@ func (g *fakeGoogle) serve(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		g.uploads[r.URL.Query().Get("name")] = b
 		_, _ = io.WriteString(w, `{"id":"big","name":"big"}`)
+	case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && (r.Method == http.MethodDelete || r.Method == http.MethodPatch):
+		b, _ := io.ReadAll(r.Body)
+		g.calls = append(g.calls, r.Method+" "+r.URL.Path+" "+string(b))
+		_, _ = io.WriteString(w, `{"id":"x"}`)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = io.WriteString(w, `{"error":{"message":"not found"}}`)
@@ -228,5 +233,18 @@ func TestTokenStore(t *testing.T) {
 	}
 	if err := DeleteToken(); err != nil || SignedIn() {
 		t.Errorf("delete: %v", err)
+	}
+}
+
+// Deleting in Drive puts the file in the trash, where it can be brought
+// back, instead of deleting it for good.
+func TestClientDeleteTrashes(t *testing.T) {
+	g := newGoogle(t)
+	c := NewClient(Config{ClientID: "id"}, Token{Refresh: "good-refresh", Access: "fresh", Expiry: time.Now().Add(time.Hour)}, nil)
+	if err := c.Delete(context.Background(), "f1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.calls) != 1 || g.calls[0] != `PATCH /drive/v3/files/f1 {"trashed":true}` {
+		t.Errorf("requests: %q, want one PATCH trashing f1", g.calls)
 	}
 }
