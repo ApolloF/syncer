@@ -10,24 +10,7 @@
   <a href="https://github.com/ApolloF/syncer/actions/workflows/build.yml"><img src="https://github.com/ApolloF/syncer/actions/workflows/build.yml/badge.svg" alt="Build"></a>
 </p>
 
-<!--
-Screenshots to take before launch (made-up games, PC names and accounts only; no real
-user names, emails or scene-group names). Save them in docs/images/ and replace this comment.
-
-1. docs/images/syncer-demo.gif (hero, under this comment): 15-25 s, 1280x720, 15 fps, under 5 MB.
-   Games page -> open a game -> Restore -> pick an earlier restore point -> Restore -> "Restored".
-2. docs/images/syncer-games.png: Games page with 6-8 games, a mix of Synced, Backup only,
-   "Also in Steam Cloud" and one "2 versions" badge.
-3. docs/images/syncer-restore.png: Restore dialog with several restore points from two PCs.
-4. docs/images/syncer-conflict.png: the "2 versions" dialog, both PCs' files side by side.
-5. docs/images/syncer-devices.png: Devices page with this PC's ID and two linked PCs
-   (one on this network, one over the internet).
-6. docs/images/syncer-backup.png: Backup page signed in with Google, showing the GameSaveBackup
-   folder, last backup time and the "only the files it creates" wording.
-
-Shots 2, 3 and 5 already exist on the local branch docs/go-to-market (commit e69c801).
-Then add, in the Install section, once the winget PR is merged:  winget install ApolloF.Syncer
--->
+<p align="center"><img src="docs/images/syncer-games.png" width="820" alt="Syncer's Games page: each game with its save folder, size, sync state and Sync and Backup switches"></p>
 
 **[Download Syncer](https://github.com/ApolloF/syncer/releases/latest/download/Syncer-amd64-installer.exe)** for Windows 10 and 11 (64-bit). Free and open source, no account, no telemetry.
 
@@ -36,6 +19,13 @@ Then add, in the Install section, once the winget PR is merged:  winget install 
 - Never overwrites a save behind your back: when two PCs changed the same save, you pick which one to keep.
 - Leaves what Steam Cloud, OneDrive and Ubisoft Connect already sync to them.
 - Holds syncing while a game runs, so no save changes under a running game.
+- Works on its own, or with a launcher such as [Seaglass](https://github.com/ApolloF/Seaglass).
+
+| Restore any save | Link a PC with one ID |
+|---|---|
+| <img src="docs/images/syncer-restore.png" alt="Restore dialog listing restore points, each with the PC it came from"> | <img src="docs/images/syncer-devices.png" alt="Devices page with this PC's ID and two linked PCs"> |
+
+<sub>Screenshots use made-up games and PCs.</sub>
 
 ## Install
 
