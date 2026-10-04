@@ -502,6 +502,9 @@ func tree(byID map[string]File, roots map[string]bool, root string) (dirs map[st
 			}
 			continue
 		}
+		if ignoredName(f.Name) {
+			continue
+		}
 		if old, dup := files[k]; dup && !f.Modified.After(old.Modified) {
 			continue
 		}
@@ -662,6 +665,14 @@ func ensureDir(ctx context.Context, d drive, root string, dirs map[string]string
 	return f.ID, nil
 }
 
+// ignoredName reports whether a file of that name is left out of the sync
+// on both sides: half-written files and Windows' desktop.ini. Leaving it out
+// here only would make a copy brought down look lost every time.
+func ignoredName(name string) bool {
+	name = strings.ToLower(name)
+	return strings.HasSuffix(name, tmpSuffix) || strings.HasSuffix(name, ".syncer-tmp") || name == "desktop.ini"
+}
+
 func walkLocal(root string) (map[string]localFile, error) {
 	out := map[string]localFile{}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -673,8 +684,7 @@ func walkLocal(root string) (map[string]localFile, error) {
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
-		name := strings.ToLower(d.Name())
-		if strings.HasSuffix(name, tmpSuffix) || strings.HasSuffix(name, ".syncer-tmp") || name == "desktop.ini" {
+		if ignoredName(d.Name()) {
 			return nil
 		}
 		fi, err := d.Info()

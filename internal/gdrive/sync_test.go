@@ -532,6 +532,30 @@ func TestSyncInfoFilesRemovedAreNotMassLoss(t *testing.T) {
 	}
 }
 
+// Files in Drive this PC never keeps (desktop.ini, half-downloaded files)
+// aren't brought down: the guard against lost saves would otherwise fetch
+// them again on every sync, as they never show up here.
+func TestSyncIgnoredNamesNeverLoop(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour)
+	a.write("g/1.sav", "x", t0)
+	a.sync(d)
+	g := firstParent(d.files[d.path("g/1.sav")])
+	for i := 0; i < 6; i++ {
+		d.put(d.id(), g, fmt.Sprintf("%d.sav.syncer-tmp", i), []byte("partial"), t0)
+	}
+	d.put(d.id(), g, "desktop.ini", []byte("[.ShellClassInfo]"), t0)
+	for i := 0; i < 3; i++ {
+		if r := a.sync(d); r.Down != 0 || r.DeletedThere != 0 || len(r.Notes) != 0 {
+			t.Errorf("sync %d: %+v", i+1, r)
+		}
+	}
+	if a.read("g/1.sav") != "x" {
+		t.Error("g/1.sav lost")
+	}
+}
+
 // A folder that can't be read fails the sync instead of looking emptied.
 func TestSyncFailsOnUnreadableFolder(t *testing.T) {
 	d := newFake()
