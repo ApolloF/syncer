@@ -437,20 +437,27 @@ func SetRootForTest(root, dir string) (restore func()) {
 
 // CheckContainer rejects a known root or protected container, or an
 // ancestor of one: folders that hold far more than one game's files.
-// Like CheckSensitive, it checks the path as given and as resolved on disk.
+// Like CheckSensitive, it checks the path as given and as resolved on disk,
+// against each root and container as written and where it really is.
 func CheckContainer(abs string) error {
 	forms, err := bothForms(filepath.Clean(abs))
 	if err != nil {
 		return errNotSyncable
 	}
+	real := realRoots()
+	var containers []string
+	for _, r := range roots {
+		containers = append(containers, r)
+	}
+	for _, r := range real {
+		containers = append(containers, r)
+	}
+	for _, c := range protectedContainers {
+		containers = append(containers, c.forms(real)...)
+	}
 	for _, a := range forms {
-		for _, r := range roots {
-			if Within(a, r) {
-				return errNotSyncable
-			}
-		}
-		for _, c := range protectedContainers {
-			if p, ok := c.abs(); ok && Within(a, p) {
+		for _, c := range containers {
+			if Within(a, c) {
 				return errNotSyncable
 			}
 		}

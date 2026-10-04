@@ -13,7 +13,13 @@ import (
 // links can be made in it without touching the real one.
 func fakeProfile(t *testing.T) (home, roaming, local string) {
 	t.Helper()
-	home = filepath.Join(t.TempDir(), "home")
+	return fakeProfileIn(t, t.TempDir())
+}
+
+// fakeProfileIn is fakeProfile with the profile made in base.
+func fakeProfileIn(t *testing.T, base string) (home, roaming, local string) {
+	t.Helper()
+	home = filepath.Join(base, "home")
 	roaming = filepath.Join(home, "AppData", "Roaming")
 	local = filepath.Join(home, "AppData", "Local")
 	for _, d := range []string{roaming, local} {
@@ -117,6 +123,32 @@ func TestCheckSyncableRefusesAliases(t *testing.T) {
 	}
 	if err := CheckSensitive(ssh); err == nil {
 		t.Errorf("CheckSensitive(%q) = nil: short name of .ssh accepted", ssh)
+	}
+}
+
+// A profile whose roots are spelled with a short name (as TEMP is on CI
+// runners, C:\Users\RUNNER~1) still has its whole roots and containers
+// refused when reached through a junction.
+func TestCheckContainerShortNamedRoots(t *testing.T) {
+	long := mkdir(t, filepath.Join(t.TempDir(), "a long profile folder"))
+	home, roaming, _ := fakeProfileIn(t, shortName(t, long))
+	mkdir(t, filepath.Join(home, "Documents"))
+	t.Cleanup(SetRootForTest(Documents, filepath.Join(home, "Documents")))
+
+	junction(t, filepath.Join(home, "Application Data"), roaming)
+	junction(t, filepath.Join(home, "Docs"), filepath.Join(home, "Documents"))
+	for _, p := range []string{
+		filepath.Join(home, "Application Data"),
+		filepath.Join(home, "Docs"),
+		filepath.Join(long, "home", "AppData"),
+	} {
+		if err := CheckContainer(p); err == nil {
+			t.Errorf("CheckContainer(%q) = nil, want refused", p)
+		}
+	}
+	game := mkdir(t, filepath.Join(long, "home", "AppData", "Roaming", "Game"))
+	if err := CheckContainer(game); err != nil {
+		t.Errorf("CheckContainer(%q) = %v, want nil", game, err)
 	}
 }
 
