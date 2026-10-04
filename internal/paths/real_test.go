@@ -229,3 +229,50 @@ func TestCheckSensitiveFollowsLinkedSensitiveFolder(t *testing.T) {
 		t.Errorf("CheckSensitive(%q) = %v, want nil", other, err)
 	}
 }
+
+// linkBelow sees a junction and a directory symbolic link (mklink /D) on the
+// way, but not the base itself or plain folders.
+func TestLinkBelow(t *testing.T) {
+	base := t.TempDir()
+	target := mkdir(t, filepath.Join(t.TempDir(), "Elsewhere", "Game"))
+	plain := mkdir(t, filepath.Join(base, "Plain", "Game"))
+	if linkBelow(base, plain) || linkBelow(base, base) || linkBelow(base, filepath.Join(plain, "NotYet")) {
+		t.Error("plain folder seen as a link")
+	}
+
+	t.Run("junction", func(t *testing.T) {
+		link := filepath.Join(base, "Junction")
+		junction(t, link, filepath.Dir(target))
+		for _, p := range []string{link, filepath.Join(link, "Game"), filepath.Join(link, "Game", "NotYet")} {
+			if !linkBelow(base, p) {
+				t.Errorf("linkBelow(%q) = false", p)
+			}
+		}
+		if linkBelow(link, filepath.Join(link, "Game")) {
+			t.Error("link as the base counted")
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		link := filepath.Join(base, "Symlink")
+		if err := os.Symlink(filepath.Dir(target), link); err != nil {
+			t.Skipf("can't create a symbolic link (needs Developer Mode or admin): %v", err)
+		}
+		if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Skipf("not a symbolic link: %v", err)
+		}
+		for _, p := range []string{link, filepath.Join(link, "Game"), filepath.Join(link, "Game", "NotYet")} {
+			if !linkBelow(base, p) {
+				t.Errorf("linkBelow(%q) = false", p)
+			}
+		}
+		_, roaming, _ := fakeProfile(t)
+		inRoot := filepath.Join(roaming, "Linked")
+		if err := os.Symlink(filepath.Dir(target), inRoot); err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckSyncable(filepath.Join(inRoot, "Game")); !errors.Is(err, ErrLink) {
+			t.Errorf("CheckSyncable through a symbolic link = %v, want %v", err, ErrLink)
+		}
+	})
+}
