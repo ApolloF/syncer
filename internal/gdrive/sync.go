@@ -268,11 +268,11 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 		}
 	}
 	// Most of the backups gone from Drive at once (not history, which
-	// thinning deletes by the hundreds) looks like an accident in Drive,
+	// thinning deletes by the hundreds, nor info files) looks like an accident in Drive,
 	// not another PC at work: they go back up instead of being deleted here.
 	var saves []string
 	for _, k := range delHere {
-		if !strings.HasPrefix(k, versionsPrefix) {
+		if isSave(k) {
 			saves = append(saves, k)
 		}
 	}
@@ -336,7 +336,7 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	// ForgetFolder).
 	var lost []string
 	for _, k := range delThere {
-		if !strings.HasPrefix(k, versionsPrefix) && st.forgotten(k) == "" {
+		if isSave(k) && st.forgotten(k) == "" {
 			lost = append(lost, k)
 		}
 	}
@@ -513,11 +513,22 @@ func tree(byID map[string]File, roots map[string]bool, root string) (dirs map[st
 // versionsPrefix starts the paths of the history (restore points).
 const versionsPrefix = ".versions/"
 
-// countSaves counts the files that aren't history.
+// infoPrefix starts the paths of the info files (.syncer/<id>/…): each PC's
+// record that it backs a folder up, which it removes when it stops (without
+// deleting the backup) and writes again on its next backup run.
+const infoPrefix = ".syncer/"
+
+// isSave reports whether k (a lower-case path) is a backed-up save, not
+// history or an info file: only saves count for the mass-delete guards.
+func isSave(k string) bool {
+	return !strings.HasPrefix(k, versionsPrefix) && !strings.HasPrefix(k, infoPrefix)
+}
+
+// countSaves counts the files that are saves (see isSave).
 func countSaves[V any](files map[string]V) int {
 	n := 0
 	for k := range files {
-		if !strings.HasPrefix(k, versionsPrefix) {
+		if isSave(k) {
 			n++
 		}
 	}
@@ -537,7 +548,7 @@ func massLoss[V any](lost []string, files map[string]V) []string {
 	}
 	saves := map[string]int{}
 	for k := range files {
-		if !strings.HasPrefix(k, versionsPrefix) {
+		if isSave(k) {
 			saves[game(k)]++
 		}
 	}

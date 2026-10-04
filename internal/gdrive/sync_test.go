@@ -494,6 +494,44 @@ func TestSyncOneGameLossKeepsDrive(t *testing.T) {
 	}
 }
 
+// A PC that stops backing up several folders but keeps their backups removes
+// only its info files (.syncer/<id>/…). Those aren't saves: they're deleted in
+// Drive, and on the other PCs, instead of coming back down every sync.
+func TestSyncInfoFilesRemovedAreNotMassLoss(t *testing.T) {
+	d := newFake()
+	a, b := newPC(t), newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for g := 0; g < 6; g++ {
+		a.write(fmt.Sprintf("g%d/a.sav", g), "x", t0)
+		a.write(fmt.Sprintf(".syncer/g%d/pc-a.json", g), "{}", t0)
+	}
+	a.sync(d)
+	b.sync(d)
+	for g := 0; g < 6; g++ {
+		if err := os.Remove(filepath.Join(a.local, ".syncer", fmt.Sprintf("g%d", g), "pc-a.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := a.sync(d); r.DeletedThere != 6 || r.Down != 0 || len(r.Notes) != 0 {
+		t.Errorf("info files removed here: %+v", r)
+	}
+	if d.path(".syncer/g2/pc-a.json") != "" {
+		t.Error(".syncer/g2/pc-a.json still in Drive")
+	}
+	if r := a.sync(d); r.Down != 0 {
+		t.Errorf("info files came back down: %+v", r)
+	}
+	if r := b.sync(d); r.DeletedHere != 6 || r.Up != 0 || len(r.Notes) != 0 {
+		t.Errorf("info files removed in Drive: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(b.local, ".syncer", "g2", "pc-a.json")); err == nil {
+		t.Error(".syncer/g2/pc-a.json still on the other PC")
+	}
+	if b.read("g2/a.sav") != "x" || d.path("g2/a.sav") == "" {
+		t.Error("g2/a.sav not kept on both sides")
+	}
+}
+
 // A folder that can't be read fails the sync instead of looking emptied.
 func TestSyncFailsOnUnreadableFolder(t *testing.T) {
 	d := newFake()
