@@ -200,6 +200,11 @@ func Revoke(ctx context.Context, t Token) error {
 		return err
 	}
 	resp.Body.Close()
+	// 400 means Google no longer knows the token (already revoked or expired):
+	// the access is gone either way.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest {
+		return fmt.Errorf("revoking Google access: %s", resp.Status)
+	}
 	return nil
 }
 
