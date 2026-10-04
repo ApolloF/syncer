@@ -1,0 +1,33 @@
+# Template: render with packaging/render-manifests.ps1, don't submit as is.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: ApolloF.Syncer
+PackageVersion: {{VERSION}}
+PackageLocale: en-US
+Publisher: ApolloF
+PublisherUrl: https://github.com/ApolloF
+PublisherSupportUrl: https://github.com/ApolloF/syncer/issues
+PrivacyUrl: https://github.com/ApolloF/syncer/blob/main/PRIVACY.md
+Author: ApolloF
+PackageName: Syncer
+PackageUrl: https://github.com/ApolloF/syncer
+License: AGPL-3.0-only
+LicenseUrl: https://github.com/ApolloF/syncer/blob/main/LICENSE
+Copyright: ApolloF
+ShortDescription: Keeps PC game saves in sync between your Windows PCs with Syncthing, with a versioned Google Drive backup.
+Description: |-
+  Syncer finds the saves of about 14,000 games (save locations from PCGamingWiki, through the Ludusavi manifest) and keeps them in sync between your Windows PCs with Syncthing, end-to-end encrypted and without a cloud in between.
+  It also keeps a versioned backup in your own Google Drive, with restore points you can roll back to.
+  When two PCs changed the same save, it asks which one to keep instead of guessing, and it leaves folders that Steam Cloud, OneDrive or Ubisoft Connect already sync to them.
+Moniker: syncer
+Tags:
+- backup
+- game-saves
+- gaming
+- google-drive
+- save-sync
+- savegames
+- sync
+- syncthing
+ReleaseNotesUrl: https://github.com/ApolloF/syncer/releases/tag/v{{VERSION}}
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

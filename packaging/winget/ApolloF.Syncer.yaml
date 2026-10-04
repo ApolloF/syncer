@@ -1,0 +1,7 @@
+# Template: render with packaging/render-manifests.ps1, don't submit as is.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json
+PackageIdentifier: ApolloF.Syncer
+PackageVersion: {{VERSION}}
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.10.0

@@ -1,0 +1,69 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Lost or overwritten saves? Don't uninstall anything yet: earlier versions are usually still in the backup (*Restore from backup* on the game) and in Syncthing's `.stversions` folder inside the save folder.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Games
+        2. Click ...
+        3. See ...
+  - type: input
+    id: version
+    attributes:
+      label: Syncer version
+      description: Shown at the bottom of *Settings*.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows version
+      options:
+        - Windows 11
+        - Windows 10
+    validations:
+      required: true
+  - type: dropdown
+    id: backup
+    attributes:
+      label: Backup method
+      options:
+        - Google Drive for desktop
+        - Sign in with Google (inside Syncer)
+        - No backup
+  - type: input
+    id: game
+    attributes:
+      label: Game(s) involved
+      description: Name and store, if the problem is about specific games.
+      placeholder: Elden Ring (Steam)
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        The last lines are under *Settings → Activity log → Show*. The full log is `%APPDATA%\Syncer\syncer.log` (and `syncer.log.1` for older lines); paste the part around the problem or attach the file.
+        Logs can contain game names, folder paths (with your Windows user name) and your Google account's email address. Remove what you don't want to share.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I'm on the latest release (Settings → Check for updates).
+        - label: I removed personal details I don't want to share from the log.
