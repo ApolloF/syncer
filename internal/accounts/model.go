@@ -290,15 +290,26 @@ func (r Record) Has(account string) bool {
 
 // LivePath resolves the game's save folder on this PC. Records come from
 // other PCs, so the path is checked like any shared folder's.
-func (r Record) LivePath() (string, bool) { return resolveLive(r) }
+func (r Record) LivePath() (string, bool) {
+	p, err := resolveLive(r)
+	return p, err == nil
+}
 
-// resolveLive is a var so tests can put save folders in a temp dir.
-var resolveLive = func(r Record) (string, bool) {
+// errNoLive is resolveLive's error for a path that isn't a save folder at all.
+var errNoLive = errors.New("the game's save folder isn't a valid place on this PC")
+
+// resolveLive is LivePath with the reason it's refused: paths.ErrLink when
+// this PC reaches the folder through a link. A var so tests can put save
+// folders in a temp dir.
+var resolveLive = func(r Record) (string, error) {
 	p, ok := paths.Resolve(r.Root, r.Rel)
-	if !ok || paths.CheckSyncable(p) != nil {
-		return "", false
+	if !ok {
+		return "", errNoLive
 	}
-	return p, true
+	if err := paths.CheckSyncable(p); err != nil {
+		return "", err
+	}
+	return p, nil
 }
 
 // ---- combining what the PCs published -----------------------------------------
@@ -400,7 +411,9 @@ func ValidRecord(r Record) bool {
 		strings.Contains(r.Game, sep) || len(r.Accounts) == 0 || len(r.Accounts) > MaxAccounts || len(r.Label) > 200 {
 		return false
 	}
-	if _, ok := r.LivePath(); !ok {
+	// A save folder this PC reaches through a link is still a valid record:
+	// running it tells the user why it can't be split here.
+	if _, err := resolveLive(r); err != nil && !errors.Is(err, paths.ErrLink) {
 		return false
 	}
 	seen := map[string]bool{}

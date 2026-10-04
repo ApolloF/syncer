@@ -877,6 +877,7 @@
     {:else if a.reason === 'steam-cloud'}<span class="pill" title="Steam Cloud keeps this folder on this PC, so it isn't synced here as well.">Steam Cloud here</span>
     {:else if a.reason === 'ubisoft-cloud'}<span class="pill" title="Ubisoft Connect keeps this folder in its cloud on this PC, so it isn't synced here as well.">Ubisoft Cloud here</span>
     {:else if a.reason === 'not-here'}<span class="pill" title="These saves are in Ubisoft Connect's save folder, and Ubisoft Connect isn't installed on this PC.">No Ubisoft Connect here</span>
+    {:else if a.reason === 'link'}<span class="pill warn" title="On this PC this folder is reached through a link (a junction or symbolic link) to another place. Syncer only syncs folders where they really are.">Linked folder here</span>
     {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
     {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
     {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
@@ -885,7 +886,7 @@
     {:else if a.reason === 'mod-vortex-here'}<span class="pill warn" title="Vortex on this PC deploys this game's mods itself. Receiving deployed mods too would mix two deployments in the game's folder.">Vortex deploys here</span>
     {:else if a.reason === 'mods-manual'}<span class="pill" title={modKinds[a.kind]?.tip}>{modKinds[a.kind]?.text ?? 'Mods'}</span>
     {:else}<span class="pill">Removed here</span>{/if}
-    <button class="btn sm" disabled={syncingId === a.id || ['not-here', 'mods-off', 'mods-experimental-off', 'mod-game-missing', 'mod-vortex-here'].includes(a.reason)} onclick={() => syncHere(a)}>
+    <button class="btn sm" disabled={syncingId === a.id || ['not-here', 'link', 'mods-off', 'mods-experimental-off', 'mod-game-missing', 'mod-vortex-here'].includes(a.reason)} onclick={() => syncHere(a)}>
       {#if syncingId === a.id}<Icon name="refresh" size={14} class="spin" />{:else}<Icon name="plus" size={14} />{/if}
       Sync here
     </button>

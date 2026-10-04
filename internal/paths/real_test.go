@@ -1,6 +1,7 @@
 package paths
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +109,13 @@ func TestCheckSyncableRefusesAliases(t *testing.T) {
 	for _, p := range refused {
 		if err := CheckSyncable(p); err == nil {
 			t.Errorf("CheckSyncable(%q) = nil, want refused", p)
+		}
+	}
+	// A link to a harmless folder says so; one into a sensitive folder or
+	// onto a whole root is plainly refused.
+	for _, p := range refused[:5] {
+		if err := CheckSyncable(p); errors.Is(err, ErrLink) != (p == refused[3] || p == refused[4]) {
+			t.Errorf("CheckSyncable(%q) = %v", p, err)
 		}
 	}
 	if err := CheckSensitive(refused[0]); err == nil {

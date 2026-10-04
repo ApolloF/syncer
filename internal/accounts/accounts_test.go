@@ -108,7 +108,7 @@ func newWorld(t *testing.T) *world {
 	oldDir, oldLocal, oldResolve := dir, localRoot, resolveLive
 	dir = func() string { return filepath.Join(root, "appdata") }
 	localRoot = func() string { return filepath.Join(root, "local") }
-	resolveLive = func(r Record) (string, bool) { return filepath.Join(root, filepath.FromSlash(r.Rel)), true }
+	resolveLive = func(r Record) (string, error) { return filepath.Join(root, filepath.FromSlash(r.Rel)), nil }
 	t.Cleanup(func() { dir, localRoot, resolveLive = oldDir, oldLocal, oldResolve; crashHook = nil })
 	_ = os.MkdirAll(dir(), 0o755)
 	w.env = Env{
@@ -970,5 +970,29 @@ func TestLivePathRefusesAliases(t *testing.T) {
 				t.Errorf("LivePath() for %q = %q, want refused", rel, p)
 			}
 		}
+	}
+}
+
+// A save folder this PC reaches through a link (moved to another drive with
+// a junction) is still a valid record, and splitting it says why it can't be
+// done instead of silently doing nothing.
+func TestSplitThroughLinkSaysSo(t *testing.T) {
+	w := newWorld(t)
+	alice, bob := w.setup()
+	resolveLive = func(Record) (string, error) { return "", paths.ErrLink }
+	r := w.splitRecord(alice, bob)
+	if !ValidRecord(r) {
+		t.Fatal("record refused")
+	}
+	if err := Start(context.Background(), w.env, r); !errors.Is(err, ErrSplitLink) {
+		t.Fatalf("err = %v, want %v", err, ErrSplitLink)
+	}
+	if _, ok := w.st.folders[FolderID(game, alice)]; ok {
+		t.Error("split carried out through a link")
+	}
+
+	resolveLive = func(Record) (string, error) { return "", errNoLive }
+	if ValidRecord(r) {
+		t.Error("record with an invalid save folder accepted")
 	}
 }

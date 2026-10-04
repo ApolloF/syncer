@@ -197,8 +197,11 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			continue // split into per-account folders: an older PC still publishes it
 		}
 		p, reason := Adoptable(sf, settings, installed, synced)
-		if reason == SkipUnsafe {
+		switch reason {
+		case SkipUnsafe:
 			warnOnce(sf.ID, "meta: not adopting %q (%s/%s): unsafe id or path", sf.ID, sf.Root, sf.Rel)
+		case SkipLink:
+			warnOnce(sf.ID, "meta: not adopting %q (%s): reached through a link on this PC", sf.ID, p)
 		}
 		if reason != "" {
 			continue
@@ -466,6 +469,7 @@ const (
 	SkipCopy         = "copy"          // a Steam emulator's copy of saves the game keeps itself
 	SkipUbisoftCloud = "ubisoft-cloud" // Ubisoft Connect's own save folder, in Ubisoft's cloud
 	SkipNoRoot       = "not-here"      // the folder it's in doesn't exist on this PC (no Ubisoft Connect)
+	SkipLink         = "link"          // this PC reaches the folder through a junction or symbolic link
 
 	// Mod folders.
 	SkipModsOff             = "mods-off"              // "Find installed mods" is off here
@@ -508,7 +512,12 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 		return "", SkipNoRoot
 	}
 	p, ok := paths.Resolve(sf.Root, sf.Rel)
-	if !ok || paths.CheckSyncable(p) != nil {
+	if !ok {
+		return "", SkipUnsafe
+	}
+	if err := paths.CheckSyncable(p); errors.Is(err, paths.ErrLink) {
+		return p, SkipLink
+	} else if err != nil {
 		return "", SkipUnsafe
 	}
 	if reason := commonSkips(sf, p, s, synced); reason != "" {

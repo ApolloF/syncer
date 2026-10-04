@@ -917,6 +917,11 @@ func (a *App) SyncAvailable(id string) error {
 			if v.Kind != "" {
 				return a.joinModAvailable(ctx, c, v)
 			}
+			// Folders that can't sync here are offered too (SkipLink): this
+			// says why.
+			if err := paths.CheckSyncable(v.Path); err != nil {
+				return err
+			}
 			return a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false)
 		}
 	}

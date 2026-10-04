@@ -270,6 +270,11 @@ var sensitivePaths = []rootSub{
 
 var errNotSyncable = errors.New("only folders inside your user profile, Documents, AppData, Saved Games or Ubisoft Connect's savegames can be synced between PCs")
 
+// ErrLink is CheckSyncable's error for a folder reached through a junction or
+// symbolic link (one moved to another drive, say): its files are somewhere
+// else than its path says, so it isn't synced there.
+var ErrLink = errors.New("this folder is reached through a link (a junction or symbolic link) to another place; Syncer only syncs folders where they really are")
+
 // CheckSyncable rejects an absolute path that must never become a shared
 // folder: outside all known roots, a whole root or protected container (or
 // an ancestor of one), or anywhere in a sensitive directory. Paired PCs
@@ -279,7 +284,8 @@ var errNotSyncable = errors.New("only folders inside your user profile, Document
 //
 // The path must also be what it spells on disk: no junction, link, short
 // name or stream between its root and the folder, which would let a peer
-// reach a sensitive folder under an innocent name.
+// reach a sensitive folder under an innocent name. A junction or link on the
+// way gives ErrLink.
 func CheckSyncable(abs string) error {
 	abs = filepath.Clean(abs)
 	root, rel, ok := Portable(abs)
@@ -287,6 +293,11 @@ func CheckSyncable(abs string) error {
 		return errNotSyncable
 	}
 	if err := checkReal(roots[root], rel, abs); err != nil {
+		// A link into a sensitive folder or onto a whole root is unsafe,
+		// not merely a link.
+		if errors.Is(err, ErrLink) && (CheckSensitive(abs) != nil || CheckContainer(abs) != nil) {
+			return errNotSyncable
+		}
 		return err
 	}
 	for _, r := range roots {
@@ -351,9 +362,12 @@ func realRoots() map[string]string {
 
 // checkReal rejects abs (base\rel, rel with forward slashes) unless the
 // filesystem resolves it to exactly that below base, wherever base itself
-// really is: no junction or symlink on the way, no short name, no other
-// spelling. Case doesn't matter.
+// really is: no junction or symlink on the way (ErrLink), no short name, no
+// other spelling. Case doesn't matter.
 func checkReal(base, rel, abs string) error {
+	if linkBelow(base, abs) {
+		return ErrLink
+	}
 	realBase, err := realPath(base)
 	if err != nil {
 		return errNotSyncable
@@ -366,7 +380,7 @@ func checkReal(base, rel, abs string) error {
 	if rel != "." && rel != "" {
 		want = filepath.Join(realBase, filepath.FromSlash(rel))
 	}
-	if !strings.EqualFold(real, want) || linkBelow(base, abs) {
+	if !strings.EqualFold(real, want) {
 		return errNotSyncable
 	}
 	return nil

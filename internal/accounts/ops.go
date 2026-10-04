@@ -15,6 +15,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/conflict"
 	"github.com/ApolloF/syncer/internal/logx"
+	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
@@ -393,8 +394,11 @@ func runSplit(ctx context.Context, env Env, j *Journal) error {
 		return err
 	}
 	if j.Step == splitPause {
-		live, ok := r.LivePath()
-		if !ok {
+		live, err := resolveLive(r)
+		if errors.Is(err, paths.ErrLink) {
+			return ErrSplitLink
+		}
+		if err != nil {
 			return nil // the game's folder doesn't exist on this PC: nothing to do
 		}
 		shared, has := fs[r.Game]
@@ -408,7 +412,7 @@ func runSplit(ctx context.Context, env Env, j *Journal) error {
 			return nil
 		}
 		if isLink(live) {
-			return errors.New("the save folder is a link to another folder; separating its saves isn't supported")
+			return ErrSplitLink
 		}
 		j.Live, j.Place = live, PlaceLive(r, Load().ActiveID())
 		j.Built = map[string]bool{}
@@ -988,7 +992,11 @@ func runMerge(ctx context.Context, env Env, j *Journal) error {
 		if len(ids) == 0 {
 			return nil // not synced here: the shared folder is adopted like any other
 		}
-		live, found := r.LivePath()
+		live, err := resolveLive(r)
+		if errors.Is(err, paths.ErrLink) {
+			return errMergeLink
+		}
+		found := err == nil
 		if found {
 			_, _, found = fs.atLive(r.Game, live)
 		}
@@ -1004,7 +1012,7 @@ func runMerge(ctx context.Context, env Env, j *Journal) error {
 			return errors.New("none of the saves are at the game's save folder on this PC")
 		}
 		if isLink(live) {
-			return errors.New("the save folder is a link to another folder; this isn't supported")
+			return errMergeLink
 		}
 		win := FolderID(r.Game, r.Winner)
 		wf, haveWin := fs[win]
@@ -1200,6 +1208,15 @@ func ValidLabel(label, id string) string {
 	}
 	return id
 }
+
+// A save folder reached through a link (a junction or symbolic link, one
+// moved to another drive, say) has its files somewhere else than its path:
+// moving folders around there isn't supported. ErrSplitLink is also what
+// starting a split there says.
+var (
+	ErrSplitLink = errors.New("the save folder is a link to another folder; separating its saves isn't supported")
+	errMergeLink = errors.New("the save folder is a link to another folder; this isn't supported")
+)
 
 // isLink reports whether p is a symbolic link or junction: its files live
 // somewhere else, and moving or copying it wouldn't move them.
