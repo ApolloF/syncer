@@ -1,4 +1,4 @@
-// Made-up PCs, games and backups for `npm run dev:mock`: the interface runs in a
+// Made-up PCs, accounts and backups of real games' save folders for `npm run dev:mock`: the interface runs in a
 // normal browser without the Go side, for design work, screenshots and GIFs.
 // It stands in for Wails' window.go and window.runtime, so the views and the
 // generated bindings stay exactly as they are in the app.
@@ -43,25 +43,25 @@ export function installMock() {
 
   // [title, save folder under the user's profile, size, files, minutes since last change, restore points]
   const games: [string, string, number, number, number, number][] = [
-    ['Ember Crown', 'Saved Games\\Ember Crown', 18 * MB, 42, 14, 6],
-    ['Frostline', 'AppData\\Local\\Frostline\\Saved', 64 * MB, 118, 52, 9],
-    ['Grimwald', 'Documents\\My Games\\Grimwald', 9 * MB, 27, 130, 5],
-    ['Hollow Tide', 'AppData\\Roaming\\HollowTide', 3.4 * MB, 12, 240, 8],
-    ['Iron Veil', 'Saved Games\\Iron Veil', 41 * MB, 64, 3, 12],
-    ['Lumen Drift', 'AppData\\LocalLow\\Driftworks\\Lumen Drift', 2.1 * MB, 9, 380, 4],
-    ['Neon Meridian', 'Documents\\Neon Meridian\\Profiles', 27 * MB, 55, 95, 7],
-    ['Quiet Harbor', 'AppData\\Local\\QuietHarbor\\Saves', 1.2 * MB, 6, 600, 3],
-    ['Sable Run', 'Documents\\Sable Run', 12 * MB, 31, 31, 10],
-    ['Starfall Protocol', 'AppData\\Local\\Starfall\\Saved\\SaveGames', 88 * MB, 203, 22, 11],
-    ['Tidebreaker', 'Saved Games\\Tidebreaker', 15 * MB, 38, 1500, 2],
-    ['Wicker & Ash', 'Documents\\Wicker and Ash', 5.6 * MB, 19, 2800, 6],
+    ["Baldur's Gate 3", "AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles",27 * MB, 55, 95, 7],
+    ['Black Myth: Wukong', 'AppData\\Local\\b1\\Saved', 64 * MB, 118, 52, 9],
+    ['Clair Obscur: Expedition 33', 'AppData\\Local\\Sandfall\\Saved\\SaveGames', 15 * MB, 38, 1500, 2],
+    ['Cyberpunk 2077', 'Saved Games\\CD Projekt Red\\Cyberpunk 2077', 18 * MB, 42, 14, 6],
+    ['Disco Elysium', 'AppData\\LocalLow\\ZAUM Studio\\Disco Elysium\\SaveGames', 1.2 * MB, 6, 600, 3],
+    ['ELDEN RING', 'AppData\\Roaming\\EldenRing', 3.4 * MB, 12, 240, 8],
+    ['Hollow Knight: Silksong', 'AppData\\LocalLow\\Team Cherry\\Hollow Knight Silksong', 2.1 * MB, 9, 380, 4],
+    ['Indiana Jones and the Great Circle', 'Saved Games\\MachineGames\\TheGreatCircle\\base\\savegame', 9 * MB, 27, 130, 5],
+    ['Kingdom Come: Deliverance II', 'Saved Games\\kingdomcome2\\saves', 41 * MB, 64, 3, 12],
+    ['Red Dead Redemption 2', 'Documents\\Rockstar Games\\Red Dead Redemption 2\\Profiles', 88 * MB, 203, 22, 11],
+    ['Stardew Valley', 'AppData\\Roaming\\StardewValley\\Saves', 12 * MB, 31, 31, 10],
+    ['The Witcher 3: Wild Hunt', 'Documents\\The Witcher 3\\gamesaves', 5.6 * MB, 19, 2800, 6],
   ]
 
   const folders: main.FolderView[] = games.map(([label, rel, bytes, files, changed, points]) =>
     main.FolderView.createFrom({
       id: slug(label), label, game: label, path: `${home}\\${rel}`, state: 'idle', bytes, files, points,
       needBytes: 0, errors: 0, problem: '', backup: true, sync: true, installed: true, exists: true, shared: 2,
-      conflicts: label === 'Hollow Tide' ? 1 : 0, modified: iso(changed), backedUp: iso(Math.min(changed + 20, 55)),
+      conflicts: label === 'ELDEN RING' ? 1 : 0, modified: iso(changed), backedUp: iso(Math.min(changed + 20, 55)),
       backupBytes: Math.round(bytes * 1.6), exclude: [], newerAt: null, split: false, account: '', kind: '',
     } satisfies Plain<main.FolderView>),
   )
@@ -80,32 +80,32 @@ export function installMock() {
   // A split game's saves per account: [file, size, minutes since it changed].
   type Save = [string, number, number]
   const splitSaves: Record<string, Record<string, Save[]>> = {
-    'frostline': {
+    'black-myth-wukong': {
       [alex]: [
-        ['SaveGames/Slot_01.sav', 21.4 * MB, 52], ['SaveGames/Slot_02.sav', 20.9 * MB, 1900], ['SaveGames/Slot_03.sav', 19.6 * MB, 6200],
-        ['SaveGames/Profile.sav', 180 * KB, 52], ['SaveGames/Achievements.sav', 24 * KB, 52],
+        ['SaveGames/ArchiveSaveFile.1.sav', 21.4 * MB, 52], ['SaveGames/ArchiveSaveFile.2.sav', 20.9 * MB, 1900], ['SaveGames/ArchiveSaveFile.3.sav', 19.6 * MB, 6200],
+        ['SaveGames/ArchiveSaveFile.4.sav', 180 * KB, 52], ['SaveGames/ArchiveSaveFile.5.sav', 24 * KB, 52],
         ['Config/Windows/GameUserSettings.ini', 3 * KB, 9000], ['Config/Windows/Input.ini', 2 * KB, 9000],
       ],
       [sam]: [
-        ['SaveGames/Slot_01.sav', 18.2 * MB, 1500], ['SaveGames/Slot_02.sav', 17.7 * MB, 4300], ['SaveGames/Profile.sav', 170 * KB, 1500],
-        ['SaveGames/Achievements.sav', 22 * KB, 1500], ['Config/Windows/GameUserSettings.ini', 3 * KB, 4300], ['Config/Windows/Input.ini', 2 * KB, 4300],
+        ['SaveGames/ArchiveSaveFile.1.sav', 18.2 * MB, 1500], ['SaveGames/ArchiveSaveFile.2.sav', 17.7 * MB, 4300], ['SaveGames/ArchiveSaveFile.4.sav', 170 * KB, 1500],
+        ['SaveGames/ArchiveSaveFile.5.sav', 22 * KB, 1500], ['Config/Windows/GameUserSettings.ini', 3 * KB, 4300], ['Config/Windows/Input.ini', 2 * KB, 4300],
       ],
       [mia]: [
-        ['SaveGames/Slot_01.sav', 9.8 * MB, 2900], ['SaveGames/Profile.sav', 150 * KB, 2900], ['SaveGames/Achievements.sav', 12 * KB, 2900],
+        ['SaveGames/ArchiveSaveFile.1.sav', 9.8 * MB, 2900], ['SaveGames/ArchiveSaveFile.4.sav', 150 * KB, 2900], ['SaveGames/ArchiveSaveFile.5.sav', 12 * KB, 2900],
         ['Config/Windows/GameUserSettings.ini', 3 * KB, 2900],
       ],
     },
-    'sable-run': {
+    'stardew-valley': {
       [alex]: [
-        ['saves/autosave.sav', 3.9 * MB, 31], ['saves/quicksave.sav', 3.8 * MB, 75], ['saves/chapter4.sav', 3.6 * MB, 2400],
-        ['profile.dat', 64 * KB, 31], ['settings.cfg', 2 * KB, 8000],
+        ['Willow_412739561/Willow_412739561', 3.9 * MB, 31], ['Willow_412739561/Willow_412739561_old', 3.8 * MB, 1471], ['Willow_412739561/SaveGameInfo', 64 * KB, 31],
+        ['Juniper_398112604/Juniper_398112604', 3.6 * MB, 2400], ['Juniper_398112604/SaveGameInfo', 60 * KB, 2400],
       ],
-      [sam]: [['saves/autosave.sav', 3.1 * MB, 2000], ['saves/chapter2.sav', 2.9 * MB, 5100], ['profile.dat', 60 * KB, 2000], ['settings.cfg', 2 * KB, 5100]],
+      [sam]: [['Ashfield_377405218/Ashfield_377405218', 3.1 * MB, 2000], ['Ashfield_377405218/Ashfield_377405218_old', 2.9 * MB, 3440], ['Ashfield_377405218/SaveGameInfo', 60 * KB, 2000]],
       // Added after the split: started fresh.
-      [mia]: [['saves/autosave.sav', 1.2 * MB, 2900], ['profile.dat', 41 * KB, 2900], ['settings.cfg', 2 * KB, 2900]],
+      [mia]: [['Clover_420551873/Clover_420551873', 1.2 * MB, 2900], ['Clover_420551873/SaveGameInfo', 41 * KB, 2900]],
     },
   }
-  const splits: main.SplitView[] = ['frostline', 'sable-run'].map(game => main.SplitView.createFrom({
+  const splits: main.SplitView[] = ['black-myth-wukong', 'stardew-valley'].map(game => main.SplitView.createFrom({
     game, label: folders.find(f => f.id === game)?.label, accounts: [alex, sam, mia], here: alex,
   } satisfies Plain<main.SplitView>))
 
@@ -167,7 +167,7 @@ export function installMock() {
   const named = (name: string, except = '') => people.some(a => a.id !== except && a.name.toLowerCase() === name.trim().toLowerCase())
   const newAccountID = () => Array.from({ length: 6 }, () => 'abcdefghijklmnopqrstuvwxyz234567'[Math.floor(Math.random() * 32)]).join('')
 
-  // ---- mods: Vortex manages Ember Crown and Iron Veil here (and Wicker & Ash, not synced yet) ----
+  // ---- mods: Vortex manages Cyberpunk 2077 and Kingdom Come: Deliverance II here (and The Witcher 3, not synced yet) ----
   const vortex = `${home}\\AppData\\Roaming\\Vortex`
   const modFolder = (v: Plain<main.FolderView>) => main.FolderView.createFrom({
     state: 'idle', needBytes: 0, errors: 0, problem: '', backup: false, sync: true, installed: true, exists: true, shared: 2,
@@ -175,42 +175,42 @@ export function installMock() {
     modRole: '', modPhase: '', modHeld: '', modHeldBy: '', modPending: '', ...v,
   } satisfies Plain<main.FolderView>)
   const modFolders: main.FolderView[] = [
-    modFolder({ id: 'ember-crown-vortex-mods', label: 'Ember Crown (Vortex mods)', path: `${vortex}\\embercrown\\mods`, kind: 'mods', modGame: 'embercrown', bytes: 3.2 * GB, files: 4870, modified: iso(190) }),
-    modFolder({ id: 'ember-crown-vortex-load-order', label: 'Ember Crown (Vortex load order)', path: `${vortex}\\embercrown\\profiles`, kind: 'mods-profiles', modGame: 'embercrown', bytes: 214 * KB, files: 9, modified: iso(190) }),
-    modFolder({ id: 'iron-veil-vortex-mods', label: 'Iron Veil (Vortex mods)', path: 'D:\\Vortex Mods\\ironveil', kind: 'mods', modGame: 'ironveil', bytes: 4.6 * GB, files: 11240, modified: iso(1400), shared: 1 }),
-    modFolder({ id: 'iron-veil-vortex-load-order', label: 'Iron Veil (Vortex load order)', path: `${vortex}\\ironveil\\profiles`, kind: 'mods-profiles', modGame: 'ironveil', bytes: 388 * KB, files: 14, modified: iso(1400), shared: 1 }),
-    // The living-room PC has no Vortex: this PC sends it Iron Veil's deployed mods (experimental).
-    modFolder({ id: 'iron-veil-deployed-mods', label: 'Iron Veil (deployed mods)', path: 'D:\\Games\\Iron Veil\\Data', kind: 'mods-deployed', modGame: 'ironveil', modRole: 'source', modPhase: 'idle', modPending: '912 files', bytes: 2.1 * GB, files: 912, modified: iso(1400), shared: 1 }),
+    modFolder({ id: 'cyberpunk-2077-vortex-mods', label: 'Cyberpunk 2077 (Vortex mods)', path: `${vortex}\\cyberpunk2077\\mods`, kind: 'mods', modGame: 'cyberpunk2077', bytes: 3.2 * GB, files: 4870, modified: iso(190) }),
+    modFolder({ id: 'cyberpunk-2077-vortex-load-order', label: 'Cyberpunk 2077 (Vortex load order)', path: `${vortex}\\cyberpunk2077\\profiles`, kind: 'mods-profiles', modGame: 'cyberpunk2077', bytes: 214 * KB, files: 9, modified: iso(190) }),
+    modFolder({ id: 'kingdom-come-deliverance-ii-vortex-mods', label: 'Kingdom Come: Deliverance II (Vortex mods)', path: 'D:\\Vortex Mods\\kingdomcomedeliverance2', kind: 'mods', modGame: 'kingdomcomedeliverance2', bytes: 4.6 * GB, files: 11240, modified: iso(1400), shared: 1 }),
+    modFolder({ id: 'kingdom-come-deliverance-ii-vortex-load-order', label: 'Kingdom Come: Deliverance II (Vortex load order)', path: `${vortex}\\kingdomcomedeliverance2\\profiles`, kind: 'mods-profiles', modGame: 'kingdomcomedeliverance2', bytes: 388 * KB, files: 14, modified: iso(1400), shared: 1 }),
+    // The living-room PC has no Vortex: this PC sends it Kingdom Come's deployed mods (experimental).
+    modFolder({ id: 'kingdom-come-deliverance-ii-deployed-mods', label: 'Kingdom Come: Deliverance II (deployed mods)', path: 'D:\\Games\\KingdomComeDeliverance2\\Mods', kind: 'mods-deployed', modGame: 'kingdomcomedeliverance2', modRole: 'source', modPhase: 'idle', modPending: '912 files', bytes: 2.1 * GB, files: 912, modified: iso(1400), shared: 1 }),
   ]
   const modSettings = (f: main.FolderView): store.ModFolder => store.ModFolder.createFrom({
     kind: f.kind, manager: 'vortex', game: f.modGame, gameName: f.label.replace(/ \(.*\)$/, ''),
     root: f.kind === 'mods-deployed' ? `game:${f.modGame}` : `vortex:${f.modGame}`,
-    rel: f.kind === 'mods-deployed' ? 'Data' : f.kind === 'mods' ? 'staging' : 'profiles', role: f.modRole || undefined,
+    rel: f.kind === 'mods-deployed' ? 'Mods' : f.kind === 'mods' ? 'staging' : 'profiles', role: f.modRole || undefined,
   } satisfies Plain<store.ModFolder>)
 
   // Found here but not synced yet.
   const modsFound = [
-    main.GameView.createFrom({ name: 'Wicker & Ash (Vortex mods)', path: `${vortex}\\wickerandash\\mods`, known: true, size: 640 * MB, files: 1210, modified: iso(4300), kind: 'mods', manager: 'vortex', modGame: 'wickerandash', modKey: 'vortex:wickerandash/staging', syncedBy: '', installed: true, dismissed: false } satisfies Plain<main.GameView>),
-    main.GameView.createFrom({ name: 'Wicker & Ash (Vortex load order)', path: `${vortex}\\wickerandash\\profiles`, known: true, size: 96 * KB, files: 5, modified: iso(4300), kind: 'mods-profiles', manager: 'vortex', modGame: 'wickerandash', modKey: 'vortex:wickerandash/profiles', syncedBy: '', installed: true, dismissed: false } satisfies Plain<main.GameView>),
+    main.GameView.createFrom({ name: 'The Witcher 3: Wild Hunt (Vortex mods)', path: `${vortex}\\witcher3\\mods`, known: true, size: 640 * MB, files: 1210, modified: iso(4300), kind: 'mods', manager: 'vortex', modGame: 'witcher3', modKey: 'vortex:witcher3/staging', syncedBy: '', installed: true, dismissed: false } satisfies Plain<main.GameView>),
+    main.GameView.createFrom({ name: 'The Witcher 3: Wild Hunt (Vortex load order)', path: `${vortex}\\witcher3\\profiles`, known: true, size: 96 * KB, files: 5, modified: iso(4300), kind: 'mods-profiles', manager: 'vortex', modGame: 'witcher3', modKey: 'vortex:witcher3/profiles', syncedBy: '', installed: true, dismissed: false } satisfies Plain<main.GameView>),
   ]
   // Synced by the laptop; mod folders are added by hand here.
   const available: main.AvailableView[] = [
-    main.AvailableView.createFrom({ id: 'neon-meridian-vortex-mods', label: 'Neon Meridian (Vortex mods)', path: `${vortex}\\neonmeridian\\mods`, from: 'Laptop', reason: 'mods-manual', kind: 'mods', modGame: 'neonmeridian' } satisfies Plain<main.AvailableView>),
+    main.AvailableView.createFrom({ id: 'baldur-s-gate-3-vortex-mods', label: "Baldur's Gate 3 (Vortex mods)", path: `${vortex}\\baldursgate3\\mods`, from: 'Laptop', reason: 'mods-manual', kind: 'mods', modGame: 'baldursgate3' } satisfies Plain<main.AvailableView>),
   ]
 
   // Vortex's mod lists, shared between the PCs that sync a game's Vortex mods.
   const shares: Record<string, Plain<main.VortexShareView>> = {
-    embercrown: { game: 'embercrown', name: 'Ember Crown', mods: 46, enabled: 41, waiting: 0, checked: iso(25), applied: iso(130), appliedN: 3, err: '', peers: ['Laptop', 'Living-room PC'], pushing: false },
-    ironveil: { game: 'ironveil', name: 'Iron Veil', mods: 128, enabled: 117, waiting: 0, checked: iso(40), applied: iso(1400), appliedN: 12, err: '', peers: ['Laptop'], pushing: false },
+    cyberpunk2077: { game: 'cyberpunk2077', name: 'Cyberpunk 2077', mods: 46, enabled: 41, waiting: 0, checked: iso(25), applied: iso(130), appliedN: 3, err: '', peers: ['Laptop', 'Living-room PC'], pushing: false },
+    kingdomcomedeliverance2: { game: 'kingdomcomedeliverance2', name: 'Kingdom Come: Deliverance II', mods: 128, enabled: 117, waiting: 0, checked: iso(40), applied: iso(1400), appliedN: 12, err: '', peers: ['Laptop'], pushing: false },
   }
   const vortexShares = () => settings.shareVortexMods
     ? Object.values(shares).filter(s => modFolders.some(f => f.kind === 'mods' && f.modGame === s.game)).map(s => main.VortexShareView.createFrom(s))
     : []
 
   const audits: Plain<mods.AuditEntry>[] = [
-    { at: iso(1400), folder: 'iron-veil-deployed-mods', label: 'Iron Veil (deployed mods)', phase: 'source', gen: 7, ok: true, summary: "Vortex's deployment changed: 912 files", checks: [] },
-    { at: iso(60 * 24 * 6), folder: 'iron-veil-deployed-mods', label: 'Iron Veil (deployed mods)', phase: 'source', gen: 6, ok: true, summary: "Vortex's deployment changed: 904 files", checks: [] },
-    { at: iso(60 * 24 * 9), folder: 'iron-veil-deployed-mods', label: 'Iron Veil (deployed mods)', phase: 'source', gen: 1, ok: true, summary: 'This PC sends 897 deployed mod files', checks: [] },
+    { at: iso(1400), folder: 'kingdom-come-deliverance-ii-deployed-mods', label: 'Kingdom Come: Deliverance II (deployed mods)', phase: 'source', gen: 7, ok: true, summary: "Vortex's deployment changed: 912 files", checks: [] },
+    { at: iso(60 * 24 * 6), folder: 'kingdom-come-deliverance-ii-deployed-mods', label: 'Kingdom Come: Deliverance II (deployed mods)', phase: 'source', gen: 6, ok: true, summary: "Vortex's deployment changed: 904 files", checks: [] },
+    { at: iso(60 * 24 * 9), folder: 'kingdom-come-deliverance-ii-deployed-mods', label: 'Kingdom Come: Deliverance II (deployed mods)', phase: 'source', gen: 1, ok: true, summary: 'This PC sends 897 deployed mod files', checks: [] },
   ]
 
   let settings = store.Settings.createFrom({
