@@ -6,7 +6,7 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
 
 - **Bugs:** use the [bug report](https://github.com/ApolloF/syncer/issues/new?template=bug_report.yml) form and include the part of `%APPDATA%\Syncer\syncer.log` around the problem. Remove anything personal first (paths with your user name, your email address).
 - **A game isn't found:** use the [game form](https://github.com/ApolloF/syncer/issues/new?template=game_request.yml). Save locations come from PCGamingWiki through the Ludusavi manifest, so fixing the game's PCGamingWiki page helps every tool that uses it.
-- **Security issues:** don't open a public issue. Email privacy@apollof.nl instead.
+- **Security issues:** don't open a public issue. Email me@apollof.nl instead.
 
 ## Code changes
 
