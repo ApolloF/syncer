@@ -23,7 +23,9 @@ import (
 // files that point lacks move there, the rest are dropped. Versions hold what
 // a file was before a run replaced it, so a file the older point lacks hadn't
 // changed in between and the moved copy is exactly what it was then: every
-// remaining point restores the same as before. Only points older than
+// remaining point restores the same as before. A point with a kept aside
+// point (see AsideDir) between it and that older point stays instead, since
+// restoring to the aside point lays it over. Only points older than
 // KeepDays are deleted outright; the backup itself always keeps the latest.
 //
 // KeepDays is the longest setting of the PCs backing a folder up (keepFor),
@@ -91,19 +93,24 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 	aside := marks(root, AsideDir)
 	gone := map[string]bool{} // points removed here
 	last := ""                // nearest older point that stays, made by a backup run
+	asideAfter := false       // an aside point stays between last and this one
 	for i := len(pts) - 1; i >= 0; i-- {
 		stamp := pts[i].Format(stampFmt)
 		dir := filepath.Join(root, stamp)
 		switch {
-		case keep[i]:
+		case keep[i] && aside[stamp]:
 			// An aside point only counts as the point restored to, so a
 			// thinned point's files must not go into it.
-			if !aside[stamp] {
-				last = dir
-			}
+			asideAfter = true
+		case keep[i]:
+			last, asideAfter = dir, false
 		case at[i].Before(cut):
 			_ = os.RemoveAll(dir)
 			gone[stamp] = true
+		case asideAfter:
+			// Restoring to that aside point lays this point's files over it;
+			// moved into last, older than the aside point, they wouldn't be.
+			last, asideAfter = dir, false
 		case last != "":
 			if merge(dir, last) == nil {
 				mergeOrigin(dir, last)

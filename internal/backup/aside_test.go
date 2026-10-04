@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -94,23 +95,51 @@ func TestAsidePointsAreMarked(t *testing.T) {
 }
 
 // Thinning never moves a run's files into an aside point, where restores
-// would no longer see them.
+// would no longer see them, nor past one into an older point: restoring to
+// the aside point lays the run's files over it, so it stays as it was.
 func TestPruneDoesNotMergeIntoAsidePoint(t *testing.T) {
 	target, id, now, at := pruneFixture(t)
-	// An aside point between B and C, which is thinned into the point
-	// before it.
+	// An aside point between B and C, which would be thinned into B.
 	a := at["B"].Add(30 * time.Minute)
 	dir := filepath.Join(target, VersionsDir, id, a.Format(stampFmt))
 	write(t, filepath.Join(dir, "other.sav"), "aside")
 	pin(target, id, a)
 	markStamp(target, id, AsideDir, a.Format(stampFmt))
+	before := state(t, target, id, a)
 
 	pruneFolder(target, id, 30, now, true)
-	if !points(target, id)[a] {
+	pts := points(target, id)
+	if !pts[a] {
 		t.Fatal("aside point thinned")
+	}
+	if !pts[at["C"]] {
+		t.Fatal("C thinned past the aside point")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "sub", "y.sav")); err == nil {
 		t.Error("C merged into the aside point")
+	}
+	b := filepath.Join(target, VersionsDir, id, at["B"].Format(stampFmt))
+	if _, err := os.Stat(filepath.Join(b, "sub", "y.sav")); err == nil {
+		t.Error("C merged into B")
+	}
+	if got := state(t, target, id, a); !reflect.DeepEqual(got, before) {
+		t.Errorf("restoring the aside point gives %v, was %v", got, before)
+	}
+}
+
+// Without an aside point in between, a thinned point still goes into the
+// nearest older run point.
+func TestPruneMergesPastAsidePointOutsideTheGap(t *testing.T) {
+	target, id, now, at := pruneFixture(t)
+	// An aside point a week before B: B to C has none between them.
+	a := at["B"].AddDate(0, 0, -8)
+	write(t, filepath.Join(target, VersionsDir, id, a.Format(stampFmt), "other.sav"), "aside")
+	pin(target, id, a)
+	markStamp(target, id, AsideDir, a.Format(stampFmt))
+
+	pruneFolder(target, id, 30, now, true)
+	if points(target, id)[at["C"]] {
+		t.Fatal("C not thinned")
 	}
 	b := filepath.Join(target, VersionsDir, id, at["B"].Format(stampFmt))
 	if read(t, filepath.Join(b, "sub", "y.sav")) != "y0" {
