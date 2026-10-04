@@ -1,8 +1,10 @@
 # Privacy
 
+Last updated: 4 October 2026
+
 Syncer is a free Windows app that keeps your PC game saves in sync between your own PCs and backs them up to your own Google Drive. It runs on your PCs and has no server of its own. ApolloF, who publishes Syncer, receives no data from the app: no account, no telemetry, no crash reports.
 
-The same text is published at https://apps.apollof.nl/syncer/privacy/.
+This policy is also published at https://apps.apollof.nl/syncer/privacy/.
 
 ## Who is responsible
 
@@ -57,7 +59,7 @@ Everything Syncer stores stays on your PCs and in your Drive until you delete it
 
 - *Sign out* on the Backup page deletes the token and asks Google to revoke Syncer's access.
 - *Settings → Undo everything* stops syncing and can unlink your PCs and delete the backups. Your save files are never deleted.
-- Uninstall Syncer from *Settings → Apps* in Windows. Delete `My Drive\GameSaveBackup` in Google Drive to remove the backups.
+- Uninstall Syncer from *Settings → Apps* in Windows. Uninstalling keeps `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syncer`; sign out first, then delete those folders to remove everything from the PC. Delete `My Drive\GameSaveBackup` in Google Drive to remove the backups.
 
 ## Your rights
 
