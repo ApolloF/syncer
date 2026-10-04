@@ -3,6 +3,7 @@
 // It stands in for Wails' window.go and window.runtime, so the views and the
 // generated bindings stay exactly as they are in the app.
 import { accounts, backup, conflict, main, mods, store } from '../../wailsjs/go/models'
+import type * as App from '../../wailsjs/go/main/App'
 
 const GB = 1024 ** 3
 const MB = 1024 ** 2
@@ -308,7 +309,8 @@ export function installMock() {
     changed()
   }
 
-  const impl: Partial<Record<string, (...a: any[]) => unknown>> = {
+  // Keyed and typed by the generated bindings, so a renamed or changed Go method fails `npm run check`.
+  const impl: { [K in keyof typeof App]?: (...a: Parameters<(typeof App)[K]>) => unknown } = {
     Overview: overview,
     Folders: all,
     Devices: () => devices,
@@ -405,6 +407,7 @@ export function installMock() {
     },
     SplitGame: async (id: string, assign: Record<string, string>) => {
       const f = folder(id)
+      if (f.kind?.startsWith('mods')) throw new Error("mods are shared by every account; only a game's saves can be separated")
       if (f.split) throw new Error('this game already has separate saves per account')
       await wait(1800)
       // Every account starts with a copy of the saves as they are now.
@@ -431,7 +434,7 @@ export function installMock() {
   const w = window as any
   // Unknown calls (opening folders, pickers, sign-in) quietly do nothing.
   w.go = { main: { App: new Proxy({}, { get: (_, name: string) => async (...args: unknown[]) => {
-    const fn = impl[name]
+    const fn = impl[name as keyof typeof App] as ((...a: unknown[]) => unknown) | undefined
     const v = fn ? await fn(...args) : null
     return v == null ? v : JSON.parse(JSON.stringify(v))
   } }) } }
