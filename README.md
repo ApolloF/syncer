@@ -87,7 +87,7 @@ All features, from Steam Cloud detection to separate saves per person and syncin
 Syncer has no server of its own, and the developer receives no data from it: no account, no telemetry, no crash reports.
 
 - Your saves go directly between your PCs (Syncthing) and into your own Google Drive.
-- *Sign in with Google* asks for one permission, `drive.file`: access only to the files Syncer creates. It can't see anything else in your Drive. The sign-in token stays on your PC, encrypted for your Windows account, and *Sign out* revokes it at Google.
+- *Sign in with Google* asks for one permission, `drive.file`: access only to the files Syncer creates. It can't see anything else in your Drive. The sign-in token stays on your PC, encrypted for your Windows account, and *Sign out* deletes it and asks Google to revoke Syncer's access.
 - Syncthing's public discovery servers see your PCs' device IDs and IP addresses, as with any Syncthing setup. GitHub (game list, update check) and Google (time check) see your IP address, as with any web request.
 - Settings and logs stay on your PC in `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syncer`.
 
