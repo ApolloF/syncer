@@ -5,6 +5,8 @@
   import SplitDialog from '../lib/SplitDialog.svelte'
   import { ui, attempt, fail, refresh, refreshAccounts, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago } from '../lib/fmt'
+  import { plural } from '../lib/folders'
+  import { conflictBadge } from '../lib/conflicts'
   import {
     CreateAccount, EditAccount, DeleteAccount, SwitchAccount, MergeGame, RetryAccountChange, Folders, SaveOwners, OpenPath,
     Conflicts, ResolveConflict,
@@ -61,7 +63,8 @@
 
   async function loadShared() {
     // A launcher's own data is per account already (each card lists its part).
-    try { shared = ((await Folders()) ?? []).filter(f => f.sync && !f.split && f.kind !== 'launcher') } catch { /* shown elsewhere */ }
+    // Mod folders and a launcher's own data (any kind) stay shared by every account.
+    try { shared = ((await Folders()) ?? []).filter(f => f.sync && !f.split && !f.kind) } catch { /* shown elsewhere */ }
   }
 
   async function run(key: string, fn: () => Promise<unknown>, ok?: string) {
@@ -116,7 +119,6 @@
     }
   }
 
-  function plural(n: number, word: string) { return `${n} ${word}${n === 1 ? '' : 's'}` }
   // Games with separate saves, without the launcher data listed with them.
   const splitGames = (games: main.SplitSave[]) => games.filter(g => !g.launcher)
 </script>
@@ -196,7 +198,7 @@
               </button>
               {#if g.conflicts}
                 <button class="pill warn linkish resolve" title="Two versions of a save: choose which to keep" onclick={() => openConflicts(g)}>
-                  {g.conflicts === 1 ? '2 versions' : `${g.conflicts} conflicts`} · choose
+                  {conflictBadge(g.conflicts)} · choose
                 </button>
               {/if}
               {#if open[g.folderID] && g.synced}
@@ -259,7 +261,7 @@
           <button class="linkrow grow" aria-expanded={!!open[f.id]} onclick={() => toggleOwners(f)}>
             <Icon name="chevron" size={14} class={open[f.id] ? '' : 'rot'} />
             <span class="name ellipsis">{f.label}</span>
-            {#if f.conflicts}<span class="pill warn">{f.conflicts === 1 ? '2 versions' : `${f.conflicts} conflicts`}</span>{/if}
+            {#if f.conflicts}<span class="pill warn">{conflictBadge(f.conflicts)}</span>{/if}
           </button>
           <button class="btn sm" onclick={() => (splitFor = f)}><Icon name="split" size={14} /> Separate saves…</button>
         </div>

@@ -1,0 +1,44 @@
+name: Game not found
+description: Syncer doesn't find a game's saves, or finds the wrong folder.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Syncer finds saves through the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest), which is built from [PCGamingWiki](https://www.pcgamingwiki.com). If the game's save location is missing or wrong there, fixing the game's PCGamingWiki page fixes it for every Ludusavi-based tool; Syncer refreshes the list every week.
+        Until then you can add the folder yourself: *Games → Add folder*.
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      placeholder: Hollow Knight
+    validations:
+      required: true
+  - type: input
+    id: store
+    attributes:
+      label: Store or source
+      placeholder: Steam, Epic, GOG, Xbox app, EA app, Ubisoft Connect, standalone installer ...
+    validations:
+      required: true
+  - type: input
+    id: pcgw
+    attributes:
+      label: PCGamingWiki page
+      placeholder: https://www.pcgamingwiki.com/wiki/...
+  - type: textarea
+    id: location
+    attributes:
+      label: Where the saves really are
+      description: The folder on your PC, with your user name replaced by `<user>`, e.g. `C:\Users\<user>\AppData\LocalLow\Team Cherry\Hollow Knight`.
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: What Syncer shows
+      description: Not listed at all, listed under *Found on this PC* with the wrong folder, marked as covered by Steam Cloud, ...
+  - type: input
+    id: version
+    attributes:
+      label: Syncer version
+      description: Shown at the bottom of *Settings*.

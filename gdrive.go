@@ -176,13 +176,19 @@ func (a *App) SignInGoogle() (string, error) {
 	return account, nil
 }
 
+// errNotRevoked is returned when signing out worked on this PC but Google
+// couldn't be told to drop Syncer's access.
+var errNotRevoked = errors.New("Signed out on this PC, but couldn't reach Google to revoke access. Remove it at myaccount.google.com/permissions.")
+
 // SignOutGoogle signs out of Google and goes back to Google Drive for
 // desktop. The backup already in Drive stays there; the copy on this PC too
-// (signing in to the same account again carries on with it).
+// (signing in to the same account again carries on with it). The token is
+// deleted even when Google can't be reached; that is then reported.
 func (a *App) SignOutGoogle() error {
+	var revokeErr error
 	if tok, err := gdrive.LoadToken(); err == nil {
 		ctx, cancel := a.callCtx()
-		_ = gdrive.Revoke(ctx, tok)
+		revokeErr = gdrive.Revoke(ctx, tok)
 		cancel()
 	}
 	if err := gdrive.DeleteToken(); err != nil {
@@ -193,6 +199,10 @@ func (a *App) SignOutGoogle() error {
 	}
 	logx.Printf("signed out of Google")
 	runtime.EventsEmit(a.ctx, "changed")
+	if revokeErr != nil {
+		logx.Printf("revoking Google access: %v", revokeErr)
+		return errNotRevoked
+	}
 	return nil
 }
 

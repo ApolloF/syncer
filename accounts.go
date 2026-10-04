@@ -721,7 +721,11 @@ func (a *App) RetryAccountChange() error {
 // account gets the copy's version of the file, the others the current one.
 func (a *App) SplitGame(id string, assign map[string]string) error {
 	st := accounts.Load()
-	if !store.LoadSettings().Accounts {
+	settings := store.LoadSettings()
+	if _, ok := settings.Mods[id]; ok {
+		return errors.New("mods are shared by every account; only a game's saves can be separated")
+	}
+	if !settings.Accounts {
 		return errors.New("turn on accounts in Settings first")
 	}
 	live := st.Live()
@@ -731,7 +735,7 @@ func (a *App) SplitGame(id string, assign map[string]string) error {
 	if _, _, ok := accounts.ParseFolderID(id); ok {
 		return errors.New("this game already has separate saves per account")
 	}
-	if l, ok := store.LoadSettings().Launchers[id]; ok {
+	if l, ok := settings.Launchers[id]; ok {
 		return fmt.Errorf("this is %s's own data; it keeps each account's apart by itself", l)
 	}
 	return a.withEnv(func(ctx context.Context, c *syncthing.Client, env accounts.Env) error {

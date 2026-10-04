@@ -29,7 +29,9 @@
   }
 
   async function signOut() {
-    if (await attempt(SignOutGoogle)) refresh()
+    // Signed out here even when Google couldn't be reached; that comes back as an error to show.
+    await attempt(SignOutGoogle)
+    refresh()
   }
   const lb = $derived(o?.lastBackup)
   let showErrors = $state(false)
