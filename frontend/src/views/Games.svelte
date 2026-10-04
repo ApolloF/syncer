@@ -791,7 +791,7 @@
         title={f.exclude?.length ? `Skipped files: ${f.exclude.join(', ')}` : 'Skip files (logs, screenshots, …)'}
         onclick={() => openExclude(f)}><Icon name="filter" size={16} /></button>
       <button class="btn ghost icon sm" title="Restore from backup" onclick={() => (restoreFor = f)}><Icon name="history" size={16} /></button>
-      {#if canSplit && f.sync && !f.split}
+      {#if canSplit && f.sync && !f.split && !isMod(f.kind)}
         <button class="btn ghost icon sm" title="Separate saves per account" onclick={() => (splitFor = f)}><Icon name="split" size={16} /></button>
       {/if}
       {#if !f.split}
@@ -1130,12 +1130,12 @@
 {#if conflictsFor}
   <Modal title="Two versions of {conflictsFor.label}" onclose={() => (conflictsFor = null)}>
     <p>Two PCs changed the same save. The game loads the current one; the other was kept aside. Close the game, then pick which to keep. The version you don't pick goes into the backup history, so you can still restore it.</p>
-    {#if canSplit && !conflictsFor.split}
+    {#if canSplit && !conflictsFor.split && !isMod(conflictsFor.kind)}
       {@const f = conflictsFor}
       <div class="notice row splitask">
         <Icon name="users" size={16} />
         <span class="grow small">Are these two different people's saves? Give each account its own saves instead of picking one.</span>
-        <button class="btn sm" onclick={() => { conflictsFor = null; splitFor = f }}><Icon name="split" size={14} /> Separate saves…</button>
+        <button class="btn sm" onclick={() => { splitFor = f; conflictsFor = null }}><Icon name="split" size={14} /> Separate saves…</button>
       </div>
     {/if}
     <div class="conflicts">

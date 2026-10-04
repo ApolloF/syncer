@@ -63,7 +63,8 @@
 
   async function loadShared() {
     // A launcher's own data is per account already (each card lists its part).
-    try { shared = ((await Folders()) ?? []).filter(f => f.sync && !f.split && f.kind !== 'launcher') } catch { /* shown elsewhere */ }
+    // Mod folders and a launcher's own data (any kind) stay shared by every account.
+    try { shared = ((await Folders()) ?? []).filter(f => f.sync && !f.split && !f.kind) } catch { /* shown elsewhere */ }
   }
 
   async function run(key: string, fn: () => Promise<unknown>, ok?: string) {

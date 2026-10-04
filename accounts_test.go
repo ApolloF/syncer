@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -121,5 +123,31 @@ func TestLauncherSaveListsOnlyTheAccountsPart(t *testing.T) {
 	}
 	if _, ok := launcherSave(f, "Seaglass", "acc3", false); ok {
 		t.Error("an account without a subfolder got a row")
+	}
+}
+
+// Mods are the same for everyone, so their folders never get split per
+// account, whatever kind they are.
+func TestSplitGameRejectsModFolders(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	kinds := []string{mods.KindStaging, mods.KindProfiles, mods.KindDeployed}
+	if _, err := store.UpdateSettings(func(s *store.Settings) {
+		s.Accounts = true
+		s.Mods = map[string]store.ModFolder{}
+		for _, k := range kinds {
+			s.Mods[k] = store.ModFolder{Kind: k, Game: "skyrimse"}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{}
+	for _, k := range kinds {
+		err := a.SplitGame(k, nil)
+		if err == nil || !strings.Contains(err.Error(), "mods are shared") {
+			t.Errorf("SplitGame(%s) = %v, want mods refused", k, err)
+		}
+	}
+	if err := a.SplitGame("bg3", nil); err == nil || strings.Contains(err.Error(), "mods are shared") {
+		t.Errorf("SplitGame(bg3) = %v, want a game not refused as mods", err)
 	}
 }
