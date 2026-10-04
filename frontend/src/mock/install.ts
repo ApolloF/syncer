@@ -309,7 +309,7 @@ export function installMock() {
     changed()
   }
 
-  // Keyed and typed by the generated bindings, so a renamed or changed Go method fails `npm run check`.
+  // Keyed and typed by the generated bindings, so a renamed Go method or changed parameters fail `npm run check`.
   const impl: { [K in keyof typeof App]?: (...a: Parameters<(typeof App)[K]>) => unknown } = {
     Overview: overview,
     Folders: all,
