@@ -13,7 +13,7 @@ func TestResolveRefusesUntrustedPaths(t *testing.T) {
 	home, docs := t.TempDir(), t.TempDir()
 	defer paths.SetRootForTest(paths.Home, home)()
 	defer paths.SetRootForTest(paths.Documents, docs)()
-	for _, d := range []string{`.ssh`, `AppData\Roaming\Microsoft`, `MICROS~1`, `Game\Saves`} {
+	for _, d := range []string{`.ssh`, `AppData\Roaming\Microsoft`, `MICROS~1`, `Game\Saves`, `x~y`} {
 		writeStoreFile(t, filepath.Join(home, d, "f"), "x")
 	}
 	writeStoreFile(t, filepath.Join(docs, "My Games", "Game", "s.sav"), "x")
@@ -25,6 +25,8 @@ func TestResolveRefusesUntrustedPaths(t *testing.T) {
 		"<winDocuments>/../.ssh",
 		"<winDocuments>/My Games/../../.ssh",
 		"<home>/MICROS~1",
+		"<home>/MICROS~1.TXT",
+		"<home>/PROGRA~1/Game",
 		"<home>/Game/Saves::$INDEX_ALLOCATION",
 		`<home>\*`,
 	} {
@@ -35,6 +37,7 @@ func TestResolveRefusesUntrustedPaths(t *testing.T) {
 	for raw, want := range map[string]string{
 		"<home>/Game/*":                filepath.Join(home, "Game", "Saves"),
 		"<winDocuments>/My Games/Game": filepath.Join(docs, "My Games", "Game"),
+		"<home>/x~y":                   filepath.Join(home, "x~y"),
 	} {
 		if got := resolve(raw, "me", newExistCache()); len(got) != 1 || got[0] != want {
 			t.Errorf("resolve(%q) = %q, want %q", raw, got, want)

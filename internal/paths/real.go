@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -179,7 +180,18 @@ func hasStream(p string) bool {
 }
 
 // badSegment reports whether a relative path segment from another PC could
-// name something else than it says: a stream (":") or a short name ("~").
+// name something else than it says: a stream (":") or a short name.
 func badSegment(seg string) bool {
-	return strings.ContainsAny(seg, ":~")
+	return strings.Contains(seg, ":") || LooksShort(seg)
 }
+
+// shortNameForm matches the form of an 8.3 short name's tail: "~" and
+// digits at the end of the name or before its extension (PROGRA~1,
+// MICROS~1.TXT).
+var shortNameForm = regexp.MustCompile(`~[0-9]+(\.[^.]*)?$`)
+
+// LooksShort reports whether a file or folder name has the form of an 8.3
+// short name, which may stand for a folder of another name. Other names
+// with a "~" are fine: a real short name elsewhere is caught on disk by
+// CheckSyncable.
+func LooksShort(name string) bool { return shortNameForm.MatchString(name) }

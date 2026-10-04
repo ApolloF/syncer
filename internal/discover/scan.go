@@ -317,7 +317,7 @@ func trusted(raw string) bool {
 		if seg == "." {
 			continue
 		}
-		if seg == ".." || strings.ContainsAny(seg, ":~") || first && strings.ContainsAny(seg, "*?[") {
+		if seg == ".." || strings.Contains(seg, ":") || paths.LooksShort(seg) || first && strings.ContainsAny(seg, "*?[") {
 			return false
 		}
 		first = false

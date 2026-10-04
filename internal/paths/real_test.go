@@ -80,6 +80,21 @@ func TestResolveRefusesOtherSpellings(t *testing.T) {
 	}
 }
 
+// Only names of a short name's form are refused as such: a "~" elsewhere in
+// a name is an ordinary character.
+func TestResolveShortNameForm(t *testing.T) {
+	for _, rel := range []string{"x~y", "Game~Saves/slot", "~tmp", "a~1b", "Saves/v~2.0.1"} {
+		if _, ok := Resolve(Home, rel); !ok {
+			t.Errorf("Resolve(home, %q) refused", rel)
+		}
+	}
+	for _, rel := range []string{"PROGRA~1", "MICROS~1.TXT", "Games/SAVEGA~12", "a~1."} {
+		if p, ok := Resolve(Home, rel); ok {
+			t.Errorf("Resolve(home, %q) = %q, want refused", rel, p)
+		}
+	}
+}
+
 // A paired PC names a folder through a junction, a short name or a stream:
 // it must be refused, though its spelling is harmless.
 func TestCheckSyncableRefusesAliases(t *testing.T) {
