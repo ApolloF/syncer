@@ -12,6 +12,12 @@ func junction(t *testing.T, link, target string) {
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
 		t.Skipf("can't create a junction: %v %s", err, out)
 	}
+	// A process of a packaged (MSIX) app has its AppData writes redirected to
+	// the package's own folder, while a junction keeps the path it was given:
+	// there it leads nowhere, and a test through it would test nothing.
+	if _, err := os.Stat(link); err != nil {
+		t.Skipf("can't follow a junction here (AppData redirected?): %v", err)
+	}
 }
 
 func TestValidInvRelWindowsNames(t *testing.T) {
