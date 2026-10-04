@@ -58,9 +58,10 @@ func TestCheckModSyncableJunctionInside(t *testing.T) {
 	fv := setupDeployed(t)
 	real := filepath.Join(fv.base, "RealData")
 	write(t, filepath.Join(real, "x.esp"), "x")
+	// Written on the real side: Go doesn't treat a junction as a folder to create into.
+	write(t, filepath.Join(real, "Sub", "y.esp"), "y")
 	junction(t, filepath.Join(fv.game, "Linked"), real)
 	sub := filepath.Join(fv.game, "Linked", "Sub")
-	write(t, filepath.Join(sub, "y.esp"), "y")
 	if err := CheckModSyncable(KindDeployed, sub); err == nil {
 		t.Error("deployed folder below a junction accepted")
 	}
