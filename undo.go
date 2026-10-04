@@ -210,7 +210,8 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 	return rep, nil
 }
 
-// unpairAll removes every linked PC and pending request; returns how many PCs.
+// unpairAll removes every linked PC that runs Syncer (devices linked for
+// other things stay) and pending request; returns how many PCs.
 func unpairAll(ctx context.Context, c *syncthing.Client, me string, note func(string, ...any)) int {
 	n := 0
 	ds, err := c.Devices(ctx)
@@ -226,6 +227,7 @@ func unpairAll(ctx context.Context, c *syncthing.Client, me string, note func(st
 			note("Couldn't unlink %s: %v", cmpOr(d.Name, d.DeviceID[:7]), err)
 			continue
 		}
+		meta.ForgetSyncerPC(d.DeviceID)
 		n++
 	}
 	if p, err := c.PendingDevices(ctx); err == nil {

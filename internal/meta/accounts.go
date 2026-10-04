@@ -78,6 +78,22 @@ func WithoutFeature(devices []string, feature string) []string {
 	return out
 }
 
+// accountSkip is why an account folder (id) of split game, which other PCs
+// sync, is deliberately not synced here ("" if it may be, or the game isn't
+// known as split here yet). have are the folders Syncthing has.
+func accountSkip(ast accounts.State, id, game string, have map[string]bool, s store.Settings,
+	installed func(string) bool, synced []string) string {
+	if s.Ignored[id] {
+		return SkipRemoved
+	}
+	r, ok := ast.Split(game)
+	if !ok || haveGame(have, game) {
+		return ""
+	}
+	_, reason := Adoptable(SharedFolder{ID: game, Label: r.Label, Root: r.Root, Rel: r.Rel}, s, installed, synced)
+	return reason
+}
+
 func isSplit(game string) bool {
 	_, ok := accounts.Load().Split(game)
 	return ok

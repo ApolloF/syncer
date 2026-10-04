@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -101,6 +102,7 @@ func repairSetup(t *testing.T) (profile, target string, f syncthing.Folder) {
 	t.Helper()
 	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir())) // Syncer's own settings and state
 	t.Cleanup(paths.SetRootForTest(paths.Local, t.TempDir()))   // snapshots made without a backup
+	meta.MarkSyncerPC("OTHER")                                  // the other PC runs Syncer
 	profile, target = filepath.Join(t.TempDir(), "Profile"), t.TempDir()
 	if _, err := store.UpdateSettings(func(s *store.Settings) {
 		s.BackupRoot = target

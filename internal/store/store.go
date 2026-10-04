@@ -186,6 +186,13 @@ type State struct {
 	// backup takes over instead of uploading them again. Dropped once that
 	// backup is gone.
 	BackupFrom map[string]string `json:"backupFrom,omitempty"`
+	// SyncerPCs are the linked devices known to run Syncer (by device id).
+	// Syncthing may be linked to other devices too, for other things.
+	SyncerPCs map[string]bool `json:"syncerPCs,omitempty"`
+	// SyncerFolders and OtherFolders are the Syncthing folders (by id)
+	// found to be Syncer's, or something else's (see meta.Reconcile).
+	SyncerFolders map[string]bool `json:"syncerFolders,omitempty"`
+	OtherFolders  map[string]bool `json:"otherFolders,omitempty"`
 }
 
 // Decision is a choice between two versions of a save file.

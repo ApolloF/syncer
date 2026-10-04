@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/paths"
@@ -16,8 +17,14 @@ const maxSize = 1 << 20 // rotate at 1 MiB
 
 var mu sync.Mutex
 
-// Path of the current log file.
-func Path() string { return filepath.Join(paths.AppDir(), "syncer.log") }
+// Path of the current log file. Tests write theirs to a temporary folder,
+// never to this PC's real log.
+func Path() string {
+	if testing.Testing() {
+		return filepath.Join(os.TempDir(), "syncer-test.log")
+	}
+	return filepath.Join(paths.AppDir(), "syncer.log")
+}
 
 // Printf appends a timestamped line to the log.
 func Printf(format string, args ...any) {

@@ -329,6 +329,8 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 type FolderDevice struct {
 	DeviceID     string `json:"deviceID"`
 	IntroducedBy string `json:"introducedBy,omitempty"`
+	// EncryptionPassword is kept as it is when a device list is written back.
+	EncryptionPassword string `json:"encryptionPassword,omitempty"`
 }
 
 type Versioning struct {
@@ -362,6 +364,19 @@ type Device struct {
 	Introducer        bool     `json:"introducer"`
 	AutoAcceptFolders bool     `json:"autoAcceptFolders"`
 	Paused            bool     `json:"paused"`
+	// IntroducedBy is the device that introduced this one ("" if it was
+	// added here).
+	IntroducedBy string `json:"introducedBy,omitempty"`
+	// IgnoredFolders are folders this device offered that are never asked
+	// about.
+	IgnoredFolders []ObservedFolder `json:"ignoredFolders,omitempty"`
+}
+
+// ObservedFolder is a folder another device offered.
+type ObservedFolder struct {
+	Time  time.Time `json:"time"`
+	ID    string    `json:"id"`
+	Label string    `json:"label"`
 }
 
 type SystemStatus struct {
@@ -414,6 +429,24 @@ type FolderStatus struct {
 type Completion struct {
 	Completion float64 `json:"completion"`
 	NeedBytes  int64   `json:"needBytes"`
+	// RemoteState, asked for one folder: whether the other device syncs it
+	// (see the Remote* constants).
+	RemoteState string `json:"remoteState"`
+}
+
+// Remote states of a folder on another device. Unknown: not connected, or a
+// Syncthing too old to say.
+const (
+	RemoteValid      = "valid"
+	RemotePaused     = "paused"
+	RemoteNotSharing = "notSharing" // connected, and it hasn't accepted the folder
+	RemoteUnknown    = "unknown"
+)
+
+// Accepted reports whether the other device syncs the folder (or has it
+// paused).
+func (c Completion) Accepted() bool {
+	return c.RemoteState == RemoteValid || c.RemoteState == RemotePaused
 }
 
 type PendingDevice struct {
@@ -444,12 +477,45 @@ func (c *Client) Status(ctx context.Context) (SystemStatus, error) {
 	return s, c.get(ctx, "/rest/system/status", &s)
 }
 
+// FolderFilter and DeviceFilter, when set, limit Folders and Devices to
+// Syncer's own: the same Syncthing may sync other things with other devices
+// (a notes vault with a server), which Syncer leaves alone. AllFolders and
+// AllDevices list everything. me is this PC's device id.
+var (
+	FolderFilter func([]Folder) []Folder
+	DeviceFilter func(me string, ds []Device) []Device
+)
+
+// Folders lists Syncer's folders (see FolderFilter).
 func (c *Client) Folders(ctx context.Context) ([]Folder, error) {
+	f, err := c.AllFolders(ctx)
+	if err != nil || FolderFilter == nil {
+		return f, err
+	}
+	return FolderFilter(f), nil
+}
+
+// AllFolders lists every folder Syncthing has.
+func (c *Client) AllFolders(ctx context.Context) ([]Folder, error) {
 	var f []Folder
 	return f, c.get(ctx, "/rest/config/folders", &f)
 }
 
+// Devices lists this PC and the PCs Syncer works with (see DeviceFilter).
 func (c *Client) Devices(ctx context.Context) ([]Device, error) {
+	d, err := c.AllDevices(ctx)
+	if err != nil || DeviceFilter == nil {
+		return d, err
+	}
+	st, err := c.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return DeviceFilter(st.MyID, d), nil
+}
+
+// AllDevices lists every device Syncthing has, this PC included.
+func (c *Client) AllDevices(ctx context.Context) ([]Device, error) {
 	var d []Device
 	return d, c.get(ctx, "/rest/config/devices", &d)
 }
@@ -482,6 +548,13 @@ func (c *Client) FolderErrors(ctx context.Context, id string, n int) ([]FileErro
 func (c *Client) Completion(ctx context.Context, device string) (Completion, error) {
 	var s Completion
 	return s, c.get(ctx, "/rest/db/completion?device="+url.QueryEscape(device), &s)
+}
+
+// FolderCompletion is how far device is with one folder, and whether it
+// syncs that folder at all (RemoteState).
+func (c *Client) FolderCompletion(ctx context.Context, folder, device string) (Completion, error) {
+	var s Completion
+	return s, c.get(ctx, "/rest/db/completion?folder="+url.QueryEscape(folder)+"&device="+url.QueryEscape(device), &s)
 }
 
 func (c *Client) PendingDevices(ctx context.Context) (map[string]PendingDevice, error) {
@@ -547,6 +620,22 @@ func (c *Client) AddDevice(ctx context.Context, d Device) error {
 
 func (c *Client) RemoveDevice(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/rest/config/devices/"+url.PathEscape(id), nil, nil)
+}
+
+// IgnoreFolder stops Syncthing asking about a folder device offers.
+// Syncthing drops the entry by itself once that folder is shared with it.
+func (c *Client) IgnoreFolder(ctx context.Context, device, id, label string) error {
+	var d Device
+	if err := c.get(ctx, "/rest/config/devices/"+url.PathEscape(device), &d); err != nil {
+		return err
+	}
+	for _, f := range d.IgnoredFolders {
+		if f.ID == id {
+			return nil
+		}
+	}
+	ign := append(d.IgnoredFolders, ObservedFolder{Time: time.Now().UTC(), ID: id, Label: label})
+	return c.do(ctx, http.MethodPatch, "/rest/config/devices/"+url.PathEscape(device), map[string]any{"ignoredFolders": ign}, nil)
 }
 
 // DismissPendingDevice removes an incoming connection request.

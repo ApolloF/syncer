@@ -6,6 +6,7 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -105,16 +106,14 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		return rep, err
 	}
 	me := st.MyID
-	devices, err := c.Devices(ctx)
+	// Only the PCs that run Syncer: Syncthing may be linked to other
+	// devices for other things.
+	devices, err := c.AllDevices(ctx)
 	if err != nil {
 		return rep, err
 	}
-	var others []string
-	for _, d := range devices {
-		if d.DeviceID != me {
-			others = append(others, d.DeviceID)
-		}
-	}
+	pcs := syncerPCs(ctx, c, me, devices)
+	others := slices.Sorted(maps.Keys(pcs))
 
 	// Take in the accounts and split games other PCs published, and carry
 	// out the splits and merges this PC hasn't yet, before looking at the
@@ -132,9 +131,28 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	adoptModSettings(ctx, c, me)
 	settings = store.LoadSettings()
 
-	folders, err := c.Folders(ctx)
+	all, err := c.AllFolders(ctx)
 	if err != nil {
 		return rep, err
+	}
+	// Only Syncer's own folders are published and shared; the others are
+	// left alone. Undecided ones (see whose) wait.
+	published := map[string]bool{}
+	for _, sf := range readOthers(me) {
+		published[sf.ID] = true
+	}
+	own, other := sortFolders(ctx, c, me, pcs, devices, all, settings, published)
+	untangledDevs := untangle(ctx, c, me, pcs, devices, all, own, other)
+	allIDs := map[string]bool{}
+	var folders []syncthing.Folder
+	for i, f := range all {
+		if ds, ok := untangledDevs[f.ID]; ok {
+			all[i].Devices, f.Devices = ds, ds
+		}
+		allIDs[f.ID] = true
+		if own[f.ID] {
+			folders = append(folders, f)
+		}
 	}
 
 	byID := map[string]syncthing.Folder{}
@@ -183,14 +201,18 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	// one folder holds another (an old whole-vendor folder around a game's own
 	// save folder), the game's folder is added and the one around it skipped.
 	installed := lazyInstalled()
-	synced := syncedPaths(folders)
+	synced := syncedPaths(all)
 	cands := readOthers(me)
 	sort.SliceStable(cands, func(i, j int) bool { return resolvedLen(cands[i]) > resolvedLen(cands[j]) })
+	skipped := map[string]string{} // folders deliberately not synced here, and why
 	for _, sf := range cands {
-		if _, ok := byID[sf.ID]; ok {
+		if allIDs[sf.ID] {
 			continue
 		}
-		if _, _, ok := accounts.ParseFolderID(sf.ID); ok {
+		if g, _, ok := accounts.ParseFolderID(sf.ID); ok {
+			if reason := accountSkip(ast, sf.ID, g, allIDs, settings, installed, synced); reason != "" {
+				skipped[sf.ID] = reason
+			}
 			continue // added below, per game
 		}
 		if _, ok := ast.Split(sf.ID); ok {
@@ -204,6 +226,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			warnOnce(sf.ID, "meta: not adopting %q (%s): reached through a link on this PC", sf.ID, p)
 		}
 		if reason != "" {
+			skipped[sf.ID] = reason
 			continue
 		}
 		spec := FolderSpec{ID: sf.ID, Label: sf.Label, Path: p}
@@ -224,6 +247,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[sf.ID] = syncthing.Folder{ID: sf.ID, Label: sf.Label, Path: p, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}, MaxConflicts: -1}
+		allIDs[sf.ID] = true
 		synced = append(synced, p)
 		rep.Added = append(rep.Added, sf.Label)
 		logx.Printf("meta: added %s (%s) from another PC", sf.Label, p)
@@ -236,10 +260,13 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[add.id] = syncthing.Folder{ID: add.id, Label: add.label, Path: add.path, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}}
+		allIDs[add.id] = true
 		synced = append(synced, add.path)
 		rep.Added = append(rep.Added, add.label)
 		logx.Printf("meta: added %s (%s) from another PC", add.id, add.path)
 	}
+
+	quietOffers(ctx, c, pcs, skipped, allIDs)
 
 	// Every folder is shared with every paired PC, has versioning on and
 	// keeps every conflict copy, except a PC receiving deployed mods: it
@@ -715,7 +742,7 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 	if err != nil {
 		return nil, err
 	}
-	folders, err := c.Folders(ctx)
+	folders, err := c.AllFolders(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -814,6 +841,9 @@ type FolderSpec struct {
 
 // AddFolderSpec creates a Syncthing folder shared with all devices.
 func AddFolderSpec(ctx context.Context, c *syncthing.Client, spec FolderSpec, me string, others []string) error {
+	if store.LoadState().OtherFolders[spec.ID] {
+		return fmt.Errorf("Syncthing already has a folder %q that isn't Syncer's", spec.ID)
+	}
 	if BeforeJoin != nil && len(others) > 0 {
 		if err := BeforeJoin(ctx, spec.ID, spec.Label, spec.Path); err != nil {
 			return err
@@ -848,7 +878,11 @@ func AddFolderSpec(ctx context.Context, c *syncthing.Client, spec FolderSpec, me
 	if spec.MaxConflicts != nil {
 		f["maxConflicts"] = *spec.MaxConflicts
 	}
-	return c.AddFolder(ctx, f)
+	if err := c.AddFolder(ctx, f); err != nil {
+		return err
+	}
+	MarkOwnFolder(spec.ID)
+	return nil
 }
 
 // ModVersionsDir is where replaced files of a mod folder are kept: outside
@@ -1139,7 +1173,7 @@ func WriteModInventories(me string, invs map[string]mods.Inventory) error {
 		}
 		return nil
 	}
-	return store.WriteJSON(inventoryFile(me), invs)
+	return writeIfChanged(inventoryFile(me), invs)
 }
 
 // ModInventories reads the inventories a PC published (by folder id). They
@@ -1257,7 +1291,21 @@ func WriteVortexLists(me string, l mods.ShareList) error {
 		}
 		return nil
 	}
-	return store.WriteJSON(vortexListFile(me), l)
+	return writeIfChanged(vortexListFile(me), l)
+}
+
+// writeIfChanged writes v as JSON unless the file already holds exactly
+// that: every write goes to the other PCs, and a rewritten file looks new to
+// them (and makes them look again, and write theirs).
+func writeIfChanged(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, b) {
+		return nil
+	}
+	return store.WriteJSON(path, v)
 }
 
 // VortexLists reads the Vortex mod lists a PC published. They come from
