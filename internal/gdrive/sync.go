@@ -191,6 +191,17 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	if err != nil {
 		return rep, err
 	}
+	// A forgotten folder with saves here again was added back: it is guarded
+	// against mass loss like any other, even if some of its old files never
+	// went from Drive.
+	st.Forgotten = slices.DeleteFunc(st.Forgotten, func(id string) bool {
+		for k := range here {
+			if isSave(k) && strings.HasPrefix(k, id+"/") {
+				return true
+			}
+		}
+		return false
+	})
 	// One side empty while the last sync saw files: it was lost or not
 	// there yet, not emptied on purpose. Copy instead of deleting.
 	if len(st.Files) > 0 && (len(here) == 0 || len(remote) == 0) {

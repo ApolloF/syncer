@@ -364,6 +364,46 @@ func TestSyncForgottenFolderPartlyDeleted(t *testing.T) {
 	}
 }
 
+// A removed game whose backup couldn't all be deleted in Drive, added back
+// later, is guarded again: losing its saves here doesn't delete them in Drive.
+func TestSyncForgottenFolderAddedBack(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour)
+	a.write("g/stuck.sav", "s", t0)
+	a.write("other/1.sav", "o", t0)
+	a.sync(d)
+
+	if err := os.RemoveAll(filepath.Join(a.local, "g")); err != nil {
+		t.Fatal(err)
+	}
+	a.forget("g")
+	stuck := d.path("g/stuck.sav")
+	d.failDelete = func(id string) bool { return id == stuck }
+	a.sync(d)
+	if st := a.saved(); len(st.Forgotten) != 1 {
+		t.Fatalf("forgotten after a failed delete: %v", st.Forgotten)
+	}
+
+	for i := 0; i < 20; i++ {
+		a.write(fmt.Sprintf("g/%d.sav", i), "x", t0)
+	}
+	a.sync(d)
+	if st := a.saved(); len(st.Forgotten) != 0 {
+		t.Errorf("still forgotten after the game came back: %v", st.Forgotten)
+	}
+
+	if err := os.RemoveAll(filepath.Join(a.local, "g")); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.sync(d); r.DeletedThere != 0 {
+		t.Errorf("lost saves deleted in Drive: %+v", r)
+	}
+	if got := a.read("g/0.sav"); got != "x" {
+		t.Errorf("lost save not brought back: %q", got)
+	}
+}
+
 // Two PCs made the same folder at once: files in either copy count.
 func TestSyncDuplicateFolders(t *testing.T) {
 	d := newFake()
