@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -399,8 +400,10 @@ func bothForms(abs string) ([]string, error) {
 	return []string{abs, real}, nil
 }
 
-// forms is p as built from its root and, when the root really is somewhere
-// else (see realRoots), as built from there.
+// forms is p as built from its root, as built from where the root really is
+// (see realRoots), and where p itself really is: the folder may be a link
+// to somewhere else (%LOCALAPPDATA%\Syncthing moved to another drive), and
+// what's there is just as sensitive. Best effort: p needn't exist.
 func (p rootSub) forms(real map[string]string) []string {
 	a, ok := p.abs()
 	if !ok {
@@ -409,6 +412,9 @@ func (p rootSub) forms(real map[string]string) []string {
 	out := []string{a}
 	if base, moved := real[p.root]; moved {
 		out = append(out, filepath.Join(append([]string{base}, p.sub...)...))
+	}
+	if r, err := realPath(a); err == nil && !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, r) }) {
+		out = append(out, r)
 	}
 	return out
 }

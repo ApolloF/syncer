@@ -212,3 +212,20 @@ func TestCheckSyncableRootBehindJunction(t *testing.T) {
 		t.Error("sensitive folder in a profile behind a junction accepted")
 	}
 }
+
+// A sensitive folder that is itself a link to somewhere else (Syncthing's
+// config moved to another drive) is just as sensitive where it really is.
+func TestCheckSensitiveFollowsLinkedSensitiveFolder(t *testing.T) {
+	_, _, local := fakeProfile(t)
+	moved := mkdir(t, filepath.Join(t.TempDir(), "other drive", "SyncthingData"))
+	other := mkdir(t, filepath.Join(filepath.Dir(moved), "Mods"))
+	junction(t, filepath.Join(local, "Syncthing"), moved)
+	for _, p := range []string{moved, filepath.Join(moved, "keys"), filepath.Dir(moved)} {
+		if err := CheckSensitive(p); err == nil {
+			t.Errorf("CheckSensitive(%q) = nil, want refused", p)
+		}
+	}
+	if err := CheckSensitive(other); err != nil {
+		t.Errorf("CheckSensitive(%q) = %v, want nil", other, err)
+	}
+}
