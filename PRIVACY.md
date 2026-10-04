@@ -22,7 +22,7 @@ Syncer's use and transfer to any other app of information received from Google A
 
 ## Syncing between your PCs
 
-Saves are synced directly between your PCs by [Syncthing](https://syncthing.net), end-to-end encrypted. Syncthing is a separate program with its own settings. To let your PCs find each other, it uses the Syncthing project's public discovery servers, which see each PC's device ID and IP address. When your PCs can't reach each other directly, Syncthing's public relays pass the encrypted data along without being able to read it. See [Syncthing's security notes](https://docs.syncthing.net/users/security.html).
+Saves are synced directly between your PCs by [Syncthing](https://syncthing.net), end-to-end encrypted. Syncthing is a separate program with its own settings. To let your PCs find each other, it uses the Syncthing project's public discovery servers, which see each PC's device ID and IP address. When your PCs can't reach each other directly, Syncthing's public relays pass the encrypted data along without being able to read it. Syncthing also checks the Syncthing project's servers for its own updates, and only sends anonymous usage reports if you agree to them in Syncthing's own interface; Syncer leaves both at Syncthing's defaults. See [Syncthing's security notes](https://docs.syncthing.net/users/security.html).
 
 If you let Syncer install Syncthing, it runs Windows Package Manager (winget), which downloads Syncthing from Microsoft's winget catalog and Syncthing's official release.
 
