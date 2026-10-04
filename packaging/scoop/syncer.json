@@ -1,0 +1,30 @@
+{
+  "version": "0.18.0",
+  "description": "Keeps PC game saves in sync between your Windows PCs with Syncthing, with a versioned Google Drive backup.",
+  "homepage": "https://github.com/ApolloF/syncer",
+  "license": "AGPL-3.0-only",
+  "notes": [
+    "Syncer updates itself by default. To let Scoop manage updates instead,",
+    "turn off 'Install updates automatically' in Syncer's Settings."
+  ],
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/ApolloF/syncer/releases/download/v0.18.0/Syncer.exe",
+      "hash": "360c4b1d0f0cabe826f9a8b48839d1e94033c0b6066524b9778004bb89f61744"
+    }
+  },
+  "shortcuts": [
+    [
+      "Syncer.exe",
+      "Syncer"
+    ]
+  ],
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/ApolloF/syncer/releases/download/v$version/Syncer.exe"
+      }
+    }
+  }
+}
