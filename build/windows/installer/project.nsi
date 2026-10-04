@@ -62,9 +62,9 @@ ManifestDPIAware true
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
-# Syncer is MIT-licensed: the license is shown, not agreed to.
-!define MUI_LICENSEPAGE_TEXT_TOP "Syncer is released under the MIT License."
-!define MUI_LICENSEPAGE_TEXT_BOTTOM "You don't need to accept this license to use Syncer. It gives you the right to use, share and change Syncer."
+# Syncer is free software (AGPL-3.0): the license is shown, not agreed to.
+!define MUI_LICENSEPAGE_TEXT_TOP "Syncer is free software under the GNU Affero General Public License v3.0."
+!define MUI_LICENSEPAGE_TEXT_BOTTOM "You don't need to accept this license to use Syncer. It gives you the right to share and change Syncer's source code."
 !define MUI_LICENSEPAGE_BUTTON "$(^NextBtn)"
 !insertmacro MUI_PAGE_LICENSE "..\..\..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.

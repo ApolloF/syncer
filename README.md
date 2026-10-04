@@ -100,7 +100,7 @@ Syncer stores its settings in `%APPDATA%\Syncer`. It reads Syncthing's API key f
 
 ## License
 
-Syncer is released under the [MIT License](LICENSE). It comes with no warranty. Releases before the switch to MIT remain available under the GNU Affero General Public License v3.0. The third-party code it includes is listed, with its licenses, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Syncer is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License v3.0](LICENSE). It comes with no warranty. The third-party code it includes is listed, with its licenses, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Game save locations come from the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest), which is built from [PCGamingWiki](https://www.pcgamingwiki.com) (CC BY-NC-SA 3.0). Syncer downloads it at runtime and doesn't include it. Syncing is done by [Syncthing](https://syncthing.net) (MPL-2.0), installed separately.
 

@@ -318,8 +318,8 @@
   pass the encrypted data along when they can't reach each other) and backs them up into
   <b>Google Drive for desktop</b>. Game locations come from the Ludusavi manifest (PCGamingWiki).
   {#if o?.version}Syncer {o.version}.{/if}
-  Released under the
-  <button class="linkbtn" onclick={() => BrowserOpenURL('https://github.com/ApolloF/syncer/blob/main/LICENSE')}>MIT License</button> ·
+  Free software under the
+  <button class="linkbtn" onclick={() => BrowserOpenURL('https://www.gnu.org/licenses/agpl-3.0.html')}>GNU AGPL v3.0</button> ·
   <button class="linkbtn" onclick={() => BrowserOpenURL('https://github.com/ApolloF/syncer')}>Source code</button> ·
   <button class="linkbtn" onclick={() => BrowserOpenURL('https://github.com/ApolloF/syncer/blob/main/THIRD_PARTY_NOTICES.md')}>Third-party notices</button>
 </p>
