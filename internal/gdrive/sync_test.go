@@ -417,6 +417,37 @@ func TestSyncLocalSubtreeLossKeepsDrive(t *testing.T) {
 	}
 }
 
+// One game's backup lost here is held back, however many other games
+// there are; a few of its saves deleted, or a small game's, still go.
+func TestSyncOneGameLossKeepsDrive(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for g := 0; g < 10; g++ {
+		for i := 0; i < 8; i++ {
+			a.write(fmt.Sprintf("g%d/%d.sav", g, i), "x", t0)
+		}
+	}
+	a.write("small/a.sav", "a", t0)
+	a.sync(d)
+	if err := os.RemoveAll(filepath.Join(a.local, "g3")); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.sync(d); r.DeletedThere != 0 || r.Down != 8 || len(r.Notes) == 0 {
+		t.Errorf("one game lost here: %+v", r)
+	}
+	if a.read("g3/5.sav") != "x" || d.path("g3/5.sav") == "" {
+		t.Error("g3/5.sav not back on both sides")
+	}
+	for i := 0; i < 3; i++ {
+		_ = os.Remove(filepath.Join(a.local, "g4", fmt.Sprintf("%d.sav", i)))
+	}
+	_ = os.Remove(filepath.Join(a.local, "small", "a.sav"))
+	if r := a.sync(d); r.DeletedThere != 4 || r.Down != 0 {
+		t.Errorf("a few saves deleted here: %+v", r)
+	}
+}
+
 // A folder that can't be read fails the sync instead of looking emptied.
 func TestSyncFailsOnUnreadableFolder(t *testing.T) {
 	d := newFake()

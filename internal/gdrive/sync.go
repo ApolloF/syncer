@@ -125,7 +125,12 @@ const tmpSuffix = ".gdrive-tmp"
 
 // massDelete: a sync that would delete more than half of one side (and more
 // than this many files) is held back; something is wrong, not a cleanup.
-const massDelete = 20
+// Saves lost here are also held back game by game: more than half of a
+// game's (and more than massDeleteGame files).
+const (
+	massDelete     = 20
+	massDeleteGame = 5
+)
 
 type remoteFile struct {
 	File
@@ -323,17 +328,18 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 		}
 		created = append(created, k)
 	}
-	// Most of the backups gone here at once (a game's backup folder lost or
-	// quarantined by antivirus) looks like an accident as well: they come
-	// back down instead of being deleted in Drive, where the other PCs would
-	// follow. Unless this PC deleted them on purpose (see ForgetFolder).
+	// Most of the backups, or of one game's, gone here at once (a game's
+	// backup folder lost or quarantined by antivirus) looks like an accident
+	// as well: they come back down instead of being deleted in Drive, where
+	// the other PCs would follow. Unless this PC deleted them on purpose (see
+	// ForgetFolder).
 	var lost []string
 	for _, k := range delThere {
 		if !strings.HasPrefix(k, versionsPrefix) && !st.forgotten(k) {
 			lost = append(lost, k)
 		}
 	}
-	if n := countSaves(remote); len(lost) > massDelete && 2*len(lost) > n {
+	if lost = massLoss(lost, remote); len(lost) > 0 {
 		rep.Notes = append(rep.Notes, fmt.Sprintf("%d backed-up files are gone from this PC; bringing them back from Google Drive", len(lost)))
 		for _, k := range lost {
 			delete(st.Files, k)
@@ -507,6 +513,39 @@ func countSaves[V any](files map[string]V) int {
 		}
 	}
 	return n
+}
+
+// massLoss is the part of lost (saves gone on one side) that is held back:
+// all of it when it is most of the saves on the other side (files), else the
+// saves of each game (top folder) that lost most of its own.
+func massLoss[V any](lost []string, files map[string]V) []string {
+	if len(lost) > massDelete && 2*len(lost) > countSaves(files) {
+		return lost
+	}
+	byGame := map[string][]string{}
+	for _, k := range lost {
+		byGame[game(k)] = append(byGame[game(k)], k)
+	}
+	saves := map[string]int{}
+	for k := range files {
+		if !strings.HasPrefix(k, versionsPrefix) {
+			saves[game(k)]++
+		}
+	}
+	var out []string
+	for g, ks := range byGame {
+		if len(ks) > massDeleteGame && 2*len(ks) > saves[g] {
+			out = append(out, ks...)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// game is the top folder of k: the game a backed-up file belongs to.
+func game(k string) string {
+	g, _, _ := strings.Cut(k, "/")
+	return g
 }
 
 // loserPoint makes a new restore point of the game a backed-up save (rel)
