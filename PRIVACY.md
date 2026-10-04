@@ -16,7 +16,7 @@ Signing in with Google is optional: Syncer can also back up through Google Drive
 - **How it uses them:** only to upload your game save backups to that folder, download them to your other PCs, and show which account is signed in. The email address also lets Syncer notice when you switch to a different Google account, so one account's backup is never uploaded into another's.
 - **Where it is stored:** on your PC only. The sign-in token is stored in `%APPDATA%\Syncer\gdrive.token`, encrypted with Windows' data protection for your Windows account. The email address is kept with the token, in Syncer's local sync state and in its local log. A working copy of the backup is kept in `%LOCALAPPDATA%\Syncer\GoogleDrive`.
 - **Who it is shared with:** nobody. The token and your files go only between your PC and Google. ApolloF never receives them, and no person reads them.
-- **Revoking access:** *Sign out* deletes the token and revokes Syncer's access at Google. You can also remove access at any time at https://myaccount.google.com/permissions.
+- **Revoking access:** *Sign out* deletes the token and asks Google to revoke Syncer's access. If Google can't be reached, Syncer says so; you can also remove access at any time at https://myaccount.google.com/permissions.
 
 Syncer's use and transfer to any other app of information received from Google APIs will adhere to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Data from Google APIs is not sold, not used for advertising, not used to determine credit-worthiness or for lending, and not used to develop, improve or train AI or machine learning models.
 
@@ -55,7 +55,7 @@ Everything Syncer stores stays on your PCs and in your Drive until you delete it
 
 ## Deleting your data
 
-- *Sign out* on the Backup page revokes Google access and deletes the token.
+- *Sign out* on the Backup page deletes the token and asks Google to revoke Syncer's access.
 - *Settings → Undo everything* stops syncing and can unlink your PCs and delete the backups. Your save files are never deleted.
 - Uninstall Syncer from *Settings → Apps* in Windows. Delete `My Drive\GameSaveBackup` in Google Drive to remove the backups.
 
