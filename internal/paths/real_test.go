@@ -88,7 +88,7 @@ func TestResolveShortNameForm(t *testing.T) {
 			t.Errorf("Resolve(home, %q) refused", rel)
 		}
 	}
-	for _, rel := range []string{"PROGRA~1", "MICROS~1.TXT", "Games/SAVEGA~12", "a~1."} {
+	for _, rel := range []string{"PROGRA~1", "MICROS~1.TXT", "Games/SAVEGA~12", "a~1.", "PROGRA~1 ", "PROGRA~1..", "MICROS~1.TXT."} {
 		if p, ok := Resolve(Home, rel); ok {
 			t.Errorf("Resolve(home, %q) = %q, want refused", rel, p)
 		}
