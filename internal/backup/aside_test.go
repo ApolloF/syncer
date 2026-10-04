@@ -136,6 +136,68 @@ func TestPruneKeepsPointThatJustArrived(t *testing.T) {
 	}
 }
 
+// Two points from a PC whose clock was far behind, in the same week by their
+// names, arrive together: the newer one is thinned into the older one, not
+// deleted as expired.
+func TestPruneMergesLatePointsOfOneWeek(t *testing.T) {
+	target, id := t.TempDir(), "late-week"
+	now := time.Now()
+	old := now.AddDate(0, 0, -400)
+	a := time.Date(old.Year(), old.Month(), old.Day(), 10, 0, 0, 0, time.Local)
+	a = a.AddDate(0, 0, int(time.Wednesday-a.Weekday()))
+	b := a.Add(time.Hour)
+	write(t, filepath.Join(target, VersionsDir, id, a.Format(stampFmt), "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, id, b.Format(stampFmt), "b.sav"), "b")
+
+	pruneFolder(target, id, 30, now, true)
+	pts := points(target, id)
+	if !pts[a] || pts[b] || len(pts) != 1 {
+		t.Fatalf("points %v, want only %v", pts, a)
+	}
+	if got := read(t, filepath.Join(target, VersionsDir, id, a.Format(stampFmt), "b.sav")); got != "b" {
+		t.Errorf("b.sav = %q, want it merged into the older point", got)
+	}
+}
+
+// Drive can bring a point's marks before the point itself: they wait for it,
+// so it arrives pinned and aside. A mark whose point never comes, or which
+// this PC removed, goes.
+func TestPruneKeepsMarksOfPointNotHereYet(t *testing.T) {
+	target, id, now, at := pruneFixture(t)
+	root := filepath.Join(target, VersionsDir, id)
+	late := at["B"].Add(30 * time.Minute) // thinned into B, were it not pinned
+	stamp := late.Format(stampFmt)
+	pin(target, id, late)
+	markStamp(target, id, AsideDir, stamp)
+	expired := at["A"].Format(stampFmt) // expired here: its mark goes at once
+	markStamp(target, id, AsideDir, expired)
+
+	pruneFolder(target, id, 30, now, true)
+	if !marks(root, PinnedDir)[stamp] || !marks(root, AsideDir)[stamp] {
+		t.Fatal("marks of a point not here yet dropped")
+	}
+	if points(target, id)[at["A"]] || marks(root, AsideDir)[expired] {
+		t.Fatal("expired point or its mark kept")
+	}
+	write(t, filepath.Join(root, stamp, "other.sav"), "aside")
+	pruneFolder(target, id, 30, now, true)
+	if !points(target, id)[late] {
+		t.Fatal("point thinned once it arrived")
+	}
+	if !marks(root, AsideDir)[stamp] {
+		t.Fatal("point lost its aside mark")
+	}
+
+	// A mark long without its point goes.
+	never := at["D"].Add(time.Hour).Format(stampFmt)
+	markStamp(target, id, AsideDir, never)
+	madeAt(t, filepath.Join(root, AsideDir, never), now.Add(-markGrace-time.Hour))
+	pruneFolder(target, id, 30, now, true)
+	if marks(root, AsideDir)[never] {
+		t.Error("mark without its point kept past the grace period")
+	}
+}
+
 // A point holding two copies of one file (see moveTo) restores the file,
 // never a *.syncer-kept-N copy into the game's folder.
 func TestRestoreSkipsSecondCopies(t *testing.T) {

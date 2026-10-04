@@ -86,9 +86,11 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 	if cut.Before(pinCut) {
 		pinCut = cut
 	}
-	keep := plan(pts, aged(root, pts, cut), marks(root, PinnedDir), cut, pinCut, now, thin)
+	at := aged(root, pts, cut)
+	keep := plan(pts, at, marks(root, PinnedDir), cut, pinCut, now, thin)
 	aside := marks(root, AsideDir)
-	last := "" // nearest older point that stays, made by a backup run
+	gone := map[string]bool{} // points removed here
+	last := ""                // nearest older point that stays, made by a backup run
 	for i := len(pts) - 1; i >= 0; i-- {
 		stamp := pts[i].Format(stampFmt)
 		dir := filepath.Join(root, stamp)
@@ -99,16 +101,18 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 			if !aside[stamp] {
 				last = dir
 			}
-		case pts[i].Before(cut):
+		case at[i].Before(cut):
 			_ = os.RemoveAll(dir)
+			gone[stamp] = true
 		case last != "":
 			if merge(dir, last) == nil {
 				mergeOrigin(dir, last)
+				gone[stamp] = true
 			}
 		}
 	}
-	unmarkStale(root, PinnedDir)
-	unmarkStale(root, AsideDir)
+	unmarkStale(root, PinnedDir, gone, now)
+	unmarkStale(root, AsideDir, gone, now)
 	forgetStaleOrigins(root)
 }
 
@@ -237,13 +241,34 @@ func marks(root, sub string) map[string]bool {
 	return m
 }
 
-// unmarkStale drops the marks in sub whose point is gone.
-func unmarkStale(root, sub string) {
+// markGrace is how long a mark whose point isn't here is kept, unless this PC
+// removed the point itself. Drive syncs a new point's mark and its folder in
+// any order, and dropping the mark before the folder arrives would leave the
+// point unpinned, or a run's point as far as restores and thinning can tell.
+const markGrace = 7 * 24 * time.Hour
+
+// unmarkStale drops the marks in sub whose point is gone: removed here
+// (gone), or missing for longer than markGrace.
+func unmarkStale(root, sub string, gone map[string]bool, now time.Time) {
 	dir := filepath.Join(root, sub)
 	for name := range marks(root, sub) {
-		if !isDir(filepath.Join(root, name)) {
-			_ = os.Remove(filepath.Join(dir, name))
+		if isDir(filepath.Join(root, name)) {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if gone[name] || markedBefore(p, now.Add(-markGrace)) {
+			_ = os.Remove(p)
 		}
 	}
 	_ = os.Remove(dir) // only if empty
+}
+
+// markedBefore reports whether the mark at p was made on this disk (or, if
+// that isn't known, last written) before t.
+func markedBefore(p string, t time.Time) bool {
+	if at, ok := arrived(p); ok {
+		return at.Before(t)
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.ModTime().Before(t)
 }
