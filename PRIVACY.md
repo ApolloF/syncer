@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: 4 October 2026
+Last updated: 11 October 2026
 
 Syncer is a free Windows app that keeps your PC game saves in sync between your own PCs and backs them up to your own Google Drive. It runs on your PCs and has no server of its own. ApolloF, who publishes Syncer, receives no data from the app: no account, no telemetry, no crash reports.
 
@@ -26,13 +26,13 @@ Syncer's use and transfer to any other app of information received from Google A
 
 Saves are synced directly between your PCs by [Syncthing](https://syncthing.net), end-to-end encrypted. Syncthing is a separate program with its own settings. To let your PCs find each other, it uses the Syncthing project's public discovery servers, which see each PC's device ID and IP address. When your PCs can't reach each other directly, Syncthing's public relays pass the encrypted data along without being able to read it. Syncthing also checks the Syncthing project's servers for its own updates, and only sends anonymous usage reports if you agree to them in Syncthing's own interface; Syncer leaves both at Syncthing's defaults. See [Syncthing's security notes](https://docs.syncthing.net/users/security.html).
 
-If you let Syncer install Syncthing, it runs Windows Package Manager (winget), which downloads Syncthing from Microsoft's winget catalog and Syncthing's official release.
+If you let Syncer install Syncthing, it runs Windows Package Manager (winget), which downloads Syncthing from Microsoft's winget catalog and Syncthing's official release. If you tick *Uninstall Syncthing* in *Undo everything*, Syncer removes it again with winget.
 
 ## Other network requests
 
 - With Google Drive for desktop, Syncer only writes files into your Drive folder on this PC; Google Drive for desktop does the upload, under Google's terms.
 - Syncer downloads the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest) from GitHub to recognise games.
-- It checks GitHub once a day for a new Syncer release and downloads it from GitHub. You can turn the check off in Settings.
+- It checks GitHub once a day for a new Syncer release, or every hour while another of your PCs already runs a newer version, and downloads it from GitHub. You can turn the check off in Settings.
 - Before deleting expired restore points, Syncer checks the time with Google (an empty request to google.com), so a wrong PC clock can't delete them early.
 - These requests send nothing about you or your games. GitHub and Google see your IP address, as with any web request.
 
@@ -45,7 +45,7 @@ Settings, sync state and logs stay in `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syn
 - **Google** (Drive API, sign-in, time check): https://policies.google.com/privacy
 - **Syncthing** discovery servers and relays: https://syncthing.net/
 - **GitHub** (game manifest, updates): https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement
-- **Microsoft** (winget, only when installing Syncthing): https://privacy.microsoft.com/privacystatement
+- **Microsoft** (winget, only when installing or uninstalling Syncthing): https://privacy.microsoft.com/privacystatement
 
 ## No selling, no sharing
 
@@ -58,7 +58,7 @@ Everything Syncer stores stays on your PCs and in your Drive until you delete it
 ## Deleting your data
 
 - *Sign out* on the Backup page deletes the token and asks Google to revoke Syncer's access.
-- *Settings → Undo everything* stops syncing and can unlink your PCs and delete the backups. Your save files are never deleted.
+- *Settings → Undo everything* stops syncing and can unlink your PCs, delete the backups and uninstall Syncthing. Your save files are never deleted.
 - Uninstall Syncer from *Settings → Apps* in Windows. Uninstalling keeps `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syncer`; sign out first, then delete those folders to remove everything from the PC. Delete `My Drive\GameSaveBackup` in Google Drive to remove the backups.
 
 ## Your rights
