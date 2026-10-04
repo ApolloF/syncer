@@ -93,16 +93,17 @@ func ForgetFolder(id string) {
 	}
 }
 
-// forgotten reports whether k (a lower-case path) belongs to a folder whose
-// backup was deleted on purpose: its backup, history or info files.
-func (st *State) forgotten(k string) bool {
+// forgotten returns the folder whose backup was deleted on purpose that k (a
+// lower-case path) belongs to: its backup, history or info files. It returns
+// "" when k belongs to no such folder.
+func (st *State) forgotten(k string) string {
 	parts := strings.SplitN(k, "/", 3)
 	for _, id := range st.Forgotten {
 		if parts[0] == id || len(parts) > 1 && (parts[0] == ".versions" || parts[0] == ".syncer") && parts[1] == id {
-			return true
+			return id
 		}
 	}
-	return false
+	return ""
 }
 
 // SetAccount records which Google account the folder is synced with.
@@ -148,7 +149,7 @@ func Sync(ctx context.Context, d drive, local string) (Report, error) {
 	st := LoadState()
 	rep, err := syncWith(ctx, d, local, &st)
 	if err == nil {
-		st.Synced, st.Forgotten = time.Now(), nil
+		st.Synced = time.Now()
 	}
 	saveState(st)
 	return rep, err
@@ -335,7 +336,7 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	// ForgetFolder).
 	var lost []string
 	for _, k := range delThere {
-		if !strings.HasPrefix(k, versionsPrefix) && !st.forgotten(k) {
+		if !strings.HasPrefix(k, versionsPrefix) && st.forgotten(k) == "" {
 			lost = append(lost, k)
 		}
 	}
@@ -391,11 +392,18 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 		st.Files[k] = entry(l, r.File)
 		rep.Down++
 	}
+	// A folder deleted on purpose stays forgotten until all of its files are
+	// gone from Drive: the ones left over would otherwise look lost next time
+	// and come back down.
+	unfinished := map[string]bool{}
 	for _, k := range delThere {
 		if ctx.Err() != nil {
 			break
 		}
 		if err := d.Delete(ctx, remote[k].ID); err != nil {
+			if id := st.forgotten(k); id != "" {
+				unfinished[id] = true
+			}
 			fail(remote[k].rel, err)
 			continue
 		}
@@ -414,6 +422,7 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	if err := ctx.Err(); err != nil {
 		return rep, err
 	}
+	st.Forgotten = slices.DeleteFunc(st.Forgotten, func(id string) bool { return !unfinished[id] })
 	return rep, nil
 }
 

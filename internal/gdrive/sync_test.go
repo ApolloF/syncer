@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,8 @@ type fakeDrive struct {
 	next    int
 	uploads int
 	moves   int
+	// failDelete makes Delete fail for the files it reports (a rate limit).
+	failDelete func(id string) bool
 }
 
 func newFake() *fakeDrive { return &fakeDrive{files: map[string]File{}, data: map[string][]byte{}} }
@@ -92,6 +95,9 @@ func (d *fakeDrive) Move(_ context.Context, id, _, to, name string) (File, error
 }
 
 func (d *fakeDrive) Delete(_ context.Context, id string) error {
+	if d.failDelete != nil && d.failDelete(id) {
+		return errors.New("rate limit exceeded")
+	}
 	delete(d.files, id)
 	delete(d.data, id)
 	return nil
@@ -315,6 +321,46 @@ func TestSyncMassDeleteInDrive(t *testing.T) {
 	}
 	if st := a.saved(); len(st.Forgotten) != 0 {
 		t.Errorf("still forgotten after the sync: %v", st.Forgotten)
+	}
+}
+
+// Some of a forgotten folder's files fail to go in Drive: the folder stays
+// forgotten, so the rest go next time instead of coming back down.
+func TestSyncForgottenFolderPartlyDeleted(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour)
+	for i := 0; i < 30; i++ {
+		a.write(fmt.Sprintf("g/%d.sav", i), "x", t0)
+	}
+	a.write("other/1.sav", "o", t0)
+	a.sync(d)
+
+	if err := os.RemoveAll(filepath.Join(a.local, "g")); err != nil {
+		t.Fatal(err)
+	}
+	a.forget("g")
+	failing := map[string]bool{}
+	for i := 0; i < 10; i++ {
+		failing[d.path(fmt.Sprintf("g/%d.sav", i))] = true
+	}
+	d.failDelete = func(id string) bool { return failing[id] }
+	if r := a.sync(d); r.DeletedThere != 20 || len(r.Errors) != 10 {
+		t.Fatalf("first sync: %+v", r)
+	}
+	if st := a.saved(); len(st.Forgotten) != 1 || st.Forgotten[0] != "g" {
+		t.Fatalf("forgotten after a partial delete: %v", st.Forgotten)
+	}
+
+	d.failDelete = nil
+	if r := a.sync(d); r.DeletedThere != 10 || r.Down != 0 {
+		t.Errorf("second sync: %+v", r)
+	}
+	if got := a.read("g/0.sav"); got != "<missing>" {
+		t.Errorf("forgotten backup came back: %q", got)
+	}
+	if st := a.saved(); len(st.Forgotten) != 0 {
+		t.Errorf("still forgotten after all files went: %v", st.Forgotten)
 	}
 }
 
