@@ -395,23 +395,25 @@ func runSplit(ctx context.Context, env Env, j *Journal) error {
 	}
 	if j.Step == splitPause {
 		live, err := resolveLive(r)
-		if errors.Is(err, paths.ErrLink) {
-			return ErrSplitLink
-		}
-		if err != nil {
+		linked := errors.Is(err, paths.ErrLink)
+		if err != nil && !linked {
 			return nil // the game's folder doesn't exist on this PC: nothing to do
 		}
 		shared, has := fs[r.Game]
 		if has {
 			live = shared.Path // this PC's own path for the shared folder
 		}
-		_, _, anyAccount := fs.atLive(r.Game, live)
+		anyAccount := false
+		if live != "" {
+			_, _, anyAccount = fs.atLive(r.Game, live)
+		}
 		if !has && !anyAccount && !hasAny(fs, r) {
-			// This PC doesn't sync the game: account folders are adopted
-			// (or not) like any folder from another PC.
+			// This PC doesn't sync the game (also when its folder here is a
+			// link): account folders are adopted (or not) like any folder
+			// from another PC.
 			return nil
 		}
-		if isLink(live) {
+		if linked || isLink(live) {
 			return ErrSplitLink
 		}
 		j.Live, j.Place = live, PlaceLive(r, Load().ActiveID())

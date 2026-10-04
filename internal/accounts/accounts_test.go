@@ -996,3 +996,19 @@ func TestSplitThroughLinkSaysSo(t *testing.T) {
 		t.Error("record with an invalid save folder accepted")
 	}
 }
+
+// A PC that doesn't sync the game has nothing to split, even when the
+// game's folder there is a link: no lasting error on that PC.
+func TestSplitThroughLinkNotSyncedHere(t *testing.T) {
+	w := newWorld(t)
+	alice, bob := w.setup()
+	delete(w.st.folders, game)
+	resolveLive = func(Record) (string, error) { return "", paths.ErrLink }
+	r := w.splitRecord(alice, bob)
+	if err := Start(context.Background(), w.env, r); err != nil {
+		t.Fatalf("err = %v, want nothing to do", err)
+	}
+	if _, ok := w.st.folders[FolderID(game, alice)]; ok {
+		t.Error("split carried out on a PC that doesn't sync the game")
+	}
+}
