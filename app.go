@@ -310,6 +310,12 @@ func (a *App) OpenSyncthingGUI() {
 
 // ---- devices -----------------------------------------------------------------
 
+// Syncthing may sync other things with other devices too (a notes vault with
+// a server): Syncer only sees its own folders and the PCs that run Syncer.
+func init() {
+	syncthing.FolderFilter, syncthing.DeviceFilter = meta.OwnFolders, meta.OwnDevices
+}
+
 type DeviceView struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -434,6 +440,7 @@ func (a *App) AddDevice(id, name string) error {
 		Introducer: true}); err != nil {
 		return err
 	}
+	meta.MarkSyncerPC(id)
 	enableSync()
 	_ = c.DismissPendingDevice(ctx, id)
 	if _, err := meta.Reconcile(ctx, c); err != nil {
@@ -464,6 +471,7 @@ func (a *App) RemoveDevice(id string) error {
 	if err := c.RemoveDevice(ctx, id); err != nil {
 		return err
 	}
+	meta.ForgetSyncerPC(id)
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
 }
