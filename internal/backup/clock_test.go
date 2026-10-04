@@ -52,6 +52,7 @@ func TestRunDoesNotPruneWithWrongClock(t *testing.T) {
 	t.Cleanup(func() { os.Remove(indexPath(id)) })
 	old := time.Now().AddDate(0, 0, -40)
 	write(t, filepath.Join(target, VersionsDir, id, old.Format(stampFmt), "a.sav"), "old")
+	madeAt(t, filepath.Join(target, VersionsDir, id, old.Format(stampFmt)), old)
 	write(t, filepath.Join(src, "a.sav"), "a")
 	run := func() string {
 		t.Helper()

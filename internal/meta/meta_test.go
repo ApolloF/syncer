@@ -1,6 +1,8 @@
 package meta
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,4 +149,59 @@ func devIDs(v any) string {
 		ids = append(ids, d["deviceID"])
 	}
 	return strings.Join(ids, " ")
+}
+
+// A paired PC publishes a folder whose path spells something harmless but
+// leads, through a junction Windows keeps in every profile, a short name or a
+// stream, to Startup, ~/.ssh or Syncthing's keys: it's never adopted.
+func TestAdoptableRefusesAliasedPaths(t *testing.T) {
+	cases := []SharedFolder{
+		{Root: paths.Home, Rel: "Start Menu/Programs/Startup"},
+		{Root: paths.Home, Rel: "Application Data/Microsoft/Windows/Start Menu/Programs/Startup"},
+		{Root: paths.Home, Rel: "Local Settings/Syncthing"},
+		{Root: paths.Home, Rel: "SSH~1"},
+		{Root: paths.Local, Rel: "SYNCTH~1"},
+		{Root: paths.Roaming, Rel: "MICROS~1/Windows/Start Menu/Programs/Startup"},
+		{Root: paths.Roaming, Rel: "Microsoft::$INDEX_ALLOCATION/Windows/Start Menu/Programs/Startup"},
+	}
+	for i, sf := range cases {
+		sf.ID, sf.Label = "alias-"+string(rune('a'+i)), "Game"
+		if !strings.ContainsAny(sf.Rel, "~:") {
+			if p, _ := paths.Resolve(sf.Root, sf.Rel); !exists(p) {
+				continue // not in this profile
+			}
+		}
+		if p, reason := Adoptable(sf, store.Settings{}, func(string) bool { return true }, nil); reason != SkipUnsafe {
+			t.Errorf("%s/%s: adopted as %q (reason %q), want %q", sf.Root, sf.Rel, p, reason, SkipUnsafe)
+		}
+	}
+}
+
+// A folder this PC reaches through a junction (moved to another drive) is
+// offered with the reason it isn't synced here, not dropped as unsafe.
+func TestAdoptableLinkSaysSo(t *testing.T) {
+	base := t.TempDir()
+	roaming := filepath.Join(base, "roaming")
+	moved := filepath.Join(base, "other drive", "Game")
+	for _, d := range []string{roaming, filepath.Join(moved, "Saves")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer paths.SetRootForTest(paths.Roaming, roaming)()
+	defer paths.SetRootForTest(paths.Local, filepath.Join(base, "local"))() // the real one holds Temp
+	link := filepath.Join(roaming, "Game")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, moved).CombinedOutput(); err != nil {
+		t.Skipf("can't create a junction: %v %s", err, out)
+	}
+	sf := SharedFolder{ID: "linked", Label: "Game", Root: paths.Roaming, Rel: "Game/Saves"}
+	p, reason := Adoptable(sf, store.Settings{}, func(string) bool { return true }, nil)
+	if reason != SkipLink || p != filepath.Join(link, "Saves") {
+		t.Errorf("Adoptable = %q, %q; want %q, %q", p, reason, filepath.Join(link, "Saves"), SkipLink)
+	}
+}
+
+func exists(p string) bool {
+	_, err := os.Lstat(p)
+	return p != "" && err == nil
 }

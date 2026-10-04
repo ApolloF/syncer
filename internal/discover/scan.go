@@ -303,8 +303,33 @@ func Scan(entries []Entry) []Found {
 	return out
 }
 
+// trusted reports whether a manifest path names a folder below its root
+// placeholder plainly. The game database is a community wiki, fetched as
+// is, so a bad edit must not reach every folder in a root (<home>/*), climb
+// out of one (..) or spell a folder another way (8.3 names, streams).
+func trusted(raw string) bool {
+	_, rest, ok := strings.Cut(raw, ">")
+	if !ok || !strings.HasPrefix(raw, "<") {
+		return false
+	}
+	first := true
+	for _, seg := range strings.FieldsFunc(rest, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." {
+			continue
+		}
+		if seg == ".." || strings.Contains(seg, ":") || paths.LooksShort(seg) || first && strings.ContainsAny(seg, "*?[") {
+			return false
+		}
+		first = false
+	}
+	return true
+}
+
 // resolve expands one manifest path to existing save directories.
 func resolve(raw, userName string, ex *existCache) []string {
+	if !trusted(raw) {
+		return nil
+	}
 	if strings.HasPrefix(raw, ubisoftPlaceholder) {
 		// savegames\<account>\<game id>: every account's folder for this
 		// game, never an account's whole folder.

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/ApolloF/syncer/internal/store"
 )
 
@@ -48,6 +50,7 @@ func pruneFixture(t *testing.T) (target, id string, now time.Time, at map[string
 		for rel, s := range fs {
 			write(t, filepath.Join(target, VersionsDir, id, at[name].Format(stampFmt), rel), s)
 		}
+		madeAt(t, filepath.Join(target, VersionsDir, id, at[name].Format(stampFmt)), at[name])
 	}
 	for rel, s := range map[string]string{"x.sav": "now", "sub/y.sav": "y-now", "z.sav": "z-now", "w.sav": "w-now"} {
 		write(t, filepath.Join(target, id, rel), s)
@@ -123,6 +126,7 @@ func TestPrunePinnedPointsStay(t *testing.T) {
 	target, id, now, at := pruneFixture(t)
 	old := now.AddDate(-1, 0, -10) // pinned, but over a year old
 	write(t, filepath.Join(target, VersionsDir, id, old.Format(stampFmt), "x.sav"), "ancient")
+	madeAt(t, filepath.Join(target, VersionsDir, id, old.Format(stampFmt)), old)
 	pin(target, id, old)
 	pin(target, id, at["C"])
 	pin(target, id, at["A"])
@@ -269,5 +273,25 @@ func TestPruneKeepsForOtherPCsSetting(t *testing.T) {
 	prune(target, 30, now)
 	if !points(target, id)[at["A"]] {
 		t.Error("point expired by the shorter setting")
+	}
+}
+
+// madeAt sets when the folder at p was made, as if this PC had made a point
+// there at that time (pruning lets a point age from when it arrived).
+func madeAt(t *testing.T, p string, at time.Time) {
+	t.Helper()
+	u, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := windows.CreateFile(u, windows.FILE_WRITE_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(h)
+	ft := windows.NsecToFiletime(at.UnixNano())
+	if err := windows.SetFileTime(h, &ft, nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }

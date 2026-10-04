@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
@@ -107,7 +108,7 @@ func newWorld(t *testing.T) *world {
 	oldDir, oldLocal, oldResolve := dir, localRoot, resolveLive
 	dir = func() string { return filepath.Join(root, "appdata") }
 	localRoot = func() string { return filepath.Join(root, "local") }
-	resolveLive = func(r Record) (string, bool) { return filepath.Join(root, filepath.FromSlash(r.Rel)), true }
+	resolveLive = func(r Record) (string, error) { return filepath.Join(root, filepath.FromSlash(r.Rel)), nil }
 	t.Cleanup(func() { dir, localRoot, resolveLive = oldDir, oldLocal, oldResolve; crashHook = nil })
 	_ = os.MkdirAll(dir(), 0o755)
 	w.env = Env{
@@ -956,5 +957,58 @@ func TestSplitCoversAccountFoldersWithItsRestorePoint(t *testing.T) {
 		if !ok || at.Before(start) || at.After(time.Now()) {
 			t.Errorf("%s's folder covered at %v (%v)", a, at, ok)
 		}
+	}
+}
+
+// Records come from other PCs: a save folder path that leads somewhere else
+// than it spells is refused.
+func TestLivePathRefusesAliases(t *testing.T) {
+	for _, rel := range []string{"SSH~1", "Microsoft::$INDEX_ALLOCATION/Windows", "Start Menu/Programs/Startup", "Local Settings/Syncthing"} {
+		r := Record{Game: "g", Root: paths.Home, Rel: rel}
+		if p, ok := r.LivePath(); ok {
+			if _, err := os.Lstat(p); err == nil || strings.ContainsAny(rel, "~:") {
+				t.Errorf("LivePath() for %q = %q, want refused", rel, p)
+			}
+		}
+	}
+}
+
+// A save folder this PC reaches through a link (moved to another drive with
+// a junction) is still a valid record, and splitting it says why it can't be
+// done instead of silently doing nothing.
+func TestSplitThroughLinkSaysSo(t *testing.T) {
+	w := newWorld(t)
+	alice, bob := w.setup()
+	resolveLive = func(Record) (string, error) { return "", paths.ErrLink }
+	r := w.splitRecord(alice, bob)
+	if !ValidRecord(r) {
+		t.Fatal("record refused")
+	}
+	if err := Start(context.Background(), w.env, r); !errors.Is(err, ErrSplitLink) {
+		t.Fatalf("err = %v, want %v", err, ErrSplitLink)
+	}
+	if _, ok := w.st.folders[FolderID(game, alice)]; ok {
+		t.Error("split carried out through a link")
+	}
+
+	resolveLive = func(Record) (string, error) { return "", errNoLive }
+	if ValidRecord(r) {
+		t.Error("record with an invalid save folder accepted")
+	}
+}
+
+// A PC that doesn't sync the game has nothing to split, even when the
+// game's folder there is a link: no lasting error on that PC.
+func TestSplitThroughLinkNotSyncedHere(t *testing.T) {
+	w := newWorld(t)
+	alice, bob := w.setup()
+	delete(w.st.folders, game)
+	resolveLive = func(Record) (string, error) { return "", paths.ErrLink }
+	r := w.splitRecord(alice, bob)
+	if err := Start(context.Background(), w.env, r); err != nil {
+		t.Fatalf("err = %v, want nothing to do", err)
+	}
+	if _, ok := w.st.folders[FolderID(game, alice)]; ok {
+		t.Error("split carried out on a PC that doesn't sync the game")
 	}
 }

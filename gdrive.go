@@ -40,6 +40,16 @@ func gdriveConfig() gdrive.Config {
 	return gdrive.Config{ClientID: gdriveClientID, ClientSecret: gdriveClientSecret}
 }
 
+// A backup deleted on purpose in the folder synced with Drive is deleted
+// there too, however many files it holds.
+func init() {
+	backup.Forgotten = func(target, id string) {
+		if strings.EqualFold(filepath.Clean(target), filepath.Clean(googleDir())) {
+			gdrive.ForgetFolder(id)
+		}
+	}
+}
+
 // googleDir is the folder on this PC kept in sync with GameSaveBackup in Drive.
 func googleDir() string {
 	return filepath.Join(paths.Root(paths.Local), "Syncer", "GoogleDrive", gdrive.RootName)

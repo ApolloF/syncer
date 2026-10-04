@@ -765,9 +765,9 @@ func (a *App) SplitGame(id string, assign map[string]string) error {
 			}
 			return fmt.Errorf("update Syncer on %s first and let it connect once (a device without Syncer, like a NAS, has to be removed under Devices first)", strings.Join(names, ", "))
 		}
-		root, rel, ok := portable(f.Path)
-		if !ok {
-			return errors.New("this game's save folder can't be split between accounts")
+		root, rel, err := splittable(f.Path)
+		if err != nil {
+			return err
 		}
 		r := accounts.Record{Kind: accounts.KindSplit, Game: f.ID, Label: cmpOr(f.Label, f.ID), Root: root, Rel: rel,
 			Gen: st.NextGen(f.ID), Created: time.Now(), By: me, Origin: me, Assign: map[string]string{}}
@@ -828,10 +828,22 @@ func (a *App) MergeGame(game, winner string) error {
 	})
 }
 
-func portable(p string) (string, string, bool) {
+// splittable returns the portable form of a save folder that can be split
+// between accounts.
+func splittable(p string) (root, rel string, err error) {
 	root, rel, ok := paths.Portable(p)
-	return root, rel, ok && paths.CheckSyncable(p) == nil
+	if !ok {
+		return "", "", errNotSplittable
+	}
+	if err := paths.CheckSyncable(p); errors.Is(err, paths.ErrLink) {
+		return "", "", accounts.ErrSplitLink
+	} else if err != nil {
+		return "", "", errNotSplittable
+	}
+	return root, rel, nil
 }
+
+var errNotSplittable = errors.New("this game's save folder can't be split between accounts")
 
 func validFolderID(id string) bool { return paths.ValidID(id) }
 

@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -123,6 +126,35 @@ func TestLauncherSaveListsOnlyTheAccountsPart(t *testing.T) {
 	}
 	if _, ok := launcherSave(f, "Seaglass", "acc3", false); ok {
 		t.Error("an account without a subfolder got a row")
+	}
+}
+
+// Splitting a save folder this PC reaches through a junction says so,
+// instead of that the folder can't be split.
+func TestSplittableLinkSaysSo(t *testing.T) {
+	base := t.TempDir()
+	roaming := filepath.Join(base, "roaming")
+	moved := filepath.Join(base, "other drive", "Game")
+	for _, d := range []string{roaming, moved} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, roaming))
+	t.Cleanup(paths.SetRootForTest(paths.Local, filepath.Join(base, "local")))
+	plain := filepath.Join(roaming, "Plain")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if root, rel, err := splittable(plain); err != nil || root != paths.Roaming || rel != "Plain" {
+		t.Errorf("splittable(plain) = %q, %q, %v", root, rel, err)
+	}
+	link := filepath.Join(roaming, "Game")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, moved).CombinedOutput(); err != nil {
+		t.Skipf("can't create a junction: %v %s", err, out)
+	}
+	if _, _, err := splittable(link); !errors.Is(err, accounts.ErrSplitLink) {
+		t.Errorf("splittable(link) = %v, want %v", err, accounts.ErrSplitLink)
 	}
 }
 

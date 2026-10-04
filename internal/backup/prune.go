@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ApolloF/syncer/internal/paths"
@@ -22,7 +23,9 @@ import (
 // files that point lacks move there, the rest are dropped. Versions hold what
 // a file was before a run replaced it, so a file the older point lacks hadn't
 // changed in between and the moved copy is exactly what it was then: every
-// remaining point restores the same as before. Only points older than
+// remaining point restores the same as before. A point with a kept aside
+// point (see AsideDir) between it and that older point stays instead, since
+// restoring to the aside point lays it over. Only points older than
 // KeepDays are deleted outright; the backup itself always keeps the latest.
 //
 // KeepDays is the longest setting of the PCs backing a folder up (keepFor),
@@ -85,35 +88,81 @@ func pruneFolder(target, id string, keepDays int, now time.Time, thin bool) {
 	if cut.Before(pinCut) {
 		pinCut = cut
 	}
-	keep := plan(pts, pins(root), cut, pinCut, now, thin)
-	last := "" // nearest older point that stays
+	at := aged(root, pts, cut)
+	keep := plan(pts, at, marks(root, PinnedDir), cut, pinCut, now, thin)
+	aside := marks(root, AsideDir)
+	gone := map[string]bool{} // points removed here
+	last := ""                // nearest older point that stays, made by a backup run
+	asideAfter := false       // an aside point stays between last and this one
 	for i := len(pts) - 1; i >= 0; i-- {
-		dir := filepath.Join(root, pts[i].Format(stampFmt))
+		stamp := pts[i].Format(stampFmt)
+		dir := filepath.Join(root, stamp)
 		switch {
+		case keep[i] && aside[stamp]:
+			// An aside point only counts as the point restored to, so a
+			// thinned point's files must not go into it.
+			asideAfter = true
 		case keep[i]:
-			last = dir
-		case pts[i].Before(cut):
+			last, asideAfter = dir, false
+		case at[i].Before(cut):
 			_ = os.RemoveAll(dir)
+			gone[stamp] = true
+		case asideAfter:
+			// Restoring to that aside point lays this point's files over it;
+			// moved into last, older than the aside point, they wouldn't be.
+			last, asideAfter = dir, false
 		case last != "":
 			if merge(dir, last) == nil {
 				mergeOrigin(dir, last)
+				gone[stamp] = true
 			}
 		}
 	}
-	unpinStale(root)
+	unmarkStale(root, PinnedDir, gone, now)
+	unmarkStale(root, AsideDir, gone, now)
 	forgetStaleOrigins(root)
 }
 
-// plan says which of pts (newest first) stay: everything from cut on (thinned
-// with thin), and pinned points from pinCut on.
-func plan(pts []time.Time, pinned map[string]bool, cut, pinCut, now time.Time, thin bool) []bool {
+// aged gives each of pts the time it ages from. A point is named by the
+// clock of the PC that made it, which may have been far behind (a flat CMOS
+// battery): a point that arrived here after cut isn't expired by its name
+// alone, it ages from when it arrived (its folder was made on this disk).
+func aged(root string, pts []time.Time, cut time.Time) []time.Time {
+	out := make([]time.Time, len(pts))
+	for i, t := range pts {
+		out[i] = t
+		if t.Before(cut) {
+			if at, ok := arrived(filepath.Join(root, t.Format(stampFmt))); ok && at.After(t) {
+				out[i] = at
+			}
+		}
+	}
+	return out
+}
+
+// arrived is when the folder at p was made on this disk.
+func arrived(p string) (time.Time, bool) {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return time.Time{}, false
+	}
+	d, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(0, d.CreationTime.Nanoseconds()), true
+}
+
+// plan says which of pts (newest first, aging from at) stay: everything
+// from cut on (thinned with thin), and pinned points from pinCut on.
+func plan(pts, at []time.Time, pinned map[string]bool, cut, pinCut, now time.Time, thin bool) []bool {
 	keep := make([]bool, len(pts))
 	taken := map[string]bool{} // buckets that already have their point
 	// Oldest first: a bucket's first point stays.
 	for i := len(pts) - 1; i >= 0; i-- {
 		t := pts[i]
-		if t.Before(cut) {
-			keep[i] = pinned[t.Format(stampFmt)] && !t.Before(pinCut)
+		if at[i].Before(cut) {
+			keep[i] = pinned[t.Format(stampFmt)] && !at[i].Before(pinCut)
 			continue
 		}
 		b := bucket(t, now.Sub(t))
@@ -177,29 +226,56 @@ func thinner(target, id string, now time.Time) bool {
 // pin keeps the point at t from being thinned.
 func pin(target, id string, t time.Time) { pinStamp(target, id, t.Format(stampFmt)) }
 
-func pinStamp(target, id, stamp string) {
-	p := filepath.Join(target, VersionsDir, id, PinnedDir, stamp)
+func pinStamp(target, id, stamp string) { markStamp(target, id, PinnedDir, stamp) }
+
+// markStamp marks id's point stamp in the folder sub (PinnedDir, AsideDir).
+func markStamp(target, id, sub, stamp string) {
+	p := filepath.Join(target, VersionsDir, id, sub, stamp)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
 		_ = os.WriteFile(p, nil, 0o644)
 	}
 }
 
-func pins(root string) map[string]bool {
+func pins(root string) map[string]bool { return marks(root, PinnedDir) }
+
+// marks lists the stamps marked in root's folder sub.
+func marks(root, sub string) map[string]bool {
 	m := map[string]bool{}
-	es, _ := os.ReadDir(filepath.Join(root, PinnedDir))
+	es, _ := os.ReadDir(filepath.Join(root, sub))
 	for _, e := range es {
 		m[e.Name()] = true
 	}
 	return m
 }
 
-// unpinStale drops pins whose point is gone.
-func unpinStale(root string) {
-	dir := filepath.Join(root, PinnedDir)
-	for name := range pins(root) {
-		if !isDir(filepath.Join(root, name)) {
-			_ = os.Remove(filepath.Join(dir, name))
+// markGrace is how long a mark whose point isn't here is kept, unless this PC
+// removed the point itself. Drive syncs a new point's mark and its folder in
+// any order, and dropping the mark before the folder arrives would leave the
+// point unpinned, or a run's point as far as restores and thinning can tell.
+const markGrace = 7 * 24 * time.Hour
+
+// unmarkStale drops the marks in sub whose point is gone: removed here
+// (gone), or missing for longer than markGrace.
+func unmarkStale(root, sub string, gone map[string]bool, now time.Time) {
+	dir := filepath.Join(root, sub)
+	for name := range marks(root, sub) {
+		if isDir(filepath.Join(root, name)) {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if gone[name] || markedBefore(p, now.Add(-markGrace)) {
+			_ = os.Remove(p)
 		}
 	}
 	_ = os.Remove(dir) // only if empty
+}
+
+// markedBefore reports whether the mark at p was made on this disk (or, if
+// that isn't known, last written) before t.
+func markedBefore(p string, t time.Time) bool {
+	if at, ok := arrived(p); ok {
+		return at.Before(t)
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.ModTime().Before(t)
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -121,8 +122,10 @@ func Portable(abs string) (root, rel string, ok bool) {
 
 // Resolve turns a portable pair back into an absolute path on this PC. It
 // refuses a rel that could escape root (absolute, has a drive, or contains a
-// ".." segment): peers send (root, rel) pairs, and a malicious one must not
-// be able to point Syncer outside the root it claims.
+// ".." segment) or name another folder than it spells (a ':' stream or a '~'
+// short name): peers send (root, rel) pairs, and a malicious one must not be
+// able to point Syncer outside the root it claims. Links on disk are
+// CheckSyncable's job.
 func Resolve(root, rel string) (string, bool) {
 	base, ok := roots[root]
 	if !ok {
@@ -135,7 +138,7 @@ func Resolve(root, rel string) (string, bool) {
 		return "", false
 	}
 	for _, seg := range strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if seg == ".." {
+		if seg == ".." || badSegment(seg) {
 			return "", false
 		}
 	}
@@ -268,16 +271,35 @@ var sensitivePaths = []rootSub{
 
 var errNotSyncable = errors.New("only folders inside your user profile, Documents, AppData, Saved Games or Ubisoft Connect's savegames can be synced between PCs")
 
+// ErrLink is CheckSyncable's error for a folder reached through a junction or
+// symbolic link (one moved to another drive, say): its files are somewhere
+// else than its path says, so it isn't synced there.
+var ErrLink = errors.New("this folder is reached through a link (a junction or symbolic link) to another place; Syncer only syncs folders where they really are")
+
 // CheckSyncable rejects an absolute path that must never become a shared
 // folder: outside all known roots, a whole root or protected container (or
 // an ancestor of one), or anywhere in a sensitive directory. Paired PCs
 // auto-adopt folders published by their peers, so this is what stops a
 // compromised or malicious peer from making Syncer share the whole profile,
 // ~/.ssh, or Syncthing's own config.
+//
+// The path must also be what it spells on disk: no junction, link, short
+// name or stream between its root and the folder, which would let a peer
+// reach a sensitive folder under an innocent name. A junction or link on the
+// way gives ErrLink.
 func CheckSyncable(abs string) error {
 	abs = filepath.Clean(abs)
-	if _, _, ok := Portable(abs); !ok {
+	root, rel, ok := Portable(abs)
+	if !ok || hasStream(abs) {
 		return errNotSyncable
+	}
+	if err := checkReal(roots[root], rel, abs); err != nil {
+		// A link into a sensitive folder or onto a whole root is unsafe,
+		// not merely a link.
+		if errors.Is(err, ErrLink) && (CheckSensitive(abs) != nil || CheckContainer(abs) != nil) {
+			return errNotSyncable
+		}
+		return err
 	}
 	for _, r := range roots {
 		if Within(abs, r) { // abs == r or abs is an ancestor of r
@@ -286,7 +308,7 @@ func CheckSyncable(abs string) error {
 	}
 	// Ubisoft Connect keeps <account id>\<game id>: an account folder holds
 	// every Ubisoft game's saves.
-	if root, rel, _ := Portable(abs); root == Ubisoft && !strings.Contains(rel, "/") {
+	if root == Ubisoft && !strings.Contains(rel, "/") {
 		return errNotSyncable
 	}
 	for _, c := range protectedContainers {
@@ -301,18 +323,100 @@ func CheckSyncable(abs string) error {
 // ancestor of one. Unlike CheckSyncable it allows paths outside the known
 // roots, for folders (like a mod manager's) whose location is decided by
 // this PC alone and never taken from a peer.
+//
+// Both the path as given and as the filesystem resolves it are checked, so a
+// link or short name into a sensitive folder is caught as well.
 func CheckSensitive(abs string) error {
 	abs = filepath.Clean(abs)
-	if trailingDotOrSpace(abs) {
+	if trailingDotOrSpace(abs) || hasStream(abs) {
 		return errNotSyncable
 	}
+	forms, err := bothForms(abs)
+	if err != nil {
+		return errNotSyncable
+	}
+	real := realRoots()
 	for _, s := range sensitivePaths {
-		p, ok := s.abs()
-		if ok && (Within(p, abs) || Within(abs, p)) { // abs inside/== sensitive, or an ancestor of it
-			return errNotSyncable
+		for _, p := range s.forms(real) {
+			for _, a := range forms {
+				if Within(p, a) || Within(a, p) { // inside/== sensitive, or an ancestor of it
+					return errNotSyncable
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// realRoots maps each root to where it really is, for the roots that
+// resolve somewhere else than they spell (a profile moved through a
+// junction).
+func realRoots() map[string]string {
+	m := map[string]string{}
+	for name, p := range roots {
+		if r, err := realPath(p); err == nil && !strings.EqualFold(r, p) {
+			m[name] = r
+		}
+	}
+	return m
+}
+
+// checkReal rejects abs (base\rel, rel with forward slashes) unless the
+// filesystem resolves it to exactly that below base, wherever base itself
+// really is: no junction or symlink on the way (ErrLink), no short name, no
+// other spelling. Case doesn't matter.
+func checkReal(base, rel, abs string) error {
+	if linkBelow(base, abs) {
+		return ErrLink
+	}
+	realBase, err := realPath(base)
+	if err != nil {
+		return errNotSyncable
+	}
+	real, err := realPath(abs)
+	if err != nil {
+		return errNotSyncable
+	}
+	want := realBase
+	if rel != "." && rel != "" {
+		want = filepath.Join(realBase, filepath.FromSlash(rel))
+	}
+	if !strings.EqualFold(real, want) {
+		return errNotSyncable
+	}
+	return nil
+}
+
+// bothForms is abs as given and, when it differs, as the filesystem
+// resolves it.
+func bothForms(abs string) ([]string, error) {
+	real, err := realPath(abs)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(real, abs) {
+		return []string{abs}, nil
+	}
+	return []string{abs, real}, nil
+}
+
+// forms is p as built from its root, as built from where the root really is
+// (see realRoots), and where p itself really is: the folder may be a link
+// to somewhere else (%LOCALAPPDATA%\Syncthing moved to another drive), and
+// what's there is just as sensitive. Best effort: p needn't exist.
+func (p rootSub) forms(real map[string]string) []string {
+	a, ok := p.abs()
+	if !ok {
+		return nil
+	}
+	out := []string{a}
+	if base, moved := real[p.root]; moved {
+		out = append(out, filepath.Join(append([]string{base}, p.sub...)...))
+	}
+	if r, err := realPath(a); err == nil && !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, r) }) {
+		out = append(out, r)
+	}
+	return out
 }
 
 // trailingDotOrSpace reports whether a folder or file name in p ends in a
@@ -353,16 +457,29 @@ func SetRootForTest(root, dir string) (restore func()) {
 
 // CheckContainer rejects a known root or protected container, or an
 // ancestor of one: folders that hold far more than one game's files.
+// Like CheckSensitive, it checks the path as given and as resolved on disk,
+// against each root and container as written and where it really is.
 func CheckContainer(abs string) error {
-	abs = filepath.Clean(abs)
+	forms, err := bothForms(filepath.Clean(abs))
+	if err != nil {
+		return errNotSyncable
+	}
+	real := realRoots()
+	var containers []string
 	for _, r := range roots {
-		if Within(abs, r) {
-			return errNotSyncable
-		}
+		containers = append(containers, r)
+	}
+	for _, r := range real {
+		containers = append(containers, r)
 	}
 	for _, c := range protectedContainers {
-		if p, ok := c.abs(); ok && Within(abs, p) {
-			return errNotSyncable
+		containers = append(containers, c.forms(real)...)
+	}
+	for _, a := range forms {
+		for _, c := range containers {
+			if Within(a, c) {
+				return errNotSyncable
+			}
 		}
 	}
 	return nil

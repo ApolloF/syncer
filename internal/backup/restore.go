@@ -35,12 +35,8 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 
 	// A point of its own: never add to (or overwrite in) another one made
 	// in the same second.
-	now := time.Now()
+	now := freeStamp(target, f.ID, time.Now())
 	safety := filepath.Join(target, VersionsDir, f.ID, now.Format(stampFmt))
-	for isDir(safety) {
-		now = now.Add(time.Second)
-		safety = filepath.Join(target, VersionsDir, f.ID, now.Format(stampFmt))
-	}
 	pinned := false
 	org := newOrigins(f.ID, f.Solo)
 	defer func() {
@@ -59,6 +55,7 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 			}
 			if !pinned {
 				pin(target, f.ID, now)
+				markStamp(target, f.ID, AsideDir, now.Format(stampFmt))
 				pinned = true
 			}
 			keep := filepath.Join(safety, rel)
@@ -95,14 +92,18 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 //
 // Versions hold the content a file had *before* the stamped run replaced it, so
 // the state at point T is: latest backup, overlaid by every version taken at or
-// after T, newest first, so older (closer to T) copies win.
+// after T, newest first, so older (closer to T) copies win. Points saved
+// outside a backup run (see AsideDir) don't hold that, so of those only the
+// point at T itself counts.
 func sources(target, id string, point time.Time) (src, rels map[string]string) {
 	src, rels = map[string]string{}, map[string]string{}
 	add := func(root string) {
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			// steam_autocloud.vdf names the account of the PC it was backed
-			// up on; this PC's Steam writes its own.
-			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) || strings.EqualFold(d.Name(), SteamMarker) {
+			// up on; this PC's Steam writes its own. A second copy of a file
+			// in one point (see moveTo) isn't a file of the game.
+			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) || strings.EqualFold(d.Name(), SteamMarker) ||
+				keptSuffix.MatchString(d.Name()) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, p)
@@ -113,8 +114,9 @@ func sources(target, id string, point time.Time) (src, rels map[string]string) {
 	}
 	add(filepath.Join(target, id))
 	if !point.IsZero() {
+		aside := marks(filepath.Join(target, VersionsDir, id), AsideDir)
 		for _, t := range Points(target, id) { // newest first
-			if !t.Before(point) {
+			if !t.Before(point) && (t.Equal(point) || !aside[t.Format(stampFmt)]) {
 				add(filepath.Join(target, VersionsDir, id, t.Format(stampFmt)))
 			}
 		}

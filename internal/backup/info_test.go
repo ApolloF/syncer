@@ -153,3 +153,16 @@ func TestNewestAndMatcherExtras(t *testing.T) {
 		t.Error("missing folder has a newest time")
 	}
 }
+
+// Info files are written by any PC using the backup: a path that leads
+// somewhere else than it spells is never suggested.
+func TestInfoPathRefusesAliases(t *testing.T) {
+	for _, rel := range []string{"SSH~1", "Microsoft::$INDEX_ALLOCATION/Windows", `Start Menu\Programs\Startup`, `Local Settings\Syncthing`} {
+		in := Info{ID: "g", Root: paths.Home, Rel: filepath.ToSlash(rel)}
+		if p, ok := in.Path(); ok {
+			if _, err := os.Lstat(p); err == nil || strings.ContainsAny(rel, "~:") {
+				t.Errorf("Path() for %q = %q, want refused", rel, p)
+			}
+		}
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,9 @@ type State struct {
 	RootID  string                `json:"rootID"`
 	Files   map[string]stateEntry `json:"files"` // by lower-case path
 	Synced  time.Time             `json:"synced,omitzero"`
+	// Forgotten are the folders whose backup this PC deleted on purpose
+	// since the last sync (see ForgetFolder).
+	Forgotten []string `json:"forgotten,omitempty"`
 }
 
 type stateEntry struct {
@@ -78,6 +82,30 @@ func saveState(st State) { _ = store.WriteJSON(statePath(), st) }
 // ForgetState drops the state (another account).
 func ForgetState() { _ = os.Remove(statePath()) }
 
+// ForgetFolder records that this PC deleted the backup of folder id on
+// purpose, so the next sync deletes it in Drive too, however many files that
+// is (see the mass-delete guard in syncWith).
+func ForgetFolder(id string) {
+	st := LoadState()
+	if !slices.Contains(st.Forgotten, strings.ToLower(id)) {
+		st.Forgotten = append(st.Forgotten, strings.ToLower(id))
+		saveState(st)
+	}
+}
+
+// forgotten returns the folder whose backup was deleted on purpose that k (a
+// lower-case path) belongs to: its backup, history or info files. It returns
+// "" when k belongs to no such folder.
+func (st *State) forgotten(k string) string {
+	parts := strings.SplitN(k, "/", 3)
+	for _, id := range st.Forgotten {
+		if parts[0] == id || len(parts) > 1 && (parts[0] == ".versions" || parts[0] == ".syncer") && parts[1] == id {
+			return id
+		}
+	}
+	return ""
+}
+
 // SetAccount records which Google account the folder is synced with.
 func SetAccount(account string) {
 	st := LoadState()
@@ -98,7 +126,12 @@ const tmpSuffix = ".gdrive-tmp"
 
 // massDelete: a sync that would delete more than half of one side (and more
 // than this many files) is held back; something is wrong, not a cleanup.
-const massDelete = 20
+// Saves lost here are also held back game by game: more than half of a
+// game's (and more than massDeleteGame files).
+const (
+	massDelete     = 20
+	massDeleteGame = 5
+)
 
 type remoteFile struct {
 	File
@@ -235,11 +268,11 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 		}
 	}
 	// Most of the backups gone from Drive at once (not history, which
-	// thinning deletes by the hundreds) looks like an accident in Drive,
+	// thinning deletes by the hundreds, nor info files) looks like an accident in Drive,
 	// not another PC at work: they go back up instead of being deleted here.
 	var saves []string
 	for _, k := range delHere {
-		if !strings.HasPrefix(k, versionsPrefix) {
+		if isSave(k) {
 			saves = append(saves, k)
 		}
 	}
@@ -296,6 +329,25 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 		}
 		created = append(created, k)
 	}
+	// Most of the backups, or of one game's, gone here at once (a game's
+	// backup folder lost or quarantined by antivirus) looks like an accident
+	// as well: they come back down instead of being deleted in Drive, where
+	// the other PCs would follow. Unless this PC deleted them on purpose (see
+	// ForgetFolder).
+	var lost []string
+	for _, k := range delThere {
+		if isSave(k) && st.forgotten(k) == "" {
+			lost = append(lost, k)
+		}
+	}
+	if lost = massLoss(lost, remote); len(lost) > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("%d backed-up files are gone from this PC; bringing them back from Google Drive", len(lost)))
+		for _, k := range lost {
+			delete(st.Files, k)
+			delThere = remove(delThere, k)
+			down = append(down, k)
+		}
+	}
 	for _, k := range created {
 		if ctx.Err() != nil {
 			break
@@ -340,11 +392,18 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 		st.Files[k] = entry(l, r.File)
 		rep.Down++
 	}
+	// A folder deleted on purpose stays forgotten until all of its files are
+	// gone from Drive: the ones left over would otherwise look lost next time
+	// and come back down.
+	unfinished := map[string]bool{}
 	for _, k := range delThere {
 		if ctx.Err() != nil {
 			break
 		}
 		if err := d.Delete(ctx, remote[k].ID); err != nil {
+			if id := st.forgotten(k); id != "" {
+				unfinished[id] = true
+			}
 			fail(remote[k].rel, err)
 			continue
 		}
@@ -363,6 +422,7 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	if err := ctx.Err(); err != nil {
 		return rep, err
 	}
+	st.Forgotten = slices.DeleteFunc(st.Forgotten, func(id string) bool { return !unfinished[id] })
 	return rep, nil
 }
 
@@ -442,6 +502,9 @@ func tree(byID map[string]File, roots map[string]bool, root string) (dirs map[st
 			}
 			continue
 		}
+		if ignoredName(f.Name) {
+			continue
+		}
 		if old, dup := files[k]; dup && !f.Modified.After(old.Modified) {
 			continue
 		}
@@ -453,72 +516,108 @@ func tree(byID map[string]File, roots map[string]bool, root string) (dirs map[st
 // versionsPrefix starts the paths of the history (restore points).
 const versionsPrefix = ".versions/"
 
-// countSaves counts the files that aren't history.
-func countSaves(here map[string]localFile) int {
+// infoPrefix starts the paths of the info files (.syncer/<id>/…): each PC's
+// record that it backs a folder up, which it removes when it stops (without
+// deleting the backup) and writes again on its next backup run.
+const infoPrefix = ".syncer/"
+
+// isSave reports whether k (a lower-case path) is a backed-up save, not
+// history or an info file: only saves count for the mass-delete guards.
+func isSave(k string) bool {
+	return !strings.HasPrefix(k, versionsPrefix) && !strings.HasPrefix(k, infoPrefix)
+}
+
+// countSaves counts the files that are saves (see isSave).
+func countSaves[V any](files map[string]V) int {
 	n := 0
-	for k := range here {
-		if !strings.HasPrefix(k, versionsPrefix) {
+	for k := range files {
+		if isSave(k) {
 			n++
 		}
 	}
 	return n
 }
 
-// loserPath is where the losing version of a backed-up save goes: a pinned
-// restore point of its game (.versions\<id>\<stamp>\…), and the pin. Only
-// the backups themselves (<id>\…) have one; the history and the info files
-// don't need one.
-func loserPath(rel string, now time.Time) (dst, pin string, ok bool) {
+// massLoss is the part of lost (saves gone on one side) that is held back:
+// all of it when it is most of the saves on the other side (files), else the
+// saves of each game (top folder) that lost most of its own.
+func massLoss[V any](lost []string, files map[string]V) []string {
+	if len(lost) > massDelete && 2*len(lost) > countSaves(files) {
+		return lost
+	}
+	byGame := map[string][]string{}
+	for _, k := range lost {
+		byGame[game(k)] = append(byGame[game(k)], k)
+	}
+	saves := map[string]int{}
+	for k := range files {
+		if isSave(k) {
+			saves[game(k)]++
+		}
+	}
+	var out []string
+	for g, ks := range byGame {
+		if len(ks) > massDeleteGame && 2*len(ks) > saves[g] {
+			out = append(out, ks...)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// game is the top folder of k: the game a backed-up file belongs to.
+func game(k string) string {
+	g, _, _ := strings.Cut(k, "/")
+	return g
+}
+
+// loserPoint makes a new restore point of the game a backed-up save (rel)
+// belongs to, for its losing version: a point of its own, pinned and marked
+// as saved outside a backup run (see backup.KeepAside), so it never replaces
+// a version saved in the same second nor is laid over older restores. Only
+// the backups themselves (<id>/…) have one; the history and the info files
+// don't need one. It returns the point's folder and the save's path in it.
+func loserPoint(local, rel string) (dir, rest string, ok bool, err error) {
 	id, rest, found := strings.Cut(rel, "/")
 	if !found || id == ".versions" || id == ".syncer" || rest == "" {
-		return "", "", false
+		return "", "", false, nil
 	}
-	stamp := backup.Stamp(now)
-	return path.Join(".versions", id, stamp, rest), path.Join(".versions", id, backup.PinnedDir, stamp), true
+	dir, err = backup.KeepAside(local, id)
+	return dir, rest, err == nil, err
 }
 
 // keepLocal copies this PC's version of a file into its game's history
 // before Drive's newer one replaces it.
 func keepLocal(local string, l localFile) error {
-	dst, pin, ok := loserPath(l.rel, time.Now())
+	dir, rest, ok, err := loserPoint(local, l.rel)
 	if !ok {
-		return nil
+		return err
 	}
-	src := filepath.Join(local, filepath.FromSlash(l.rel))
-	to := filepath.Join(local, filepath.FromSlash(dst))
+	to := filepath.Join(dir, filepath.FromSlash(rest))
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}
-	if err := copyLocal(src, to); err != nil {
+	if err := copyLocal(filepath.Join(local, filepath.FromSlash(l.rel)), to); err != nil {
 		return err
 	}
 	_ = os.Chtimes(to, l.mtime, l.mtime)
-	return touch(filepath.Join(local, filepath.FromSlash(pin)))
+	return nil
 }
 
 // keepRemote saves Drive's version of a file into its game's history (on
 // this PC; it goes up with the next sync) before this PC's newer one
 // replaces it.
 func keepRemote(ctx context.Context, d drive, local string, r remoteFile) error {
-	dst, pin, ok := loserPath(r.rel, time.Now())
+	dir, rest, ok, err := loserPoint(local, r.rel)
 	if !ok {
-		return nil
-	}
-	if _, err := download(ctx, d, local, remoteFile{File: r.File, rel: dst}); err != nil {
 		return err
 	}
-	return touch(filepath.Join(local, filepath.FromSlash(pin)))
-}
-
-func touch(p string) error {
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0o644)
+	at, err := filepath.Rel(local, filepath.Join(dir, filepath.FromSlash(rest)))
 	if err != nil {
 		return err
 	}
-	return f.Close()
+	_, err = download(ctx, d, local, remoteFile{File: r.File, rel: filepath.ToSlash(at)})
+	return err
 }
 
 func copyLocal(src, dst string) error {
@@ -566,25 +665,33 @@ func ensureDir(ctx context.Context, d drive, root string, dirs map[string]string
 	return f.ID, nil
 }
 
+// ignoredName reports whether a file of that name is left out of the sync
+// on both sides: half-written files and Windows' desktop.ini. Leaving it out
+// here only would make a copy brought down look lost every time.
+func ignoredName(name string) bool {
+	name = strings.ToLower(name)
+	return strings.HasSuffix(name, tmpSuffix) || strings.HasSuffix(name, ".syncer-tmp") || name == "desktop.ini"
+}
+
 func walkLocal(root string) (map[string]localFile, error) {
 	out := map[string]localFile{}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		// A folder that can't be read would look emptied, and its files
+		// deleted in Drive: the whole sync waits for it instead.
 		if err != nil {
-			if p == root {
-				return err
-			}
-			return nil
+			return err
 		}
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
-		name := strings.ToLower(d.Name())
-		if strings.HasSuffix(name, tmpSuffix) || strings.HasSuffix(name, ".syncer-tmp") || name == "desktop.ini" {
+		if ignoredName(d.Name()) {
 			return nil
 		}
 		fi, err := d.Info()
-		if err != nil {
-			return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // gone meanwhile
+		} else if err != nil {
+			return err
 		}
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)

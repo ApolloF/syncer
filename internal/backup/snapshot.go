@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -69,12 +70,7 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 		return 0, err
 	}
 	defer unlock()
-	t := time.Now()
-	dir := filepath.Join(target, VersionsDir, f.ID, t.Format(stampFmt))
-	for isDir(dir) {
-		t = t.Add(time.Second)
-		dir = filepath.Join(target, VersionsDir, f.ID, t.Format(stampFmt))
-	}
+	dir, t := newAsidePoint(target, f.ID)
 	org := newOrigins(f.ID, f.Solo)
 	defer org.save(target, t.Format(stampFmt))
 	for _, rel := range rels {
@@ -93,7 +89,6 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 		_ = os.Chtimes(dst, fi.ModTime(), fi.ModTime())
 		org.add(org.lookup(rel))
 	}
-	pin(target, f.ID, t)
 	return len(rels), nil
 }
 
@@ -117,14 +112,7 @@ func Keep(target, id, src, rel string, move bool) (string, error) {
 func KeepLocked(target, id, src, rel string, move bool) (string, error) {
 	// A restore point of its own: two files kept in the same second (or a
 	// snapshot taken just before) must never replace each other.
-	t := time.Now()
-	dir := filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
-	for isDir(dir) {
-		t = t.Add(time.Second)
-		dir = filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
-	}
-	// Pinned first: a restore point that's only half there is still kept.
-	pin(target, id, t)
+	dir, t := newAsidePoint(target, id)
 	defer writeOrigin(target, id, t.Format(stampFmt), Origin{By: []string{hostName}})
 	dst := filepath.Join(dir, rel)
 	if move {
@@ -141,6 +129,38 @@ func KeepLocked(target, id, src, rel string, move bool) (string, error) {
 		return "", err
 	}
 	return dst, os.Chtimes(dst, fi.ModTime(), fi.ModTime())
+}
+
+// AsideDir, next to a folder's restore points, marks the points saved
+// outside a backup run: the saves a PC had before it started syncing, the
+// files a restore replaced, the losing copy of a conflict. A point a backup
+// run makes holds what each file was before that run replaced it, so
+// restoring to an older time lays those points over each other; an aside
+// point holds a file as it was at some moment instead, possibly one nobody
+// chose to keep, so it only counts when it is the point restored to. A mark
+// is an empty file <target>\.versions\<id>\.aside\<stamp>.
+const AsideDir = ".aside"
+
+// KeepAside makes a new, empty restore point for files saved outside a
+// backup run (see AsideDir), pinned, and returns its folder. The caller holds
+// the backup lock and puts the files in.
+func KeepAside(target, id string) (string, error) {
+	if !paths.ValidID(id) {
+		return "", fmt.Errorf("unsupported folder id %q", id)
+	}
+	dir, _ := newAsidePoint(target, id)
+	return dir, os.MkdirAll(dir, 0o755)
+}
+
+// newAsidePoint picks a stamp no point of id has yet, from now on, and
+// marks its point pinned and aside before anything goes in: a restore point
+// that's only half there is still kept, and never mistaken for a run's.
+func newAsidePoint(target, id string) (string, time.Time) {
+	t := freeStamp(target, id, time.Now())
+	dir := filepath.Join(target, VersionsDir, id, t.Format(stampFmt))
+	pin(target, id, t)
+	markStamp(target, id, AsideDir, t.Format(stampFmt))
+	return dir, t
 }
 
 // keepWait is how long Keep waits for a running backup.

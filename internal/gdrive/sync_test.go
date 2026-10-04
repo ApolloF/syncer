@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,6 +23,8 @@ type fakeDrive struct {
 	next    int
 	uploads int
 	moves   int
+	// failDelete makes Delete fail for the files it reports (a rate limit).
+	failDelete func(id string) bool
 }
 
 func newFake() *fakeDrive { return &fakeDrive{files: map[string]File{}, data: map[string][]byte{}} }
@@ -91,6 +95,9 @@ func (d *fakeDrive) Move(_ context.Context, id, _, to, name string) (File, error
 }
 
 func (d *fakeDrive) Delete(_ context.Context, id string) error {
+	if d.failDelete != nil && d.failDelete(id) {
+		return errors.New("rate limit exceeded")
+	}
 	delete(d.files, id)
 	delete(d.data, id)
 	return nil
@@ -144,6 +151,21 @@ func (p *pc) sync(d drive) Report {
 		p.t.Logf("errors: %v", rep.Errors)
 	}
 	return rep
+}
+
+// withState runs f with p's sync state as the current one.
+func (p *pc) withState(f func()) {
+	old := statePath
+	statePath = func() string { return p.state }
+	defer func() { statePath = old }()
+	f()
+}
+
+func (p *pc) forget(id string) { p.withState(func() { ForgetFolder(id) }) }
+
+func (p *pc) saved() (st State) {
+	p.withState(func() { st = LoadState() })
+	return st
 }
 
 func (p *pc) write(rel, s string, at time.Time) {
@@ -281,12 +303,64 @@ func TestSyncMassDeleteInDrive(t *testing.T) {
 	if r := a.sync(d); r.DeletedHere != 0 || r.Up != 30 || len(r.Notes) == 0 {
 		t.Errorf("backups deleted in Drive: %+v", r)
 	}
-	// This PC deleting its own files (a removed game's backup) goes through.
-	for i := 0; i < 30; i++ {
-		_ = os.Remove(filepath.Join(a.local, "g", fmt.Sprintf("%d.sav", i)))
+	// Most of the backups gone from this PC: they come back from Drive.
+	remove := func() {
+		for i := 0; i < 30; i++ {
+			_ = os.Remove(filepath.Join(a.local, "g", fmt.Sprintf("%d.sav", i)))
+		}
 	}
+	remove()
+	if r := a.sync(d); r.DeletedThere != 0 || r.Down != 30 || len(r.Notes) == 0 {
+		t.Errorf("backups deleted here: %+v", r)
+	}
+	// This PC deleting a game's backup on purpose goes through.
+	remove()
+	a.forget("g")
 	if r := a.sync(d); r.DeletedThere != 30 {
-		t.Errorf("deleted here: %+v", r)
+		t.Errorf("backup removed here: %+v", r)
+	}
+	if st := a.saved(); len(st.Forgotten) != 0 {
+		t.Errorf("still forgotten after the sync: %v", st.Forgotten)
+	}
+}
+
+// Some of a forgotten folder's files fail to go in Drive: the folder stays
+// forgotten, so the rest go next time instead of coming back down.
+func TestSyncForgottenFolderPartlyDeleted(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour)
+	for i := 0; i < 30; i++ {
+		a.write(fmt.Sprintf("g/%d.sav", i), "x", t0)
+	}
+	a.write("other/1.sav", "o", t0)
+	a.sync(d)
+
+	if err := os.RemoveAll(filepath.Join(a.local, "g")); err != nil {
+		t.Fatal(err)
+	}
+	a.forget("g")
+	failing := map[string]bool{}
+	for i := 0; i < 10; i++ {
+		failing[d.path(fmt.Sprintf("g/%d.sav", i))] = true
+	}
+	d.failDelete = func(id string) bool { return failing[id] }
+	if r := a.sync(d); r.DeletedThere != 20 || len(r.Errors) != 10 {
+		t.Fatalf("first sync: %+v", r)
+	}
+	if st := a.saved(); len(st.Forgotten) != 1 || st.Forgotten[0] != "g" {
+		t.Fatalf("forgotten after a partial delete: %v", st.Forgotten)
+	}
+
+	d.failDelete = nil
+	if r := a.sync(d); r.DeletedThere != 10 || r.Down != 0 {
+		t.Errorf("second sync: %+v", r)
+	}
+	if got := a.read("g/0.sav"); got != "<missing>" {
+		t.Errorf("forgotten backup came back: %q", got)
+	}
+	if st := a.saved(); len(st.Forgotten) != 0 {
+		t.Errorf("still forgotten after all files went: %v", st.Forgotten)
 	}
 }
 
@@ -358,5 +432,204 @@ func TestTreeSkipsUnsafeNames(t *testing.T) {
 	_, files := tree(byID, map[string]bool{"r": true}, "r")
 	if len(files) != 1 || files["ok.sav"].ID != "a" {
 		t.Errorf("files: %+v", files)
+	}
+}
+
+// A game's backup folder gone from this PC (most of the backed-up saves)
+// is brought back from Drive, not deleted there.
+func TestSyncLocalSubtreeLossKeepsDrive(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for i := 0; i < 25; i++ {
+		a.write(fmt.Sprintf("big/%d.sav", i), "x", t0)
+	}
+	a.write("small/a.sav", "a", t0)
+	a.write("small/b.sav", "b", t0)
+	a.sync(d)
+	if err := os.RemoveAll(filepath.Join(a.local, "big")); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.sync(d); r.DeletedThere != 0 || r.Down != 25 || len(r.Notes) == 0 {
+		t.Errorf("subtree lost here: %+v", r)
+	}
+	if a.read("big/7.sav") != "x" || d.path("big/7.sav") == "" {
+		t.Error("big/7.sav not back on both sides")
+	}
+	// A few saves deleted here still go.
+	_ = os.Remove(filepath.Join(a.local, "small", "a.sav"))
+	if r := a.sync(d); r.DeletedThere != 1 {
+		t.Errorf("one save deleted here: %+v", r)
+	}
+}
+
+// One game's backup lost here is held back, however many other games
+// there are; a few of its saves deleted, or a small game's, still go.
+func TestSyncOneGameLossKeepsDrive(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for g := 0; g < 10; g++ {
+		for i := 0; i < 8; i++ {
+			a.write(fmt.Sprintf("g%d/%d.sav", g, i), "x", t0)
+		}
+	}
+	a.write("small/a.sav", "a", t0)
+	a.sync(d)
+	if err := os.RemoveAll(filepath.Join(a.local, "g3")); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.sync(d); r.DeletedThere != 0 || r.Down != 8 || len(r.Notes) == 0 {
+		t.Errorf("one game lost here: %+v", r)
+	}
+	if a.read("g3/5.sav") != "x" || d.path("g3/5.sav") == "" {
+		t.Error("g3/5.sav not back on both sides")
+	}
+	for i := 0; i < 3; i++ {
+		_ = os.Remove(filepath.Join(a.local, "g4", fmt.Sprintf("%d.sav", i)))
+	}
+	_ = os.Remove(filepath.Join(a.local, "small", "a.sav"))
+	if r := a.sync(d); r.DeletedThere != 4 || r.Down != 0 {
+		t.Errorf("a few saves deleted here: %+v", r)
+	}
+}
+
+// A PC that stops backing up several folders but keeps their backups removes
+// only its info files (.syncer/<id>/…). Those aren't saves: they're deleted in
+// Drive, and on the other PCs, instead of coming back down every sync.
+func TestSyncInfoFilesRemovedAreNotMassLoss(t *testing.T) {
+	d := newFake()
+	a, b := newPC(t), newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for g := 0; g < 6; g++ {
+		a.write(fmt.Sprintf("g%d/a.sav", g), "x", t0)
+		a.write(fmt.Sprintf(".syncer/g%d/pc-a.json", g), "{}", t0)
+	}
+	a.sync(d)
+	b.sync(d)
+	for g := 0; g < 6; g++ {
+		if err := os.Remove(filepath.Join(a.local, ".syncer", fmt.Sprintf("g%d", g), "pc-a.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := a.sync(d); r.DeletedThere != 6 || r.Down != 0 || len(r.Notes) != 0 {
+		t.Errorf("info files removed here: %+v", r)
+	}
+	if d.path(".syncer/g2/pc-a.json") != "" {
+		t.Error(".syncer/g2/pc-a.json still in Drive")
+	}
+	if r := a.sync(d); r.Down != 0 {
+		t.Errorf("info files came back down: %+v", r)
+	}
+	if r := b.sync(d); r.DeletedHere != 6 || r.Up != 0 || len(r.Notes) != 0 {
+		t.Errorf("info files removed in Drive: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(b.local, ".syncer", "g2", "pc-a.json")); err == nil {
+		t.Error(".syncer/g2/pc-a.json still on the other PC")
+	}
+	if b.read("g2/a.sav") != "x" || d.path("g2/a.sav") == "" {
+		t.Error("g2/a.sav not kept on both sides")
+	}
+}
+
+// Files in Drive this PC never keeps (desktop.ini, half-downloaded files)
+// aren't brought down: the guard against lost saves would otherwise fetch
+// them again on every sync, as they never show up here.
+func TestSyncIgnoredNamesNeverLoop(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour)
+	a.write("g/1.sav", "x", t0)
+	a.sync(d)
+	g := firstParent(d.files[d.path("g/1.sav")])
+	for i := 0; i < 6; i++ {
+		d.put(d.id(), g, fmt.Sprintf("%d.sav.syncer-tmp", i), []byte("partial"), t0)
+	}
+	d.put(d.id(), g, "desktop.ini", []byte("[.ShellClassInfo]"), t0)
+	for i := 0; i < 3; i++ {
+		if r := a.sync(d); r.Down != 0 || r.DeletedThere != 0 || len(r.Notes) != 0 {
+			t.Errorf("sync %d: %+v", i+1, r)
+		}
+	}
+	if a.read("g/1.sav") != "x" {
+		t.Error("g/1.sav lost")
+	}
+}
+
+// A folder that can't be read fails the sync instead of looking emptied.
+func TestSyncFailsOnUnreadableFolder(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	a.write("g/a.sav", "a", t0)
+	a.write("h/b.sav", "b", t0)
+	a.sync(d)
+	dir := filepath.Join(a.local, "g")
+	if out, err := exec.Command("icacls", dir, "/deny", "*S-1-1-0:(RD)").CombinedOutput(); err != nil {
+		t.Skipf("can't deny access: %v %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("icacls", dir, "/remove:d", "*S-1-1-0").Run() })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("folder still readable")
+	}
+	old := statePath
+	statePath = func() string { return a.state }
+	defer func() { statePath = old }()
+	if r, err := Sync(context.Background(), d, a.local); err == nil {
+		t.Errorf("sync went ahead: %+v", r)
+	}
+	if d.path("g/a.sav") == "" {
+		t.Error("g/a.sav deleted in Drive")
+	}
+}
+
+// Each losing version gets a restore point of its own, marked as saved
+// outside a backup run, never one that already holds a file.
+func TestSyncLosersGetPointsOfTheirOwn(t *testing.T) {
+	d := newFake()
+	a, b := newPC(t), newPC(t)
+	t0 := time.Now().Add(-time.Hour).Truncate(time.Second)
+	a.write("game/slot.sav", "old", t0)
+	a.write("game/other.sav", "old", t0)
+	a.sync(d)
+	b.sync(d)
+	// Points a backup run made in the next few seconds.
+	now := time.Now()
+	var taken []string
+	for i := range 4 {
+		stamp := now.Add(time.Duration(i) * time.Second).Format("2006-01-02_150405")
+		a.write(".versions/game/"+stamp+"/slot.sav", "run's", t0)
+		taken = append(taken, stamp)
+	}
+	a.write("game/slot.sav", "a, older", t0.Add(time.Minute))    // loses: kept locally
+	a.write("game/other.sav", "a, newer", t0.Add(3*time.Minute)) // wins: Drive's kept
+	b.write("game/slot.sav", "b, newer", t0.Add(2*time.Minute))
+	b.write("game/other.sav", "b, older", t0.Add(time.Minute))
+	b.sync(d)
+	if r := a.sync(d); r.Kept != 2 {
+		t.Fatalf("a: %+v", r)
+	}
+	for _, stamp := range taken {
+		if got := a.read(".versions/game/" + stamp + "/slot.sav"); got != "run's" {
+			t.Errorf("point %s: slot.sav = %q", stamp, got)
+		}
+		if got := a.read(".versions/game/" + stamp + "/other.sav"); got != "<missing>" {
+			t.Errorf("loser put into point %s", stamp)
+		}
+	}
+	aside, _ := filepath.Glob(filepath.Join(a.local, ".versions", "game", ".aside", "*"))
+	if len(aside) != 2 {
+		t.Fatalf("aside marks: %v", aside)
+	}
+	got := map[string]bool{}
+	for _, m := range aside {
+		for _, f := range []string{"slot.sav", "other.sav"} {
+			if s := a.read(".versions/game/" + filepath.Base(m) + "/" + f); s != "<missing>" {
+				got[f+"="+s] = true
+			}
+		}
+	}
+	if !got["slot.sav=a, older"] || !got["other.sav=b, older"] || len(got) != 2 {
+		t.Errorf("aside points hold %v", got)
 	}
 }

@@ -145,7 +145,7 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 	if err := os.MkdirAll(opts.Target, 0o755); err != nil {
 		return nil, fmt.Errorf("backup folder not reachable: %w", err)
 	}
-	stamp := time.Now().Format(stampFmt)
+	start := time.Now()
 	p := Progress{Folders: len(folders)}
 	ids := map[string]bool{}
 	for _, f := range folders {
@@ -175,6 +175,9 @@ func Run(ctx context.Context, folders []Folder, opts Options) (*store.BackupRun,
 			continue // game not present on this PC
 		}
 		res.Folders++
+		// A point of its own: never add to one made in the same second
+		// (a kept conflict copy, say), whose files it would mix with.
+		stamp := freeStamp(opts.Target, f.ID, start).Format(stampFmt)
 		c, v, b, newest, held, files, errs := mirror(ctx, f, opts, stamp, &p)
 		if held > 0 {
 			res.Held = append(res.Held, fmt.Sprintf("%s: %d file(s)", f.Label, held))
@@ -607,8 +610,15 @@ func Forget(target, id string, deleteBackup bool) error {
 			return err
 		}
 	}
+	if Forgotten != nil {
+		Forgotten(target, id)
+	}
 	return nil
 }
+
+// Forgotten, when set, is told that the backup of folder id in target was
+// deleted on purpose (see Forget).
+var Forgotten func(target, id string)
 
 // CopyHistory seeds folder to's backup and version history from folder
 // from's, so a game that stops syncing (and gets its own backup id) keeps its
@@ -695,4 +705,13 @@ func hiddenOutput(name string, args ...string) (string, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	out, err := cmd.Output()
 	return string(out), err
+}
+
+// freeStamp is the time, from t on, of a restore point of id that doesn't
+// exist yet.
+func freeStamp(target, id string, t time.Time) time.Time {
+	for isDir(filepath.Join(target, VersionsDir, id, t.Format(stampFmt))) {
+		t = t.Add(time.Second)
+	}
+	return t
 }
