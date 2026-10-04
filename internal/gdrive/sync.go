@@ -191,6 +191,15 @@ func syncWith(ctx context.Context, d drive, local string, st *State) (Report, er
 	if err != nil {
 		return rep, err
 	}
+	// Local files under a forgotten folder mean it was re-added. A failed
+	// Drive delete must not exempt its new backup from the mass-loss guard.
+	readded := map[string]bool{}
+	for k := range here {
+		if id := st.forgotten(k); id != "" {
+			readded[id] = true
+		}
+	}
+	st.Forgotten = slices.DeleteFunc(st.Forgotten, func(id string) bool { return readded[id] })
 	// One side empty while the last sync saw files: it was lost or not
 	// there yet, not emptied on purpose. Copy instead of deleting.
 	if len(st.Files) > 0 && (len(here) == 0 || len(remote) == 0) {

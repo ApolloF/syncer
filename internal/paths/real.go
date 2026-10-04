@@ -194,4 +194,6 @@ var shortNameForm = regexp.MustCompile(`~[0-9]+(\.[^.]*)?$`)
 // short name, which may stand for a folder of another name. Other names
 // with a "~" are fine: a real short name elsewhere is caught on disk by
 // CheckSyncable.
-func LooksShort(name string) bool { return shortNameForm.MatchString(name) }
+func LooksShort(name string) bool {
+	return shortNameForm.MatchString(strings.TrimRight(name, ". "))
+}

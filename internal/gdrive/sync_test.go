@@ -364,6 +364,60 @@ func TestSyncForgottenFolderPartlyDeleted(t *testing.T) {
 	}
 }
 
+// A failed delete must not keep a re-added game's backup outside the
+// mass-loss guard when its local folder later disappears.
+func TestSyncReaddedForgottenFolderMassLoss(t *testing.T) {
+	d := newFake()
+	a := newPC(t)
+	t0 := time.Now().Add(-time.Hour)
+	for i := 0; i < 20; i++ {
+		a.write(fmt.Sprintf("g/%d.sav", i), "old", t0)
+	}
+	a.write(".versions/g/old/slot.sav", "history", t0)
+	a.write("other/1.sav", "other", t0)
+	a.sync(d)
+	failing := d.path(".versions/g/old/slot.sav")
+	d.failDelete = func(id string) bool { return id == failing }
+	for _, rel := range []string{"g", ".versions/g"} {
+		if err := os.RemoveAll(filepath.Join(a.local, filepath.FromSlash(rel))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.forget("g")
+	if r := a.sync(d); r.DeletedThere != 20 || len(r.Errors) != 1 {
+		t.Fatalf("partial delete: %+v", r)
+	}
+	if st := a.saved(); len(st.Forgotten) != 1 {
+		t.Fatalf("forgotten after failed delete: %v", st.Forgotten)
+	}
+
+	for i := 0; i < 20; i++ {
+		a.write(fmt.Sprintf("g/%d.sav", i), "re-added", t0.Add(time.Minute))
+	}
+	if r := a.sync(d); r.Up != 20 || len(r.Errors) != 1 {
+		t.Fatalf("re-added game: %+v", r)
+	}
+	if st := a.saved(); len(st.Forgotten) != 0 {
+		t.Errorf("re-added game still forgotten: %v", st.Forgotten)
+	}
+	ids := make([]string, 20)
+	for i := range ids {
+		ids[i] = d.path(fmt.Sprintf("g/%d.sav", i))
+	}
+	if err := os.RemoveAll(filepath.Join(a.local, "g")); err != nil {
+		t.Fatal(err)
+	}
+	if r := a.sync(d); r.DeletedThere != 0 || r.Down != 20 || len(r.Notes) == 0 || len(r.Errors) != 1 {
+		t.Errorf("re-added backup lost: %+v", r)
+	}
+	for i, id := range ids {
+		rel := fmt.Sprintf("g/%d.sav", i)
+		if d.path(rel) != id || string(d.data[id]) != "re-added" || a.read(rel) != "re-added" {
+			t.Errorf("%s was not preserved in Drive and restored locally", rel)
+		}
+	}
+}
+
 // Two PCs made the same folder at once: files in either copy count.
 func TestSyncDuplicateFolders(t *testing.T) {
 	d := newFake()
