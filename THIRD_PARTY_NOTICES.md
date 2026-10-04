@@ -1,6 +1,6 @@
 # Third-party notices
 
-Syncer is free software under the GNU Affero General Public License v3.0 (see [LICENSE](LICENSE)). The Syncer program includes the following third-party code, each under its own license, reproduced below.
+Syncer is released under the MIT License (see [LICENSE](LICENSE)). The Syncer program includes the following third-party code, each under its own license, reproduced below.
 
 Not included, but used at runtime:
 
