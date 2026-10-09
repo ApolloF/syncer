@@ -14,7 +14,11 @@ Windows desktop app that syncs game saves between a user's PCs (via a bundled/lo
 - Build: `wails build` → `build/bin/Syncer.exe` (`-nsis` for the installer)
 - Typecheck: `cd frontend && npm run check` (svelte-check)
 - Test: `go test ./...` and `cd frontend && npm test` (Vitest)
-- Gate before a PR: `go test ./...`, `cd frontend && npm run check && npx vitest run`, `wails build`
+- Full gate before a PR (what CI runs): the check command below without `-short`, plus `wails build`
+
+## Check command
+`go test -short ./... && npm --prefix frontend run check && npm --prefix frontend test`
+Run `npm --prefix frontend ci` once first. About 1.5 minutes. `-short` shortens the randomized crash test in `internal/accounts` (5 seeds instead of 25); without it the Go tests take about 4 minutes. CI (`.github/workflows/build.yml`, job `windows`) runs the full `go test ./...` and `wails build`. Keep it fast and keep it passing.
 
 ## Layout
 - `*.go` at the root — `package main`: the Wails `App` (methods bound to the frontend), tray, background/scheduled runs, launcher API (`api.go`, documented in `docs/api.md`), and feature glue (accounts, deployed mods, folders, undo, …). Tests sit next to them as `*_test.go`.
@@ -32,4 +36,14 @@ Windows desktop app that syncs game saves between a user's PCs (via a bundled/lo
 - Version comes from the git tag in CI (`-X main.version`); don't tag or bump `wails.json` unless asked.
 
 ## Definition of done
-Gate commands above pass; no new svelte-check warnings; UI checked at the minimum window width (760×520).
+The check command passes (and the full gate before a PR); no new svelte-check warnings; UI checked at the minimum window width (760×520).
+
+## Git workflow
+- Remote: GitHub `ApolloF/syncer` (public).
+- Branch, then PR, then CI (`build`, job `windows`), then merge only when the user says "ship it" (squash).
+- Releases: a `v*` tag publishes a GitHub release from CI; don't tag unless asked.
+
+## Secrets
+- No `.env` is needed to build or run. The only tracked env file is `frontend/.env.mock` (no secrets; `.gitignore` allows it on purpose).
+- `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` live only in GitHub Actions secrets and are injected at build time (see Conventions).
+- Never commit real values. gitleaks runs on every commit.
