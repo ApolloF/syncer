@@ -68,7 +68,7 @@ jobs:
           GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
         run: wails build -clean -nsis -trimpath -ldflags "-s -w -X main.version=${{ env.SYNCER_VERSION }} -X main.gdriveClientID=$env:GDRIVE_CLIENT_ID -X main.gdriveClientSecret=$env:GDRIVE_CLIENT_SECRET"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: Syncer
           path: |
